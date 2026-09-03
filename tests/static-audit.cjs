@@ -61,9 +61,11 @@ new Function(serviceWorker);
 for (const host of ['googleapis.com', 'firestore.googleapis.com', 'identitytoolkit.googleapis.com', 'world.openfoodfacts.org']) {
   assert.ok(serviceWorker.includes(host), `service worker must keep ${host} network-only`);
 }
+assert.ok(serviceWorker.includes('cloudfunctions.net'), 'service worker must keep Cloud Functions network-only');
 
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(root, 'firebase.json'), 'utf8'));
 assert.equal(firebaseConfig.firestore.rules, 'firestore.rules', 'firebase.json must publish the hardened rules file');
+assert.equal(firebaseConfig.functions.source, 'functions', 'firebase.json must publish the Cloud Functions backend');
 const firestoreRules = fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8');
 assert.ok(!html.includes('OWNER_EMAIL'), 'owner access must not depend on an embedded email address');
 for (const guard of [
@@ -72,6 +74,7 @@ for (const guard of [
   'function approvedCoach()',
   'match /directory/{uid}',
   'match /users/{uid}',
+  'match /devices/{deviceId}',
   'match /notes/{threadId}',
   'match /{document=**}',
   'allow read, write: if false;'
@@ -79,6 +82,32 @@ for (const guard of [
   assert.ok(firestoreRules.includes(guard), `Firestore rules are missing: ${guard}`);
 }
 assert.ok(firestoreRules.includes('allow list, create, update, delete: if false;'), 'admin records must not be client-writable');
+assert.ok(firestoreRules.includes("hasAny(['membership'])"), 'membership must be blocked during client account creation');
+assert.ok(firestoreRules.includes("'pushPreferences', 'privacy'"), 'self-update allowlist must include only explicit notification/privacy fields');
 assert.ok(!/allow\s+(?:read|write|read,\s*write)\s*:\s*if\s+true/.test(firestoreRules), 'Firestore rules must not allow unconditional access');
+
+for (const feature of [
+  'function calculateReadinessScore(',
+  'function saveWeeklyCheckIn(',
+  'function smartProgressionForExercise(',
+  'function weeklyReportFor(',
+  'function enablePushNotifications(',
+  'function startMembershipCheckout(',
+  'function deleteVfitAccount('
+]) {
+  assert.ok(html.includes(feature), `VFIT feature is missing: ${feature}`);
+}
+
+const runtimeConfig = fs.readFileSync(path.join(root, 'vfit-config.js'), 'utf8');
+assert.ok(runtimeConfig.includes('paymentsEnabled: false'), 'payments must default off until Stripe is configured');
+assert.ok(runtimeConfig.includes('pushEnabled: false'), 'push must default off until FCM is configured');
+assert.ok(!/sk_(?:live|test)_[A-Za-z0-9]+/.test(runtimeConfig), 'Stripe secret keys must never be shipped to the browser');
+
+const functionsSource = fs.readFileSync(path.join(root, 'functions/index.js'), 'utf8');
+for (const backend of ['createCheckoutSession', 'stripeWebhook', 'sendUserPush', 'sendDueReminders', 'deleteMyAccount']) {
+  assert.ok(functionsSource.includes(`exports.${backend}`), `Cloud Function is missing: ${backend}`);
+}
+
+assert.ok((manifest.shortcuts || []).some(item => item.url === './#coaching'), 'manifest needs a Coaching Hub shortcut');
 
 console.log(`VFIT static audit passed (${ids.length} ids, ${functions.length} functions)`);
