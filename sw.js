@@ -1,4 +1,9 @@
-const CACHE_VERSION = 'vfit-2.0.0-beta.1';
+importScripts(
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js'
+);
+
+const CACHE_VERSION = 'vfit-2.1.0-beta.1';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -6,6 +11,7 @@ const APP_SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './vfit-config.js',
   './icon.svg',
   './icon-192.png',
   './icon-512.png'
@@ -19,6 +25,9 @@ const OPTIONAL_LIBRARIES = [
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js',
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js',
+  'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check-compat.js',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap'
 ];
 
@@ -30,8 +39,46 @@ const PRIVATE_NETWORK_HOSTS = [
   'openfoodfacts.org',
   'world.openfoodfacts.org',
   'uk.openfoodfacts.org',
-  'api.nal.usda.gov'
+  'api.nal.usda.gov',
+  'cloudfunctions.net'
 ];
+
+firebase.initializeApp({
+  apiKey: 'AIzaSyA9H9hmvfrQmc2wIwnS2jCPLgdmXBquQXM',
+  authDomain: 'vfit-app-pro.firebaseapp.com',
+  projectId: 'vfit-app-pro',
+  storageBucket: 'vfit-app-pro.firebasestorage.app',
+  messagingSenderId: '815730068689',
+  appId: '1:815730068689:web:0c6587d7dbe62b0f3c09f0'
+});
+
+try {
+  const backgroundMessaging = firebase.messaging();
+  backgroundMessaging.onBackgroundMessage(payload => {
+    const data = payload && payload.data ? payload.data : {};
+    const title = String(data.title || 'VFIT').slice(0, 80);
+    const body = String(data.body || 'You have a new VFIT update').slice(0, 180);
+    self.registration.showNotification(title, {
+      body,
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      tag: 'vfit-update',
+      data: { url: String(data.url || './').slice(0, 300) }
+    });
+  });
+} catch (error) {
+  console.warn('VFIT background messaging is not configured:', error);
+}
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || './', self.location.origin).href;
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
+    const existing = windows.find(client => client.url.startsWith(self.location.origin));
+    if (existing) return existing.focus().then(() => existing.navigate(target));
+    return clients.openWindow(target);
+  }));
+});
 
 self.addEventListener('install', event => {
   event.waitUntil(
