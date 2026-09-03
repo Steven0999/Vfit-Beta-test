@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.1` adds a Coaching Hub without removing the existing tracker.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.2` adds a Coaching Hub and a more reliable mobile food-barcode scanner without removing the existing tracker.
 
 ## What is included
 
@@ -13,6 +13,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, off
 - Stripe Checkout, Billing Portal and signed-webhook membership updates for Basic, Platinum and 1-to-1 Coaching plans.
 - Email verification, consent records, cloud-sync choice, full data export and confirmed account deletion.
 - Firebase App Check support, UID-provisioned administrators, server-owned memberships and owner-only device tokens.
+- Food barcode scanning tuned for UPC/EAN codes with high-resolution rear-camera capture, continuous focus/zoom where supported, torch control, photo scanning, preserved leading zeroes and UPC/EAN lookup fallbacks.
 
 Push, payments, App Check and server-side deletion are deliberately disabled in `vfit-config.js` until their Firebase and Stripe values are configured. Existing beta features remain available while setup is pending.
 
@@ -102,4 +103,5 @@ Membership state is written only by Cloud Functions. Account deletion cancels/de
 - Enable notifications, background Chrome, and verify a test message and scheduled reminder arrive.
 - Complete Stripe test checkout, open Billing Portal, cancel, and confirm webhook membership state changes.
 - Install from Chrome, test offline reopening, then export and restore a backup.
+- Scan an EAN-13 and a UPC-A product in good and low light; confirm the detected numbers appear, torch/photo fallback works, and leading zeroes are preserved.
 - Type `DELETE` in a disposable account and confirm Auth, Firestore, device registrations, notes and any Stripe test customer are removed.
