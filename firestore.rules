@@ -64,6 +64,7 @@ service cloud.firestore {
       allow create: if owns(uid)
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.emailLower == request.auth.token.email.lower()
+        && !request.resource.data.keys().hasAny(['membership'])
         && (
           request.resource.data.role == 'member'
           || (approvedCoach() && request.resource.data.role == 'coach')
@@ -79,6 +80,13 @@ service cloud.firestore {
           && request.resource.data.email == request.auth.token.email
           && request.resource.data.emailLower == request.auth.token.email.lower()
           && validOwnRole()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'email', 'emailLower', 'role', 'calorieGoal',
+            'customExercises', 'disabledExercises', 'dataSnapshot',
+            'snapshotSchemaVersion', 'snapshotUpdatedAt', 'lastSync',
+            'coachUid', 'coachName', 'pendingRequests', 'sharing',
+            'pushPreferences', 'privacy'
+          ])
         )
         // An approved coach may send a connection request without reading the
         // private user document.
@@ -96,6 +104,19 @@ service cloud.firestore {
         );
 
       allow delete: if false;
+
+      // A push token is private to its owner. Coaches cannot list or read a
+      // member's devices, and membership/payment fields stay server-owned.
+      match /devices/{deviceId} {
+        allow read, delete: if owns(uid);
+        allow create, update: if owns(uid)
+          && request.resource.data.keys().hasOnly([
+            'token', 'active', 'platform', 'createdAt', 'updatedAt', 'disabledAt'
+          ])
+          && request.resource.data.token is string
+          && request.resource.data.token.size() <= 4096
+          && request.resource.data.active is bool;
+      }
     }
 
     function noteParticipant(data) {
