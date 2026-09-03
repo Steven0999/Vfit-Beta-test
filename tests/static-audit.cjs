@@ -37,6 +37,9 @@ for (const handler of html.matchAll(/\b(?:onclick|onchange|oninput|onkeydown|ons
 assert.ok(!/lucide@latest/.test(html), 'Lucide must be version-pinned');
 assert.ok(html.includes('html5-qrcode@2.3.8/html5-qrcode.min.js'), 'html5-qrcode must be version-pinned');
 assert.ok(!html.includes('html5-qrcode@latest'), 'html5-qrcode must not use latest');
+assert.ok(html.includes("useBarCodeDetectorIfSupported: true"), 'barcode scanner should use the native detector when available');
+assert.ok(html.includes("'EAN_13', 'EAN_8', 'UPC_A', 'UPC_E', 'CODE_128', 'ITF'"), 'barcode scanner must target food barcode formats');
+assert.ok(html.includes("width: { ideal: 1920, min: 640 }"), 'barcode scanner should request a high-resolution rear camera');
 assert.ok(!/localStorage\.setItem\(['"]fittrack_state/.test(html), 'legacy shared state must never be overwritten');
 assert.ok(!/\beval\s*\(/.test(inlineScripts[0]), 'eval is not permitted');
 assert.ok(!/\bnew\s+Function\s*\(/.test(inlineScripts[0]), 'dynamic Function is not permitted');
@@ -58,6 +61,9 @@ assert.deepEqual(pngDimensions('icon-512.png'), [512, 512]);
 
 const serviceWorker = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
 new Function(serviceWorker);
+const appVersion = html.match(/const VFIT_APP_VERSION = '([^']+)'/);
+assert.ok(appVersion, 'app version must be declared');
+assert.ok(serviceWorker.includes(`const CACHE_VERSION = 'vfit-${appVersion[1]}'`), 'service worker cache must match app version');
 for (const host of ['googleapis.com', 'firestore.googleapis.com', 'identitytoolkit.googleapis.com', 'world.openfoodfacts.org']) {
   assert.ok(serviceWorker.includes(host), `service worker must keep ${host} network-only`);
 }
@@ -91,6 +97,9 @@ for (const feature of [
   'function saveWeeklyCheckIn(',
   'function smartProgressionForExercise(',
   'function weeklyReportFor(',
+  'function normaliseBarcodeValue(',
+  'function barcodeLookupCandidates(',
+  'function scanBarcodePhoto(',
   'function enablePushNotifications(',
   'function startMembershipCheckout(',
   'function deleteVfitAccount('
