@@ -697,55 +697,6 @@
             <!-- DASHBOARD TAB -->
             <!-- ============================== -->
             <section id="dashboard" class="tab-content active space-y-6">
-                <!-- AI COACH BUBBLE -->
-                <div id="ai-coach-bubble" class="glass-card rounded-[2.5rem] p-6 relative bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200">
-                    <!-- Speech bubble arrow -->
-                    <div class="absolute -top-3 left-8 w-6 h-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-l-2 border-t-2 border-indigo-200 transform rotate-45"></div>
-
-                    <div class="flex items-start gap-4">
-                        <!-- AI Avatar -->
-                        <div class="flex-shrink-0">
-                            <div class="w-14 h-14 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center shadow-lg">
-                                <i data-lucide="sparkles" class="w-7 h-7 text-white"></i>
-                            </div>
-                        </div>
-
-                        <!-- Message Content -->
-                        <div class="flex-1">
-                            <div class="flex items-center justify-between mb-2">
-                                <h3 class="font-black text-sm flex items-center gap-2">
-                                    <span class="bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">AI Coach</span>
-                                    <span class="text-[9px] px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">EVIDENCE-BASED</span>
-                                </h3>
-                                <button onclick="refreshAICoach()" class="text-slate-400 hover:text-indigo-600 transition-colors">
-                                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-                                </button>
-                            </div>
-
-                            <!-- AI Messages -->
-                            <div id="ai-coach-messages" class="space-y-3 text-sm text-slate-700">
-                                <p class="flex items-start gap-2">
-                                    <i data-lucide="loader" class="w-4 h-4 flex-shrink-0 mt-0.5 animate-spin text-indigo-600"></i>
-                                    <span>Analyzing your training data...</span>
-                                </p>
-                            </div>
-
-                            <!-- Action Buttons -->
-                            <div id="ai-coach-actions" class="hidden mt-4 flex flex-wrap gap-2">
-                                <!-- Dynamically populated based on recommendations -->
-                            </div>
-
-                            <!-- Last Updated -->
-                            <div class="mt-3 pt-3 border-t border-indigo-100">
-                                <p class="text-[10px] text-slate-400 flex items-center gap-1">
-                                    <i data-lucide="clock" class="w-3 h-3"></i>
-                                    <span id="ai-coach-timestamp">Just now</span>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="glass-card rounded-[2.5rem] p-8 flex flex-col items-center relative overflow-hidden">
                     <div class="relative w-48 h-48 flex items-center justify-center">
                         <svg class="w-full h-full" viewBox="0 0 192 192">
@@ -866,6 +817,74 @@
                     </div>
                 </div>
 
+                <!-- Conversational daily check-in -->
+                <div id="ai-coach-checkin-card" class="glass-card rounded-[2.5rem] p-6 border-2 border-orange-500">
+                    <div class="flex items-start gap-4 mb-4">
+                        <div class="w-14 h-14 rounded-2xl bg-slate-900 border border-orange-500 flex items-center justify-center flex-shrink-0">
+                            <i data-lucide="message-circle-heart" class="w-7 h-7 text-orange-400"></i>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-[10px] font-black uppercase tracking-[0.16em] text-orange-400">Daily AI Coach conversation</p>
+                            <h3 class="text-xl font-black mt-1">How are you feeling?</h3>
+                            <p class="text-xs text-slate-400 mt-1">A one-question-at-a-time check-in that adapts training advice to today’s shift.</p>
+                        </div>
+                    </div>
+                    <div id="ai-coach-checkin-summary" class="mb-4"></div>
+                    <button onclick="openAICoachCheckIn()" class="w-full bg-slate-900 text-white p-4 rounded-2xl font-black flex items-center justify-center gap-2">
+                        <i data-lucide="messages-square" class="w-5 h-5"></i>
+                        Talk to AI Coach
+                    </button>
+                </div>
+
+                <!-- AI coaching insights, kept beside every other coaching tool -->
+                <div id="ai-coach-bubble" class="glass-card rounded-[2.5rem] p-6 relative border-2 border-orange-500">
+                    <div class="flex items-start gap-4">
+                        <div class="flex-shrink-0">
+                            <div class="w-14 h-14 rounded-full bg-slate-900 border border-orange-500 flex items-center justify-center shadow-lg">
+                                <i data-lucide="sparkles" class="w-7 h-7 text-orange-400"></i>
+                            </div>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between gap-2 mb-2">
+                                <h3 class="font-black text-sm flex flex-wrap items-center gap-2">
+                                    <span>AI Coach Insights</span>
+                                    <span class="text-[9px] px-2 py-0.5 bg-slate-900 border border-orange-500 rounded-full font-bold">FROM YOUR LOGS</span>
+                                </h3>
+                                <button onclick="refreshAICoach()" class="text-slate-400 hover:text-indigo-600 transition-colors" aria-label="Refresh AI Coach insights">
+                                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            <div id="ai-coach-messages" class="space-y-3 text-sm text-slate-700" aria-live="polite">
+                                <p class="flex items-start gap-2">
+                                    <i data-lucide="loader" class="w-4 h-4 flex-shrink-0 mt-0.5 animate-spin text-indigo-600"></i>
+                                    <span>Analysing your training data…</span>
+                                </p>
+                            </div>
+                            <div id="ai-coach-actions" class="hidden mt-4 flex flex-wrap gap-2"></div>
+                            <div class="mt-3 pt-3 border-t border-indigo-100">
+                                <p class="text-[10px] text-slate-400 flex items-center gap-1">
+                                    <i data-lucide="clock" class="w-3 h-3"></i>
+                                    <span id="ai-coach-timestamp">Just now</span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Human coach connection and messages -->
+                <div class="glass-card p-6 rounded-[2.5rem]">
+                    <div class="flex items-center gap-2 mb-4">
+                        <i data-lucide="dumbbell" class="w-5 h-5 text-indigo-600"></i>
+                        <div>
+                            <h3 class="font-black text-lg">My Coach</h3>
+                            <p class="text-xs text-slate-400">Plans, notes and shared training days</p>
+                        </div>
+                    </div>
+                    <div id="member-coach-section">
+                        <p class="text-sm text-slate-400">Loading…</p>
+                    </div>
+                </div>
+
                 <div class="glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
@@ -967,17 +986,6 @@
                     <button onclick="logoutUser()" class="w-full mt-3 bg-red-500 text-white p-4 rounded-2xl font-bold hover:bg-red-600">
                         Sign Out
                     </button>
-                </div>
-
-                <!-- My Coach (members only) -->
-                <div class="glass-card p-6 rounded-[2.5rem]">
-                    <div class="flex items-center gap-2 mb-4">
-                        <i data-lucide="dumbbell" class="w-5 h-5 text-indigo-600"></i>
-                        <h3 class="font-black text-lg">My Coach</h3>
-                    </div>
-                    <div id="member-coach-section">
-                        <p class="text-sm text-slate-400">Loading...</p>
-                    </div>
                 </div>
 
                 <!-- Coach Access Admin (owner account only; hidden for everyone else) -->
@@ -3447,6 +3455,41 @@
         </div>
     </div>
 
+    <!-- CONVERSATIONAL AI COACH CHECK-IN -->
+    <div id="ai-coach-checkin-modal" class="modal-overlay" style="z-index:235;" role="dialog" aria-modal="true" aria-labelledby="ai-coach-checkin-title">
+        <div class="bg-white rounded-[2.5rem] p-0 overflow-hidden flex flex-col" style="height:min(760px,92vh);">
+            <div class="bg-slate-900 border-b border-orange-500 p-5 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-12 h-12 rounded-full bg-slate-900 border border-orange-500 flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="sparkles" class="w-6 h-6 text-orange-400"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <h3 id="ai-coach-checkin-title" class="text-lg font-black">AI Coach Check-in</h3>
+                        <p id="ai-coach-checkin-shift" class="text-[11px] text-slate-400 truncate">Reading today’s shift…</p>
+                    </div>
+                </div>
+                <button onclick="closeAICoachCheckIn()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close AI Coach check-in">×</button>
+            </div>
+
+            <div id="ai-coach-checkin-messages" class="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-3" role="log" aria-live="polite" aria-label="AI Coach conversation"></div>
+
+            <div class="border-t border-slate-200 p-4 bg-white">
+                <div id="ai-coach-checkin-options" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+                <div id="ai-coach-checkin-input-row" class="hidden">
+                    <label for="ai-coach-checkin-input" class="sr-only">Message AI Coach</label>
+                    <textarea id="ai-coach-checkin-input" maxlength="500" rows="2" onkeydown="handleAICoachCheckInKeydown(event)" class="w-full p-3 bg-slate-50 rounded-xl resize-none" placeholder="Type anything else you want the coach to know…"></textarea>
+                    <div class="grid grid-cols-3 gap-2 mt-2">
+                        <button id="ai-coach-checkin-skip" onclick="skipAICoachCheckInNote()" class="bg-slate-100 text-slate-600 p-3 rounded-xl font-bold text-xs">Skip</button>
+                        <button onclick="sendAICoachCheckInMessage()" class="col-span-2 bg-slate-900 text-white p-3 rounded-xl font-black text-xs flex items-center justify-center gap-2">
+                            <i data-lucide="send" class="w-4 h-4"></i> Send
+                        </button>
+                    </div>
+                </div>
+                <p class="text-[9px] text-slate-400 mt-3 text-center leading-relaxed">VFIT uses your answers and logged data to guide training. It does not diagnose illness or replace medical care. If symptoms are severe, unusual or urgent, seek appropriate professional help.</p>
+            </div>
+        </div>
+    </div>
+
     <!-- WEEKLY CHECK-IN -->
     <div id="checkin-modal" class="modal-overlay" style="z-index:230;">
         <div class="bg-white rounded-[2.5rem] p-6 max-h-[92vh] overflow-y-auto">
@@ -3515,7 +3558,7 @@
             </div>
             <div class="space-y-3 text-sm text-slate-600 mb-5">
                 <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
-                <p><b>Cloud:</b> Fitness, nutrition, check-in and readiness data can sync to your Firebase account. Progress photos remain device-only.</p>
+                <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos remain device-only.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
             </div>
@@ -3538,8 +3581,8 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.2';
-    const VFIT_STATE_SCHEMA_VERSION = 3;
+    const VFIT_APP_VERSION = '2.1.0-beta.3';
+    const VFIT_STATE_SCHEMA_VERSION = 4;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
         functionsRegion: 'europe-west2',
@@ -4154,7 +4197,7 @@
         const arrayFields = new Set([
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns'
+            'customExercises', 'checkIns', 'coachConversations'
         ]);
         const recordFields = new Set([
             'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
@@ -4185,6 +4228,7 @@
         merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
         merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
         merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
+        merged.coachConversations = mergeUniqueItems(local.coachConversations, remote.coachConversations, itemKey, preferRemote);
         merged.metricsHistory = mergeUniqueItems(
             local.metricsHistory,
             remote.metricsHistory,
@@ -4230,6 +4274,11 @@
             snapshot.dailyMeals = (snapshot.dailyMeals || []).slice(-1200);
             snapshot.cardioLogs = (snapshot.cardioLogs || []).slice(0, 500);
             snapshot.checkIns = (snapshot.checkIns || []).slice(0, 104);
+            snapshot.coachConversations = (snapshot.coachConversations || []).slice(0, 30).map(conversation => Object.assign({}, conversation, {
+                messages: (conversation.messages || []).slice(-12).map(message => Object.assign({}, message, {
+                    text: String(message.text || '').slice(0, 600)
+                }))
+            }));
             snapshot.meta.cloudTrimmed = true;
             json = JSON.stringify(snapshot);
         }
@@ -5751,6 +5800,10 @@
     async function renderMemberCoachSection() {
         const container = document.getElementById('member-coach-section');
         if (!container) return;
+        if (!currentUser) {
+            container.innerHTML = '<p class="text-sm text-slate-400">Sign in to view coach connections and messages.</p>';
+            return;
+        }
         try {
             const meDoc = await db.collection('users').doc(currentUser.uid).get();
             const me = meDoc.data() || {};
@@ -5789,9 +5842,12 @@
                         </div>
                         <button onclick="openMemberNotes()" class="bg-indigo-600 text-white px-3 py-2 rounded-lg font-bold text-xs">Notes</button>
                     </div>
-                    <div class="grid grid-cols-1 gap-2">
+                    <div class="grid grid-cols-2 gap-2">
                         <button onclick="openShareDays()" class="bg-emerald-600 text-white p-3 rounded-xl font-bold text-sm flex items-center justify-center gap-1">
                             <i data-lucide="share-2" class="w-4 h-4"></i> Share Days With Coach
+                        </button>
+                        <button onclick="switchTab('training')" class="bg-slate-900 text-white p-3 rounded-xl font-bold text-sm flex items-center justify-center gap-1">
+                            <i data-lucide="clipboard-list" class="w-4 h-4"></i> Coach Workouts
                         </button>
                     </div>
                     <p class="text-[11px] text-slate-400 text-center mt-2">Your coach's workouts appear in the Training tab.</p>`;
@@ -6987,6 +7043,7 @@
             rota: {}                  // date-keyed overrides
         },
         checkIns: [],
+        coachConversations: [],
         readinessLogs: {},
         coachingTargets: {
             workoutsPerWeek: 3,
@@ -7160,7 +7217,7 @@
         const arrayFields = [
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns'
+            'customExercises', 'checkIns', 'coachConversations'
         ];
         arrayFields.forEach(key => {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
@@ -8557,9 +8614,6 @@
 
         // Weekly training volume (intermediate/advanced only)
         renderVolumeTracker();
-
-        // Render AI Coach recommendations
-        renderAICoach();
 
         refreshIcons();
     }
@@ -14813,6 +14867,8 @@
         if (bubble) {
             bubble.style.display = state.aiCoachEnabled ? 'block' : 'none';
         }
+        renderAICoachCheckInSummary();
+        if (!state.aiCoachEnabled) closeAICoachCheckIn();
         showToast(state.aiCoachEnabled ? 'AI Coach enabled' : 'AI Coach disabled');
     }
 
@@ -15054,6 +15110,456 @@
         };
     }
 
+    let aiCoachCheckInSession = null;
+    let aiCoachPromptedSessionKey = '';
+
+    function aiCoachQuestionnaireSteps() {
+        return [
+            {
+                id: 'mood',
+                question: 'First, how are you feeling overall today?',
+                options: [
+                    { value: 'great', label: 'Great', hint: 'Positive and ready' },
+                    { value: 'okay', label: 'Okay', hint: 'Somewhere in the middle' },
+                    { value: 'drained', label: 'Drained', hint: 'Running on empty' }
+                ]
+            },
+            {
+                id: 'sleepHours',
+                question: 'Roughly how much sleep did you get in your main sleep period?',
+                options: [
+                    { value: '4.5', label: 'Under 5h', hint: 'Very short' },
+                    { value: '5.5', label: '5–6h', hint: 'Short' },
+                    { value: '6.5', label: '6–7h', hint: 'Nearly there' },
+                    { value: '7.5', label: '7–8h', hint: 'Solid' },
+                    { value: '8.5', label: '8h+', hint: 'Well rested' }
+                ]
+            },
+            {
+                id: 'energy',
+                question: 'How is your energy right now?',
+                options: [
+                    { value: '5', label: 'High', hint: 'Plenty in the tank' },
+                    { value: '3', label: 'Steady', hint: 'Enough for normal tasks' },
+                    { value: '1', label: 'Low', hint: 'Everything feels harder' }
+                ]
+            },
+            {
+                id: 'fatigue',
+                question: 'How much whole-body fatigue are you carrying?',
+                options: [
+                    { value: '1', label: 'Fresh', hint: 'Recovered' },
+                    { value: '3', label: 'Moderate', hint: 'Noticeable but manageable' },
+                    { value: '5', label: 'Heavy', hint: 'Very fatigued' }
+                ]
+            },
+            {
+                id: 'soreness',
+                question: 'What is your muscle or joint soreness like?',
+                options: [
+                    { value: '1', label: 'None', hint: 'Moving normally' },
+                    { value: '3', label: 'Manageable', hint: 'Normal training soreness' },
+                    { value: '5', label: 'Severe or sharp', hint: 'Movement is affected' }
+                ]
+            },
+            {
+                id: 'stress',
+                question: 'How high is your stress today?',
+                options: [
+                    { value: '1', label: 'Low', hint: 'Calm' },
+                    { value: '3', label: 'Moderate', hint: 'Manageable' },
+                    { value: '5', label: 'High', hint: 'Under pressure' }
+                ]
+            },
+            {
+                id: 'wellbeing',
+                question: 'Last health check: which best describes you today?',
+                options: [
+                    { value: 'well', label: 'I feel well', hint: 'No unusual symptoms' },
+                    { value: 'niggle', label: 'Minor niggle', hint: 'Something needs care' },
+                    { value: 'unwell', label: 'Unwell / unusual pain', hint: 'Training may not be appropriate' }
+                ]
+            }
+        ];
+    }
+
+    function aiCoachShiftLabel(shift) {
+        const type = shift && shift.type ? shift.type : 'off';
+        const labels = { off: 'Rest / off day', day: 'Day shift', early: 'Early shift', night: 'Night shift' };
+        const hours = shift && shift.start ? ` · ${shift.start}–${shift.end || ''}` : '';
+        return (labels[type] || 'Shift not set') + hours;
+    }
+
+    function aiCoachSafetySignal(value) {
+        const text = String(value || '').toLowerCase();
+        if (!text) return '';
+        const urgent = [
+            'chest pain', 'can\'t breathe', 'cannot breathe', 'severe difficulty breathing',
+            'passed out', 'fainted', 'one-sided weakness', 'one sided weakness'
+        ];
+        if (urgent.some(term => text.includes(term))) return 'urgent';
+        const concern = [
+            'sharp pain', 'unusual pain', 'dizzy', 'dizziness', 'fever', 'vomiting',
+            'injured', 'injury', 'unwell', 'heart racing'
+        ];
+        return concern.some(term => text.includes(term)) ? 'concern' : '';
+    }
+
+    function aiCoachShiftAdvice(shift, label) {
+        const type = shift && shift.type ? shift.type : 'off';
+        const adjusted = label !== 'Ready';
+        if (type === 'night') {
+            return adjusted
+                ? 'For this night shift, protect your main sleep first. If you train, keep it short and place it after waking and before the shift—not at the exhausted end of it.'
+                : 'For this night shift, your best training window is after your main sleep and before the shift. Keep food, fluids and the session planned before work starts.';
+        }
+        if (type === 'early') {
+            return adjusted
+                ? 'For this early shift, avoid forcing a hard pre-shift session. Choose a shorter session after work only if energy improves; otherwise make today recovery-focused.'
+                : 'For this early shift, train after work if your energy stays steady, or use a short pre-shift session only when it does not cut into sleep.';
+        }
+        if (type === 'day') {
+            return adjusted
+                ? 'Around this day shift, use the easiest realistic training window and shorten the session. Consistency matters more than completing every planned set.'
+                : 'Around this day shift, use whichever pre- or post-shift window you can repeat consistently and keep the session plan ready in advance.';
+        }
+        return adjusted
+            ? 'Because this is an off day, use the extra flexibility for recovery or a shorter session when energy is best.'
+            : 'Because this is an off day, place the session at your best-energy time and leave enough room for meals and recovery.';
+    }
+
+    function buildAICoachCheckInResult(answers, shift, note) {
+        const values = answers || {};
+        const sleepHours = clampNumber(values.sleepHours, 0, 16, 0);
+        const sleepQuality = sleepHours >= 8 ? 5 : sleepHours >= 7 ? 4 : sleepHours >= 6 ? 3 : sleepHours >= 5 ? 2 : 1;
+        const readinessValues = {
+            sleepHours,
+            sleepQuality,
+            energy: clampNumber(values.energy, 1, 5, 3),
+            fatigue: clampNumber(values.fatigue, 1, 5, 3),
+            soreness: clampNumber(values.soreness, 1, 5, 3),
+            stress: clampNumber(values.stress, 1, 5, 3)
+        };
+        let score = calculateReadinessScore(readinessValues);
+        if (values.mood === 'great') score += 4;
+        if (values.mood === 'drained') score -= 10;
+        if (shift && shift.type === 'night' && sleepHours < 6) score -= 5;
+        if (values.wellbeing === 'niggle') score -= 7;
+        if (values.wellbeing === 'unwell') score = Math.min(score - 15, 25);
+
+        const safetyFromText = aiCoachSafetySignal(note);
+        const safetyLevel = safetyFromText || (values.wellbeing === 'unwell' ? 'concern' : '');
+        if (safetyLevel === 'urgent') score = Math.min(score, 15);
+        else if (safetyLevel === 'concern') score = Math.min(score, 25);
+        score = Math.round(Math.min(100, Math.max(0, score)));
+
+        const guide = readinessGuidance(score);
+        const drivers = [];
+        if (sleepHours < 6) drivers.push('short sleep');
+        else if (sleepHours >= 7) drivers.push('solid sleep');
+        if (readinessValues.energy <= 1) drivers.push('low energy');
+        else if (readinessValues.energy >= 5) drivers.push('high energy');
+        if (readinessValues.fatigue >= 5) drivers.push('heavy fatigue');
+        if (readinessValues.soreness >= 5) drivers.push('severe or sharp soreness');
+        if (readinessValues.stress >= 5) drivers.push('high stress');
+        if (values.mood === 'drained') drivers.push('feeling drained');
+        if (values.wellbeing === 'niggle') drivers.push('a reported niggle');
+        if (!drivers.length) drivers.push('your overall check-in');
+
+        let action = guide.action;
+        let safetyNotice = '';
+        if (safetyLevel === 'urgent') {
+            action = 'Do not train. Contact local emergency services now for urgent symptoms.';
+            safetyNotice = 'Your message includes symptoms that can need urgent help. VFIT cannot assess them—stop training and contact local emergency services now.';
+        } else if (safetyLevel === 'concern') {
+            action = 'Skip hard training today. Seek appropriate medical advice if symptoms are unusual, worsening or concerning.';
+            safetyNotice = 'VFIT cannot diagnose pain or illness. Use appropriate professional care before returning to hard training.';
+        }
+
+        return {
+            score,
+            label: guide.label,
+            color: guide.color,
+            action,
+            shiftAdvice: aiCoachShiftAdvice(shift, guide.label),
+            safetyLevel,
+            safetyNotice,
+            drivers,
+            readinessValues
+        };
+    }
+
+    function aiCoachAnswerAcknowledgement(stepId, value) {
+        if (stepId === 'mood' && value === 'great') return 'Good to hear. Let’s see whether recovery matches that feeling.';
+        if (stepId === 'mood' && value === 'drained') return 'Thanks for being honest. We’ll keep today realistic.';
+        if (stepId === 'sleepHours' && Number(value) < 6) return 'That is a short sleep window, so I’ll factor it into today’s load.';
+        if (stepId === 'energy' && Number(value) <= 1) return 'Understood. Low energy matters more than forcing the original plan.';
+        if (stepId === 'soreness' && Number(value) >= 5) return 'Severe or sharp soreness is a reason to be cautious.';
+        if (stepId === 'wellbeing' && value !== 'well') return 'Thanks for flagging that. Safety comes before the programme.';
+        return 'Got it.';
+    }
+
+    function appendAICoachCheckInMessage(role, text) {
+        if (!aiCoachCheckInSession) return;
+        aiCoachCheckInSession.messages.push({ role: role === 'user' ? 'user' : 'coach', text: String(text || '').slice(0, 1200) });
+        aiCoachCheckInSession.messages = aiCoachCheckInSession.messages.slice(-40);
+    }
+
+    function openAICoachCheckIn() {
+        const modal = document.getElementById('ai-coach-checkin-modal');
+        if (!modal) return;
+        const date = localDateKey();
+        const sessionKey = `${currentUser && currentUser.uid ? currentUser.uid : 'guest'}:${date}`;
+        aiCoachPromptedSessionKey = sessionKey;
+        if (!aiCoachCheckInSession || aiCoachCheckInSession.date !== date || aiCoachCheckInSession.finished) {
+            const shift = getShiftForDate(date);
+            const firstName = String((firebaseUserData && firebaseUserData.name) || (currentUser && currentUser.displayName) || '').trim().split(/\s+/)[0];
+            aiCoachCheckInSession = {
+                id: 'coach_checkin_' + Date.now(),
+                date,
+                shift,
+                stepIndex: 0,
+                answers: {},
+                note: '',
+                messages: [],
+                awaitingNote: false,
+                finished: false,
+                result: null
+            };
+            appendAICoachCheckInMessage('coach', `${firstName ? 'Hi ' + firstName + '. ' : 'Hi. '}I have today as ${aiCoachShiftLabel(shift).toLowerCase()}. I’ll ask seven quick questions, one at a time, then adjust the training guidance around your shift.`);
+            appendAICoachCheckInMessage('coach', aiCoachQuestionnaireSteps()[0].question);
+        }
+        modal.style.display = 'flex';
+        renderAICoachCheckInConversation();
+        refreshIcons();
+    }
+
+    function closeAICoachCheckIn() {
+        const modal = document.getElementById('ai-coach-checkin-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    function renderAICoachCheckInConversation() {
+        if (!aiCoachCheckInSession) return;
+        const messages = document.getElementById('ai-coach-checkin-messages');
+        const options = document.getElementById('ai-coach-checkin-options');
+        const inputRow = document.getElementById('ai-coach-checkin-input-row');
+        const input = document.getElementById('ai-coach-checkin-input');
+        const skip = document.getElementById('ai-coach-checkin-skip');
+        const shiftLabel = document.getElementById('ai-coach-checkin-shift');
+        if (!messages || !options || !inputRow || !input) return;
+
+        if (shiftLabel) shiftLabel.textContent = aiCoachShiftLabel(aiCoachCheckInSession.shift);
+        messages.innerHTML = aiCoachCheckInSession.messages.map(message => {
+            const user = message.role === 'user';
+            return `<div class="flex ${user ? 'justify-end' : 'justify-start'}">
+                <div class="max-w-[86%] px-4 py-3 rounded-2xl text-sm leading-relaxed" style="${user ? 'background:#f97316;color:#000;border-bottom-right-radius:0.35rem;' : 'background:#0a0a0a;color:#fdba74;border:1px solid #2d2d2d;border-bottom-left-radius:0.35rem;'}">${escapeHtml(message.text)}</div>
+            </div>`;
+        }).join('');
+
+        const steps = aiCoachQuestionnaireSteps();
+        if (!aiCoachCheckInSession.awaitingNote && !aiCoachCheckInSession.finished) {
+            const step = steps[aiCoachCheckInSession.stepIndex];
+            options.innerHTML = step.options.map(option => `<button onclick="answerAICoachCheckIn('${escapeJsString(step.id)}','${escapeJsString(option.value)}','${escapeJsString(option.label)}')" class="text-left bg-slate-900 border border-orange-500 p-3 rounded-xl">
+                <span class="block font-black text-sm">${escapeHtml(option.label)}</span>
+                <span class="block text-[10px] text-slate-400 mt-0.5">${escapeHtml(option.hint)}</span>
+            </button>`).join('');
+            inputRow.classList.add('hidden');
+        } else if (aiCoachCheckInSession.awaitingNote) {
+            options.innerHTML = '';
+            inputRow.classList.remove('hidden');
+            input.placeholder = 'Anything else I should know?';
+            if (skip) { skip.style.display = ''; skip.textContent = 'Skip'; }
+        } else {
+            options.innerHTML = `
+                <button onclick="openTrainingFromCoachCheckIn()" class="bg-slate-900 border border-orange-500 p-3 rounded-xl font-bold text-xs">Open Training</button>
+                <button onclick="openWeeklyCheckInFromCoach()" class="bg-slate-900 border border-orange-500 p-3 rounded-xl font-bold text-xs">Weekly Check-in</button>
+                <button onclick="closeAICoachCheckIn()" class="bg-slate-100 p-3 rounded-xl font-bold text-xs">Done</button>`;
+            inputRow.classList.remove('hidden');
+            input.placeholder = 'Ask a follow-up about today’s advice…';
+            if (skip) skip.style.display = 'none';
+        }
+        setTimeout(() => {
+            messages.scrollTop = messages.scrollHeight;
+            if (aiCoachCheckInSession && aiCoachCheckInSession.awaitingNote) input.focus();
+        }, 0);
+        refreshIcons();
+    }
+
+    function answerAICoachCheckIn(stepId, value, label) {
+        if (!aiCoachCheckInSession || aiCoachCheckInSession.finished || aiCoachCheckInSession.awaitingNote) return;
+        const steps = aiCoachQuestionnaireSteps();
+        const step = steps[aiCoachCheckInSession.stepIndex];
+        if (!step || step.id !== stepId) return;
+        const selected = step.options.find(option => String(option.value) === String(value));
+        if (!selected) return;
+        aiCoachCheckInSession.answers[step.id] = selected.value;
+        appendAICoachCheckInMessage('user', label || selected.label);
+        appendAICoachCheckInMessage('coach', aiCoachAnswerAcknowledgement(step.id, selected.value));
+        aiCoachCheckInSession.stepIndex += 1;
+        if (aiCoachCheckInSession.stepIndex < steps.length) {
+            appendAICoachCheckInMessage('coach', steps[aiCoachCheckInSession.stepIndex].question);
+        } else {
+            aiCoachCheckInSession.awaitingNote = true;
+            appendAICoachCheckInMessage('coach', 'Anything else I should know—such as poor recovery, pain, a stressful shift, or a change to today’s plan? You can also skip this.');
+        }
+        renderAICoachCheckInConversation();
+    }
+
+    function handleAICoachCheckInKeydown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendAICoachCheckInMessage();
+        }
+    }
+
+    function sendAICoachCheckInMessage() {
+        if (!aiCoachCheckInSession) return;
+        const input = document.getElementById('ai-coach-checkin-input');
+        const text = String(input && input.value || '').trim().slice(0, 500);
+        if (!text) return;
+        input.value = '';
+        appendAICoachCheckInMessage('user', text);
+        if (aiCoachCheckInSession.awaitingNote) {
+            aiCoachCheckInSession.note = text;
+            finishAICoachCheckIn();
+            return;
+        }
+        if (aiCoachCheckInSession.finished) {
+            appendAICoachCheckInMessage('coach', aiCoachFollowUpResponse(text, aiCoachCheckInSession.result));
+            persistAICoachConversationMessages();
+            renderAICoachCheckInConversation();
+        }
+    }
+
+    function skipAICoachCheckInNote() {
+        if (!aiCoachCheckInSession || !aiCoachCheckInSession.awaitingNote) return;
+        appendAICoachCheckInMessage('user', 'Nothing else today.');
+        finishAICoachCheckIn();
+    }
+
+    function finishAICoachCheckIn() {
+        if (!aiCoachCheckInSession || aiCoachCheckInSession.finished) return;
+        const session = aiCoachCheckInSession;
+        session.awaitingNote = false;
+        session.result = buildAICoachCheckInResult(session.answers, session.shift, session.note);
+        session.finished = true;
+        appendAICoachCheckInMessage('coach', `Thanks—that gives me a useful picture. Your training readiness is ${session.result.score}/100: ${session.result.label}.`);
+        appendAICoachCheckInMessage('coach', session.result.action);
+        appendAICoachCheckInMessage('coach', session.result.shiftAdvice);
+        if (session.result.safetyNotice) appendAICoachCheckInMessage('coach', session.result.safetyNotice);
+        appendAICoachCheckInMessage('coach', 'You can ask me a follow-up below, open today’s training, or finish here.');
+
+        const readiness = session.result.readinessValues;
+        if (!isPlainRecord(state.readinessLogs)) state.readinessLogs = {};
+        state.readinessLogs[session.date] = Object.assign({}, readiness, {
+            date: session.date,
+            score: session.result.score,
+            shift: session.shift.type,
+            mood: session.answers.mood,
+            wellbeing: session.answers.wellbeing,
+            note: session.note,
+            source: 'ai-coach',
+            recordedAt: new Date().toISOString()
+        });
+        if (!Array.isArray(state.coachConversations)) state.coachConversations = [];
+        const record = {
+            id: session.id,
+            date: session.date,
+            createdAt: new Date().toISOString(),
+            shiftType: session.shift.type,
+            answers: deepClone(session.answers),
+            note: session.note,
+            result: deepClone(session.result),
+            messages: deepClone(session.messages).slice(-24)
+        };
+        state.coachConversations.unshift(record);
+        state.coachConversations = state.coachConversations.slice(0, 90);
+        saveState();
+        renderAICoachCheckInSummary();
+        renderReadinessSummary();
+        renderAICoach();
+        renderAICoachCheckInConversation();
+        showToast(`AI Coach check-in saved · ${session.result.label} ${session.result.score}/100`, 5000);
+    }
+
+    function persistAICoachConversationMessages() {
+        if (!aiCoachCheckInSession || !Array.isArray(state.coachConversations)) return;
+        const record = state.coachConversations.find(item => item.id === aiCoachCheckInSession.id);
+        if (!record) return;
+        record.messages = deepClone(aiCoachCheckInSession.messages).slice(-24);
+        record.updatedAt = new Date().toISOString();
+        saveState();
+    }
+
+    function aiCoachFollowUpResponse(text, result) {
+        const query = String(text || '').toLowerCase();
+        const current = result || {};
+        const safety = aiCoachSafetySignal(query);
+        if (safety === 'urgent') return 'Stop training and contact local emergency services now. I cannot assess urgent symptoms in VFIT.';
+        if (safety === 'concern' || /\b(pain|ill|sick|injur)/.test(query)) {
+            return 'I can help you reduce or skip training, but I cannot assess pain or illness. Avoid hard training and seek appropriate professional advice if it is unusual, worsening or concerning.';
+        }
+        if (/\b(why|score|reason|driver)/.test(query)) {
+            return `The main factors were ${(current.drivers || ['your answers']).join(', ')}. The score is a training guide from this check-in—not a medical measurement.`;
+        }
+        if (/\b(shift|night|early|work)/.test(query)) return current.shiftAdvice || 'Keep the session close to your best-energy window and protect sleep around work.';
+        if (/\b(train|workout|session|exercise)/.test(query)) return current.action || 'Use today’s readiness to adjust the session rather than forcing the original workload.';
+        if (/\b(sleep|tired|fatigue)/.test(query)) return 'Protect the next main sleep window first. Keep training away from the most exhausted end of a shift and reduce volume when fatigue stays high.';
+        if (/\b(food|meal|eat|nutrition|protein|water|hydr)/.test(query)) return 'For a shift day, plan a repeatable protein-rich meal, fibre-rich food and fluids before work so the hardest hours do not rely on chance.';
+        return `For today, the clearest next step is: ${current.action || 'keep the plan realistic and respond to how you feel.'} ${current.shiftAdvice || ''}`.trim();
+    }
+
+    function openTrainingFromCoachCheckIn() {
+        closeAICoachCheckIn();
+        switchTab('training');
+    }
+
+    function openWeeklyCheckInFromCoach() {
+        closeAICoachCheckIn();
+        openCheckInModal();
+    }
+
+    function renderAICoachCheckInSummary() {
+        const box = document.getElementById('ai-coach-checkin-summary');
+        const card = document.getElementById('ai-coach-checkin-card');
+        if (card) card.style.display = state.aiCoachEnabled === false ? 'none' : 'block';
+        if (!box) return;
+        if (state.aiCoachEnabled === false) return;
+        const date = localDateKey();
+        const latest = (state.coachConversations || []).find(item => item.date === date && item.result);
+        const shift = getShiftForDate(date);
+        if (!latest) {
+            box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
+                <div class="flex items-center justify-between gap-3"><p class="font-bold text-sm">Today · ${escapeHtml(aiCoachShiftLabel(shift))}</p><span class="text-[9px] font-black uppercase text-orange-400">Not checked in</span></div>
+                <p class="text-xs text-slate-400 mt-2">Answer seven quick prompts to get a shift-aware train, adjust or recover recommendation.</p>
+            </div>`;
+            return;
+        }
+        const result = latest.result;
+        const palette = result.color === 'emerald' ? 'border-emerald-200' : result.color === 'amber' ? 'border-amber-200' : 'border-rose-200';
+        box.innerHTML = `<div class="bg-slate-50 border ${palette} p-4 rounded-2xl">
+            <div class="flex items-end justify-between gap-3">
+                <div><p class="text-3xl font-black">${Math.round(result.score)}/100</p><p class="text-[10px] font-black uppercase">${escapeHtml(result.label)} · ${escapeHtml(aiCoachShiftLabel(shift))}</p></div>
+                <button onclick="openAICoachCheckIn()" class="text-xs font-black text-orange-400">Talk again</button>
+            </div>
+            <p class="text-xs text-slate-500 mt-3">${escapeHtml(result.action)}</p>
+        </div>`;
+    }
+
+    function maybePromptAICoachCheckIn() {
+        if (state.aiCoachEnabled === false) return;
+        const date = localDateKey();
+        const sessionKey = `${currentUser && currentUser.uid ? currentUser.uid : 'guest'}:${date}`;
+        const completedToday = (state.coachConversations || []).some(item => item.date === date && item.result);
+        if (completedToday || aiCoachPromptedSessionKey === sessionKey) return;
+        aiCoachPromptedSessionKey = sessionKey;
+        setTimeout(() => {
+            const coaching = document.getElementById('coaching');
+            if (coaching && coaching.classList.contains('active')) openAICoachCheckIn();
+        }, 450);
+    }
+
     function readinessGuidance(score) {
         if (score >= 75) return { label: 'Ready', color: 'emerald', action: 'Train as planned. Progress a lift if technique and RIR are on target.' };
         if (score >= 55) return { label: 'Adjust', color: 'amber', action: 'Keep the session, but reduce total sets by around 20% or keep 2–3 RIR.' };
@@ -15282,13 +15788,17 @@
     }
 
     function renderCoachingHub() {
+        renderAICoachCheckInSummary();
+        renderAICoach();
         renderReadinessSummary();
         renderCheckInSummary();
         renderProgressionRecommendations();
         renderRotaSummary();
         renderWeeklyReportSummary();
         renderMembership();
+        renderMemberCoachSection();
         refreshIcons();
+        maybePromptAICoachCheckIn();
     }
 
     // ==========================================================================

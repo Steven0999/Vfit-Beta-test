@@ -129,6 +129,13 @@ const expose = `
   safeJsonForInline,
   escapeHtml,
   calculateReadinessScore,
+  aiCoachQuestionnaireSteps,
+  buildAICoachCheckInResult,
+  aiCoachFollowUpResponse,
+  openAICoachCheckIn,
+  answerAICoachCheckIn,
+  skipAICoachCheckInNote,
+  sendAICoachCheckInMessage,
   getShiftForDate,
   smartProgressionForExercise,
   weeklyReportFor,
@@ -167,6 +174,7 @@ const local = app.normalizeState({
   meta: { updatedAt: '2026-01-01T00:00:00.000Z' },
   goals: { calories: 2200 },
   workoutHistory: [{ id: 'local-workout', date: '2026-01-01' }],
+  coachConversations: [{ id: 'local-coach-chat', date: '2026-01-01' }],
   metricsHistory: [{ date: '2026-01-01', weight: 100, photos: { front: 'data:image/jpeg;base64,AA==' } }]
 });
 const remote = {
@@ -175,6 +183,7 @@ const remote = {
   workoutHistory: [{ id: 'cloud-workout', date: '2026-02-01' }],
   metricsHistory: [{ date: '2026-01-01', weight: 99 }],
   checkIns: [{ id: 'cloud-checkin', date: '2026-02-01', energy: 4 }],
+  coachConversations: [{ id: 'cloud-coach-chat', date: '2026-02-01' }],
   readinessLogs: { '2026-02-01': { score: 82 } }
 };
 const merged = app.mergeStateSnapshots(local, remote);
@@ -183,6 +192,7 @@ assert.deepEqual([...merged.workoutHistory.map(item => item.id)].sort(), ['cloud
 assert.equal(merged.metricsHistory[0].weight, 99);
 assert.equal(merged.metricsHistory[0].photos.front, 'data:image/jpeg;base64,AA==');
 assert.equal(merged.checkIns[0].id, 'cloud-checkin');
+assert.deepEqual([...merged.coachConversations.map(item => item.id)].sort(), ['cloud-coach-chat', 'local-coach-chat']);
 assert.equal(merged.readinessLogs['2026-02-01'].score, 82);
 
 // Readiness reacts in the right direction and remains a bounded score.
@@ -190,6 +200,55 @@ const highReadiness = app.calculateReadinessScore({ sleepHours: 8, sleepQuality:
 const lowReadiness = app.calculateReadinessScore({ sleepHours: 3, sleepQuality: 1, energy: 1, fatigue: 5, soreness: 5, stress: 5 });
 assert.ok(highReadiness > lowReadiness);
 assert.ok(highReadiness <= 100 && lowReadiness >= 0);
+
+// The conversational coach is one-question-at-a-time, shift-aware and safety bounded.
+const coachQuestions = app.aiCoachQuestionnaireSteps();
+assert.equal(coachQuestions.length, 7);
+assert.equal(new Set(coachQuestions.map(step => step.id)).size, 7);
+assert.ok(coachQuestions.every(step => step.question && step.options.length >= 3));
+
+const readyOffDay = app.buildAICoachCheckInResult({
+  mood: 'great', sleepHours: '8.5', energy: '5', fatigue: '1', soreness: '1', stress: '1', wellbeing: 'well'
+}, { type: 'off' }, 'Feeling good');
+assert.equal(readyOffDay.label, 'Ready');
+assert.ok(readyOffDay.score >= 75 && readyOffDay.score <= 100);
+assert.match(readyOffDay.shiftAdvice, /off day/i);
+
+const tiredNightShift = app.buildAICoachCheckInResult({
+  mood: 'drained', sleepHours: '4.5', energy: '1', fatigue: '5', soreness: '3', stress: '5', wellbeing: 'well'
+}, { type: 'night', start: '19:00', end: '07:00' }, 'Long shift');
+assert.equal(tiredNightShift.label, 'Recover');
+assert.match(tiredNightShift.shiftAdvice, /after waking|main sleep/i);
+
+const unwellCheckIn = app.buildAICoachCheckInResult({
+  mood: 'great', sleepHours: '8.5', energy: '5', fatigue: '1', soreness: '1', stress: '1', wellbeing: 'unwell'
+}, { type: 'day' }, 'I feel dizzy and have unusual pain');
+assert.ok(unwellCheckIn.score <= 25);
+assert.equal(unwellCheckIn.safetyLevel, 'concern');
+assert.match(unwellCheckIn.safetyNotice, /cannot diagnose|professional care/i);
+assert.match(app.aiCoachFollowUpResponse('I have chest pain', readyOffDay), /emergency services/i);
+
+// A complete chat flow persists both the conversation and its linked readiness score.
+const chatState = app.defaultState();
+chatState.shiftProfile.enabled = true;
+chatState.shiftProfile.shiftType = 'nights';
+chatState.shiftProfile.workDays = [new Date().getDay()];
+app.setUser(null);
+app.setState(chatState);
+app.openAICoachCheckIn();
+for (const step of app.aiCoachQuestionnaireSteps()) {
+  const answer = step.id === 'sleepHours' ? step.options.at(-1) : step.options[0];
+  app.answerAICoachCheckIn(step.id, answer.value, answer.label);
+}
+app.skipAICoachCheckInNote();
+const completedChatState = app.getState();
+const chatDateKey = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+assert.equal(completedChatState.coachConversations.length, 1);
+assert.equal(completedChatState.readinessLogs[chatDateKey].source, 'ai-coach');
+assert.equal(completedChatState.coachConversations[0].result.label, 'Ready');
+document.getElementById('ai-coach-checkin-input').value = 'Why this score?';
+app.sendAICoachCheckInMessage();
+assert.match(completedChatState.coachConversations[0].messages.at(-1).text, /main factors/i);
 
 // A dated rota entry overrides the recurring shift pattern.
 const rotaState = app.defaultState();

@@ -1,10 +1,12 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.2` adds a Coaching Hub and a more reliable mobile food-barcode scanner without removing the existing tracker.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.3` brings the coaching experience into one hub and adds a conversational daily check-in while keeping the existing tracker and shift-work format.
 
 ## What is included
 
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
+- A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions and shift-specific advice.
+- One Coaching Hub for AI insights, the connected human coach, readiness, weekly check-ins, progression, rota and reports.
 - Weekly client check-ins with adherence, wins, challenges and automatic coach-review flags.
 - Shift rota overrides that feed readiness and notification timing.
 - Smart load progression using recent reps, RIR, estimated 1RM, plateaus and low-readiness deloads.
@@ -16,6 +18,8 @@ VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, off
 - Food barcode scanning tuned for UPC/EAN codes with high-resolution rear-camera capture, continuous focus/zoom where supported, torch control, photo scanning, preserved leading zeroes and UPC/EAN lookup fallbacks.
 
 Push, payments, App Check and server-side deletion are deliberately disabled in `vfit-config.js` until their Firebase and Stripe values are configured. Existing beta features remain available while setup is pending.
+
+The conversational coach uses structured logic on the device and the member’s existing VFIT logs. It does not call a third-party generative-AI service or diagnose health conditions. When cloud health-data sync is enabled, its saved check-ins follow the same account and approved-coach access controls as other VFIT data.
 
 ## Run locally
 
@@ -97,6 +101,8 @@ Membership state is written only by Cloud Functions. Account deletion cancels/de
 
 - Register, verify the email, sign out and sign back in; confirm accounts remain isolated.
 - Add rota days, log high and low readiness entries, and confirm the recommendation changes.
+- Open the Coaching Hub with no check-in for today; confirm the AI Coach opens, asks seven questions one at a time, and changes its advice for night, early, day and off-day rota entries.
+- Complete the AI Coach check-in, ask a follow-up, close and reopen the hub, and confirm the result is saved with Today’s Readiness.
 - Complete a weekly check-in; confirm the linked coach sees its flags and can reply in Notes.
 - Complete workouts with weights, reps and RIR; confirm Smart Progression appears in the Coaching Hub and workout fields.
 - Download both the member report and a report from the coach client view.
