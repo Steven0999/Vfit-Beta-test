@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="description" content="VFIT - Complete fitness tracking app with cloud sync">
+    <meta name="description" content="VFIT - Shift-aware fitness, nutrition, readiness and online coaching">
     <meta name="theme-color" content="#1f2937">
     <meta name="color-scheme" content="dark">
     <meta name="referrer" content="no-referrer">
@@ -30,6 +30,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check-compat.js"></script>
+    <script src="./vfit-config.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -620,6 +624,10 @@
                             <label for="register-confirm" class="sr-only">Confirm password</label>
                             <input type="password" id="register-confirm" placeholder="Confirm Password" autocomplete="new-password" required minlength="6" class="w-full p-4 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-indigo-500 font-medium">
                         </div>
+                        <label class="flex items-start gap-3 p-3 bg-slate-50 rounded-xl text-xs text-slate-600">
+                            <input type="checkbox" id="register-privacy-consent" class="w-5 h-5 accent-indigo-600 flex-shrink-0" required>
+                            <span>I understand that VFIT stores my fitness, nutrition and health-related tracking data. <button type="button" onclick="openPrivacyCenter()" class="font-bold text-indigo-600 underline">View privacy details</button></span>
+                        </label>
                         <button type="submit" data-auth-submit class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-60">
                             Create Account
                         </button>
@@ -847,6 +855,85 @@
             </section>
 
             <!-- ============================== -->
+            <!-- COACHING HUB TAB -->
+            <!-- ============================== -->
+            <section id="coaching" class="tab-content space-y-6">
+                <div class="bg-slate-900 rounded-[2.5rem] p-6 text-white relative overflow-hidden shadow-xl">
+                    <div class="relative z-10">
+                        <p class="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 mb-2">VFIT Coaching Hub</p>
+                        <h2 class="text-2xl font-black mb-2">Your plan, readiness and progress</h2>
+                        <p class="text-sm opacity-80">Built around your shifts, completed sessions and weekly check-ins.</p>
+                    </div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Today’s Readiness</h3>
+                            <p class="text-xs text-slate-400">Sleep, fatigue, soreness and stress</p>
+                        </div>
+                        <button onclick="openReadinessModal()" class="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold text-xs">Log Today</button>
+                    </div>
+                    <div id="readiness-summary"></div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Weekly Check-in</h3>
+                            <p class="text-xs text-slate-400">Send your coach a clear weekly update</p>
+                        </div>
+                        <button onclick="openCheckInModal()" class="bg-emerald-600 text-white px-4 py-3 rounded-xl font-bold text-xs">Check In</button>
+                    </div>
+                    <div id="checkin-summary"></div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Smart Progression</h3>
+                            <p class="text-xs text-slate-400">Next-session weights, plateaus and deload guidance</p>
+                        </div>
+                        <i data-lucide="trending-up" class="w-6 h-6 text-indigo-600"></i>
+                    </div>
+                    <div id="progression-recommendations" class="space-y-2"></div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Shift Rota</h3>
+                            <p class="text-xs text-slate-400">Override individual days in your normal pattern</p>
+                        </div>
+                        <button onclick="openRotaModal()" class="bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold text-xs">Add Shift</button>
+                    </div>
+                    <div id="rota-summary" class="space-y-2"></div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Weekly Progress Report</h3>
+                            <p class="text-xs text-slate-400">Training, nutrition, weight and adherence</p>
+                        </div>
+                        <button onclick="exportWeeklyReport()" class="bg-slate-900 text-white px-4 py-3 rounded-xl font-bold text-xs">Download</button>
+                    </div>
+                    <div id="weekly-report-summary"></div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Membership</h3>
+                            <p id="membership-status" class="text-xs text-slate-400">Checking your plan…</p>
+                        </div>
+                        <i data-lucide="badge-pound-sterling" class="w-6 h-6 text-indigo-600"></i>
+                    </div>
+                    <div id="membership-plans" class="space-y-2"></div>
+                </div>
+            </section>
+
+            <!-- ============================== -->
             <!-- PROFILE TAB -->
             <!-- ============================== -->
             <section id="profile" class="tab-content space-y-6">
@@ -868,7 +955,8 @@
                         </div>
                         <div class="bg-slate-50 p-4 rounded-2xl">
                             <p class="text-xs text-slate-400 uppercase mb-1">Account Status</p>
-                            <p class="font-bold text-emerald-600">✓ Active (Cloud Sync)</p>
+                            <p id="profile-account-status" class="font-bold text-emerald-600">✓ Active (Cloud Sync)</p>
+                            <button id="verify-email-btn" onclick="resendVerificationEmail()" class="hidden mt-2 text-xs font-bold text-indigo-600 underline">Resend verification email</button>
                         </div>
                     </div>
 
@@ -1570,6 +1658,39 @@
                         <div id="goals-list" class="space-y-2"></div>
                     </div>
 
+                    <div class="border-t border-slate-200 pt-6" id="push-settings">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div>
+                                <h3 class="text-[11px] font-black uppercase text-slate-400">Android Notifications</h3>
+                                <p id="push-status" class="text-xs text-slate-500 mt-1">Checking availability…</p>
+                            </div>
+                            <button id="push-toggle-btn" onclick="togglePushNotifications()" class="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs">Enable</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <label class="text-xs font-bold text-slate-500">Reminder time
+                                <input id="push-reminder-time" type="time" value="18:00" onchange="saveNotificationPreferences()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl">
+                            </label>
+                            <label class="text-xs font-bold text-slate-500">Workouts per week
+                                <input id="target-workouts-week" type="number" min="1" max="14" value="3" onchange="saveCoachingTargets()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl">
+                            </label>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <label class="flex items-center gap-2 p-3 bg-slate-50 rounded-xl"><input id="push-workouts" type="checkbox" onchange="saveNotificationPreferences()" class="w-4 h-4 accent-indigo-600"> Workouts</label>
+                            <label class="flex items-center gap-2 p-3 bg-slate-50 rounded-xl"><input id="push-checkins" type="checkbox" onchange="saveNotificationPreferences()" class="w-4 h-4 accent-indigo-600"> Check-ins</label>
+                            <label class="flex items-center gap-2 p-3 bg-slate-50 rounded-xl"><input id="push-hydration" type="checkbox" onchange="saveNotificationPreferences()" class="w-4 h-4 accent-indigo-600"> Hydration</label>
+                            <label class="flex items-center gap-2 p-3 bg-slate-50 rounded-xl"><input id="push-coach" type="checkbox" onchange="saveNotificationPreferences()" class="w-4 h-4 accent-indigo-600"> Coach messages</label>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-200 pt-6">
+                        <h3 class="text-[11px] font-black uppercase text-slate-400 mb-3">Privacy & Account</h3>
+                        <button onclick="openPrivacyCenter()" class="w-full bg-slate-50 border-2 border-slate-200 p-4 rounded-2xl flex items-center justify-between">
+                            <span class="font-bold text-sm">Open Privacy Centre</span>
+                            <i data-lucide="shield-check" class="w-5 h-5 text-indigo-600"></i>
+                        </button>
+                        <p class="text-[10px] text-slate-400 mt-2">Review cloud storage, export your data or permanently delete your account.</p>
+                    </div>
+
                     <div class="border-t border-slate-200 pt-6" id="data-safety-settings">
                         <h3 class="text-[11px] font-black uppercase text-slate-400 mb-2">Data Safety & Offline App</h3>
                         <p id="data-sync-status" class="text-xs text-slate-500 mb-4" role="status" aria-live="polite">Checking saved data…</p>
@@ -1632,6 +1753,12 @@
                             <i data-lucide="dumbbell" class="w-5 h-5 text-indigo-600"></i>
                         </div>
                         <span class="font-bold text-slate-700">Training</span>
+                    </button>
+                    <button onclick="switchTab('coaching'); toggleSidebar();" class="w-full flex items-center gap-4 p-4 rounded-2xl hover:bg-indigo-50 transition-colors group">
+                        <div class="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center group-hover:bg-orange-200">
+                            <i data-lucide="clipboard-check" class="w-5 h-5 text-orange-600"></i>
+                        </div>
+                        <span class="font-bold text-slate-700">Coaching Hub</span>
                     </button>
                     <button onclick="switchTab('nutrition'); toggleSidebar();" class="w-full flex items-center gap-4 p-4 rounded-2xl hover:bg-indigo-50 transition-colors group">
                         <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center group-hover:bg-indigo-200">
@@ -3313,13 +3440,109 @@
             </div>
         </div>
     </div>
+
+    <!-- WEEKLY CHECK-IN -->
+    <div id="checkin-modal" class="modal-overlay" style="z-index:230;">
+        <div class="bg-white rounded-[2.5rem] p-6 max-h-[92vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-5">
+                <div><h3 class="text-xl font-black">Weekly Check-in</h3><p class="text-xs text-slate-400">A clear update for you and your coach</p></div>
+                <button onclick="closeCheckInModal()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Close check-in">×</button>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <label class="text-xs font-bold text-slate-500">Weight (kg, optional)<input id="checkin-weight" type="number" min="20" max="400" step="0.1" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+                <label class="text-xs font-bold text-slate-500">Average sleep (hours)<input id="checkin-sleep" type="number" min="0" max="16" step="0.5" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+                <label class="text-xs font-bold text-slate-500">Energy<select id="checkin-energy" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="5">5 — Excellent</option><option value="4">4 — Good</option><option value="3" selected>3 — Okay</option><option value="2">2 — Low</option><option value="1">1 — Very low</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Hunger<select id="checkin-hunger" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3" selected>3 — Normal</option><option value="4">4 — High</option><option value="5">5 — Very high</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Stress<select id="checkin-stress" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3" selected>3 — Moderate</option><option value="4">4 — High</option><option value="5">5 — Very high</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Training completed %<input id="checkin-training" type="number" min="0" max="100" step="5" value="100" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+                <label class="text-xs font-bold text-slate-500 col-span-2">Nutrition target followed %<input id="checkin-nutrition" type="number" min="0" max="100" step="5" value="80" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+            </div>
+            <label class="text-xs font-bold text-slate-500 block mb-3">Biggest win<textarea id="checkin-win" maxlength="500" rows="2" class="w-full mt-1 p-3 bg-slate-50 rounded-xl" placeholder="What went well?"></textarea></label>
+            <label class="text-xs font-bold text-slate-500 block mb-4">Main challenge or support needed<textarea id="checkin-challenge" maxlength="750" rows="3" class="w-full mt-1 p-3 bg-slate-50 rounded-xl" placeholder="What would help next week?"></textarea></label>
+            <button onclick="saveWeeklyCheckIn()" class="w-full bg-emerald-600 text-white p-4 rounded-2xl font-bold">Save & Send Check-in</button>
+        </div>
+    </div>
+
+    <!-- DAILY READINESS -->
+    <div id="readiness-modal" class="modal-overlay" style="z-index:230;">
+        <div class="bg-white rounded-[2.5rem] p-6 max-h-[92vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-5">
+                <div><h3 class="text-xl font-black">Daily Readiness</h3><p class="text-xs text-slate-400">Takes less than a minute</p></div>
+                <button onclick="closeReadinessModal()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Close readiness">×</button>
+            </div>
+            <label class="text-xs font-bold text-slate-500 block mb-3">Sleep duration (hours)<input id="readiness-sleep-hours" type="number" min="0" max="16" step="0.25" value="7" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <label class="text-xs font-bold text-slate-500">Sleep quality<select id="readiness-sleep-quality" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="5">5 — Excellent</option><option value="4">4 — Good</option><option value="3" selected>3 — Okay</option><option value="2">2 — Poor</option><option value="1">1 — Very poor</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Energy<select id="readiness-energy" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="5">5 — Excellent</option><option value="4">4 — Good</option><option value="3" selected>3 — Okay</option><option value="2">2 — Low</option><option value="1">1 — Very low</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Fatigue<select id="readiness-fatigue" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="1">1 — Fresh</option><option value="2">2 — Mild</option><option value="3" selected>3 — Moderate</option><option value="4">4 — High</option><option value="5">5 — Exhausted</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Soreness<select id="readiness-soreness" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="1">1 — None</option><option value="2">2 — Mild</option><option value="3" selected>3 — Moderate</option><option value="4">4 — High</option><option value="5">5 — Severe</option></select></label>
+                <label class="text-xs font-bold text-slate-500 col-span-2">Stress<select id="readiness-stress" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3" selected>3 — Moderate</option><option value="4">4 — High</option><option value="5">5 — Very high</option></select></label>
+            </div>
+            <p class="text-[10px] text-slate-400 mb-4">This is a training-readiness guide, not a medical assessment. Stop and seek appropriate help if you feel unwell.</p>
+            <button onclick="saveReadiness()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold">Calculate Readiness</button>
+        </div>
+    </div>
+
+    <!-- SHIFT ROTA DAY -->
+    <div id="rota-modal" class="modal-overlay" style="z-index:230;">
+        <div class="bg-white rounded-[2.5rem] p-6">
+            <div class="flex items-center justify-between mb-5">
+                <div><h3 class="text-xl font-black">Add Rota Day</h3><p class="text-xs text-slate-400">Overrides your normal weekly pattern</p></div>
+                <button onclick="closeRotaModal()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Close rota editor">×</button>
+            </div>
+            <label class="text-xs font-bold text-slate-500 block mb-3">Date<input id="rota-date" type="date" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+            <label class="text-xs font-bold text-slate-500 block mb-3">Shift type<select id="rota-type" onchange="updateRotaTimeVisibility()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"><option value="off">Rest / off</option><option value="day">Day shift</option><option value="early">Early shift</option><option value="night">Night shift</option></select></label>
+            <div id="rota-time-fields" class="grid grid-cols-2 gap-3 mb-4">
+                <label class="text-xs font-bold text-slate-500">Starts<input id="rota-start" type="time" value="07:00" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+                <label class="text-xs font-bold text-slate-500">Ends<input id="rota-end" type="time" value="19:00" class="w-full mt-1 p-3 bg-slate-50 rounded-xl"></label>
+            </div>
+            <button onclick="saveRotaDay()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold">Save Rota Day</button>
+        </div>
+    </div>
+
+    <!-- PRIVACY CENTRE -->
+    <div id="privacy-modal" class="modal-overlay" style="z-index:240;">
+        <div class="bg-white rounded-[2.5rem] p-6 max-h-[92vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-5">
+                <div><h3 class="text-xl font-black">Privacy Centre</h3><p class="text-xs text-slate-400">Your data and account controls</p></div>
+                <button onclick="closePrivacyCenter()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Close privacy centre">×</button>
+            </div>
+            <div class="space-y-3 text-sm text-slate-600 mb-5">
+                <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
+                <p><b>Cloud:</b> Fitness, nutrition, check-in and readiness data can sync to your Firebase account. Progress photos remain device-only.</p>
+                <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
+                <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
+            </div>
+            <label class="flex items-center justify-between p-4 bg-slate-50 rounded-xl mb-3">
+                <span><b class="text-sm">Cloud health-data sync</b><span class="block text-[10px] text-slate-400">Turn off to keep future changes on this device</span></span>
+                <input id="privacy-cloud-sync" type="checkbox" onchange="savePrivacySettings()" class="w-5 h-5 accent-indigo-600">
+            </label>
+            <div class="grid grid-cols-2 gap-2 mb-5">
+                <button onclick="exportVfitBackup()" class="p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-bold text-xs">Export My Data</button>
+                <button onclick="resendVerificationEmail()" class="p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-bold text-xs">Verify Email</button>
+            </div>
+            <div class="border-t border-rose-200 pt-4">
+                <h4 class="font-black text-rose-600 mb-1">Permanently delete account</h4>
+                <p class="text-xs text-slate-400 mb-3">Deletes your authentication account, cloud profile, device registrations and coach conversation data. Export first if you want a copy.</p>
+                <button onclick="deleteVfitAccount()" class="w-full bg-rose-600 text-white p-4 rounded-2xl font-bold">Delete My Account</button>
+            </div>
+        </div>
+    </div>
     <script>
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.0.0-beta.1';
-    const VFIT_STATE_SCHEMA_VERSION = 2;
-    const VALID_TAB_IDS = new Set(['dashboard', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
+    const VFIT_APP_VERSION = '2.1.0-beta.1';
+    const VFIT_STATE_SCHEMA_VERSION = 3;
+    const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
+    const RUNTIME_CONFIG = Object.freeze(Object.assign({
+        functionsRegion: 'europe-west2',
+        appCheckSiteKey: '',
+        fcmVapidKey: '',
+        paymentsEnabled: false,
+        pushEnabled: false,
+        privacyVersion: '2026-09-03'
+    }, window.VFIT_CONFIG || {}));
     const LEGACY_STATE_KEY = 'fittrack_state';
     const STATE_KEY_PREFIX = 'vfit_state_v2:';
     const STATE_BACKUP_PREFIX = 'vfit_state_backup_v2:';
@@ -3487,9 +3710,35 @@
         measurementId: "G-74L12X0NE8"
     };
 
-    firebase.initializeApp(firebaseConfig);
+    const firebaseApp = firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
+    let functionsApi = null;
+    let messagingApi = null;
+    let appCheckReady = false;
+    let foregroundMessagingBound = false;
+    let accountMembership = { tier: 'free', status: 'inactive' };
+
+    if (typeof firebase.functions === 'function') {
+        try { functionsApi = firebase.functions(RUNTIME_CONFIG.functionsRegion); }
+        catch (error) { console.warn('Cloud actions unavailable:', error); }
+    }
+
+    if (RUNTIME_CONFIG.appCheckSiteKey && typeof firebase.appCheck === 'function') {
+        try {
+            const provider = new firebase.appCheck.ReCaptchaEnterpriseProvider(RUNTIME_CONFIG.appCheckSiteKey);
+            firebase.appCheck().activate(provider, true);
+            appCheckReady = true;
+        } catch (error) {
+            console.warn('Firebase App Check is not ready:', error);
+        }
+    }
+
+    function getBackendCallable(name) {
+        if (!functionsApi || typeof functionsApi.httpsCallable !== 'function') return null;
+        try { return functionsApi.httpsCallable(name); }
+        catch (error) { return null; }
+    }
 
     // Make sign-in survive an Android browser/app restart. Firebase defaults to
     // local persistence on web, but setting it explicitly avoids inherited
@@ -3738,11 +3987,13 @@
         const email = document.getElementById('register-email').value.trim().toLowerCase();
         const password = document.getElementById('register-password').value;
         const confirm = document.getElementById('register-confirm').value;
+        const privacyConsent = document.getElementById('register-privacy-consent');
 
         if (!name) { showToast('Please enter your name'); return; }
         if (!email || !password) { showToast('Please fill all fields'); return; }
         if (password.length < 6) { showToast('Password must be at least 6 characters'); return; }
         if (password !== confirm) { showToast('Passwords do not match'); return; }
+        if (!privacyConsent || !privacyConsent.checked) { showToast('Please review and accept the privacy details'); return; }
 
         // Everyone signs up as a member. Coach status is granted by the owner's
         // email allowlist and applied automatically on login — so if this email
@@ -3770,11 +4021,18 @@
                 pendingRequests: [],
                 // Exercise database is account-level, so it follows the user across devices
                 customExercises: [],
-                disabledExercises: { gym: [], home: [] }
+                disabledExercises: { gym: [], home: [] },
+                privacy: {
+                    noticeVersion: RUNTIME_CONFIG.privacyVersion,
+                    acknowledgedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }
             });
             await syncUserDirectory(user, 'member', name);
 
-            showToast('Account created successfully! 🎉');
+            try { await user.sendEmailVerification(); }
+            catch (verificationError) { console.warn('Verification email could not be sent yet:', verificationError); }
+
+            showToast('Account created — check your email to verify it 🎉', 6000);
         } catch (error) {
             console.error('Registration error:', error);
             showToast(friendlyAuthError(error, 'Could not create the account — try again'), 5000);
@@ -3890,11 +4148,11 @@
         const arrayFields = new Set([
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises'
+            'customExercises', 'checkIns'
         ]);
         const recordFields = new Set([
             'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings'
+            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs'
         ]);
         if (preferRemote) {
             Object.keys(DEFAULT_STATE).forEach(key => {
@@ -3920,6 +4178,7 @@
         merged.userGoals = mergeUniqueItems(local.userGoals, remote.userGoals, itemKey, preferRemote);
         merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
         merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
+        merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
         merged.metricsHistory = mergeUniqueItems(
             local.metricsHistory,
             remote.metricsHistory,
@@ -3964,6 +4223,7 @@
             snapshot.nutritionHistory = (snapshot.nutritionHistory || []).slice(0, 365);
             snapshot.dailyMeals = (snapshot.dailyMeals || []).slice(-1200);
             snapshot.cardioLogs = (snapshot.cardioLogs || []).slice(0, 500);
+            snapshot.checkIns = (snapshot.checkIns || []).slice(0, 104);
             snapshot.meta.cloudTrimmed = true;
             json = JSON.stringify(snapshot);
         }
@@ -3980,6 +4240,8 @@
         if (!status) return;
         if (!currentUser) {
             status.textContent = 'Sign in to enable account sync';
+        } else if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
+            status.textContent = 'Cloud health-data sync is off — saved on this device';
         } else if (!navigator.onLine) {
             status.textContent = 'Offline — changes are saved on this device';
         } else if (cloudSyncPromise) {
@@ -3996,6 +4258,11 @@
 
     function scheduleCloudSnapshotSync(delay) {
         if (!currentUser) return;
+        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
+            cloudDirty = false;
+            updateDataSyncStatus();
+            return;
+        }
         cloudDirty = true;
         updateDataSyncStatus();
         clearTimeout(cloudSyncTimer);
@@ -4004,6 +4271,11 @@
     }
 
     async function writeCloudSnapshot() {
+        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
+            cloudDirty = false;
+            updateDataSyncStatus();
+            return false;
+        }
         if (!currentUser || !navigator.onLine) {
             cloudDirty = !!currentUser;
             updateDataSyncStatus();
@@ -4051,6 +4323,12 @@
         clearTimeout(cloudSyncTimer);
         cloudSyncTimer = null;
         if (!currentUser) return false;
+        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
+            cloudDirty = false;
+            updateDataSyncStatus();
+            if (!config.silent) showToast('Cloud health-data sync is off in Privacy Centre', 5000);
+            return false;
+        }
         cloudDirty = true;
         const success = await writeCloudSnapshot();
         if (!config.silent) showToast(success ? 'Synced to cloud ☁️' : 'Saved on device — cloud sync will retry', 5000);
@@ -4059,6 +4337,11 @@
 
     async function syncToCloud() {
         if (!currentUser) { showToast('Sign in to sync'); return false; }
+        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
+            showToast('Cloud health-data sync is off in Privacy Centre', 5000);
+            updateDataSyncStatus();
+            return false;
+        }
         if (!navigator.onLine) {
             cloudDirty = true;
             updateDataSyncStatus();
@@ -4084,6 +4367,9 @@
             if (!currentUser || currentUser.uid !== uid) return false;
             exists = doc.exists;
             firebaseUserData = doc.exists ? (doc.data() || {}) : {};
+            accountMembership = isPlainRecord(firebaseUserData.membership)
+                ? Object.assign({ tier: 'free', status: 'inactive' }, firebaseUserData.membership)
+                : { tier: 'free', status: 'inactive' };
             if (doc.exists) {
                 const remoteSnapshot = isPlainRecord(firebaseUserData.dataSnapshot)
                     ? deepClone(firebaseUserData.dataSnapshot)
@@ -4103,6 +4389,9 @@
                     if (cloudTime) remoteSnapshot.meta.updatedAt = new Date(cloudTime).toISOString();
                 }
                 if (Object.keys(remoteSnapshot).length > 1) state = mergeStateSnapshots(state, remoteSnapshot);
+                if (isPlainRecord(firebaseUserData.privacy)) {
+                    state.privacySettings = Object.assign({}, state.privacySettings, firebaseUserData.privacy);
+                }
                 applyExercisePrefsFromCloud(state);
             }
 
@@ -4416,6 +4705,9 @@
         const metrics = snapshot.metricsHistory || [];
         const profile = snapshot.userProfile || {};
         const goals = snapshot.goals || {};
+        const latestCheckIn = (snapshot.checkIns || []).slice().sort((a, b) =>
+            String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || ''))
+        )[0] || null;
 
         const recentWorkouts = workouts.map(w => {
             const exCount = (w.exercises || []).length;
@@ -4447,6 +4739,20 @@
         }).join('') || '<p class="text-sm text-slate-400 text-center py-3">No nutrition logged</p>';
 
         const lastUpdated = snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString('en-GB') : 'never';
+        const checkInFlagsHtml = latestCheckIn && (latestCheckIn.flags || []).length
+            ? `<div class="flex flex-wrap gap-1 mt-3">${latestCheckIn.flags.map(flag => `<span class="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full">${escapeHtml(flag)}</span>`).join('')}</div>`
+            : latestCheckIn ? '<p class="text-xs text-emerald-600 font-bold mt-3">✓ No automatic concerns flagged</p>' : '';
+        const checkInBodyHtml = latestCheckIn ? `
+            <div class="grid grid-cols-3 gap-2 text-center mb-3">
+                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Training</p><p class="font-black">${Math.round(Number(latestCheckIn.trainingAdherence || 0))}%</p></div>
+                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Nutrition</p><p class="font-black">${Math.round(Number(latestCheckIn.nutritionAdherence || 0))}%</p></div>
+                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Energy</p><p class="font-black">${Math.round(Number(latestCheckIn.energy || 0))}/5</p></div>
+            </div>
+            <p class="text-xs text-slate-400 mb-1">${escapeHtml(latestCheckIn.date || '')} · ${nutritionNumber(latestCheckIn.sleepHours || 0)}h average sleep</p>
+            <p class="text-sm"><b>Win:</b> ${escapeHtml(latestCheckIn.win || '—')}</p>
+            <p class="text-sm mt-1"><b>Challenge:</b> ${escapeHtml(latestCheckIn.challenge || '—')}</p>
+            ${checkInFlagsHtml}`
+            : '<p class="text-sm text-slate-400 text-center py-3">No weekly check-in submitted yet.</p>';
 
         coachView.innerHTML = `
             <div class="max-w-xl mx-auto p-4 sm:p-6 space-y-6">
@@ -4485,6 +4791,18 @@
                 <h3 class="text-lg font-black mb-3">Latest Measurements</h3>
                 <div class="space-y-2 text-sm">
                     ${metricRows.length ? metricRows.join('') : '<p class="text-sm text-slate-400 text-center py-3">No measurements logged</p>'}
+                </div>
+            </div>
+
+            <div class="glass-card rounded-[2.5rem] p-6">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                    <div><h3 class="text-lg font-black">Weekly Check-in</h3><p class="text-xs text-slate-400">Latest readiness and adherence update</p></div>
+                    <i data-lucide="clipboard-check" class="w-5 h-5 text-indigo-600"></i>
+                </div>
+                ${checkInBodyHtml}
+                <div class="grid grid-cols-2 gap-2 mt-4">
+                    <button onclick="replyToClientCheckIn()" ${latestCheckIn ? '' : 'disabled'} class="p-3 bg-indigo-600 text-white rounded-xl font-bold text-xs disabled:opacity-40">Reply in Notes</button>
+                    <button onclick="exportViewedClientReport()" class="p-3 bg-slate-900 text-white rounded-xl font-bold text-xs">Download Report</button>
                 </div>
             </div>
 
@@ -4543,6 +4861,19 @@
         renderAssignedWorkoutsForCoach();
     }
 
+    function replyToClientCheckIn() {
+        if (!viewingClientData) return;
+        const latest = (((viewingClientData.data || {}).checkIns || []).slice().sort((a, b) =>
+            String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || ''))
+        ))[0];
+        const input = document.getElementById('note-input');
+        if (!latest || !input) { showToast('No check-in available to reply to'); return; }
+        input.value = `Check-in response for ${latest.date || 'this week'}: `;
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        input.focus();
+        if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+    }
+
     // ==========================================================================
     // COACH ↔ CLIENT SHARING & ASSIGNED WORKOUTS
     // ==========================================================================
@@ -4589,6 +4920,23 @@
                 await ref.update({ events: firebase.firestore.FieldValue.arrayUnion(event) });
             } else {
                 await ref.set({ coachUid: coachUid, memberUid: memberUid, messages: [], events: [event] });
+            }
+            if (RUNTIME_CONFIG.pushEnabled && appCheckReady) {
+                const sendPush = getBackendCallable('sendUserPush');
+                if (sendPush) {
+                    try {
+                        await sendPush({
+                            recipientUid,
+                            title: event.title,
+                            body: event.body,
+                            kind: 'coachMessages',
+                            url: new URL('./#coaching', window.location.href).href
+                        });
+                    } catch (pushError) {
+                        // The in-app activity event above is still safely delivered.
+                        console.warn('Remote push delivery pending:', pushError);
+                    }
+                }
             }
         } catch (error) {
             console.warn('Could not push notification:', error);
@@ -6464,6 +6812,7 @@
             firebaseUserData = {};
             currentUserRole = 'member';
             currentUserIsOwner = false;
+            accountMembership = { tier: 'free', status: 'inactive' };
             viewingClientData = null;
             cloudDirty = false;
             cloudSyncError = null;
@@ -6516,6 +6865,8 @@
         safeInvoke('Nutrition history', renderNutritionHistory);
         safeInvoke('Profile', renderProfile);
         safeInvoke('Dashboard', renderDashboard);
+        safeInvoke('Coaching hub', renderCoachingHub);
+        safeInvoke('Membership return', showMembershipReturnStatus);
         safeInvoke('Diary', renderDiary);
         safeInvoke('Settings', renderSettings);
         safeInvoke('Member coach section', renderMemberCoachSection);
@@ -6537,6 +6888,7 @@
         }
 
         refreshNotifBadge();
+        restorePushRegistration();
         clearInterval(window._notifPoll);
         window._notifPoll = setInterval(refreshNotifBadge, 60000);
         setTimeout(() => { try { maybeShowUpdateAlerts(); } catch (error) {} }, 900);
@@ -6567,6 +6919,13 @@
         }
 
         document.getElementById('profile-workouts').textContent = state.workoutHistory.length;
+        const accountStatus = document.getElementById('profile-account-status');
+        const verifyButton = document.getElementById('verify-email-btn');
+        if (accountStatus) {
+            accountStatus.textContent = currentUser.emailVerified ? '✓ Active · Email verified' : 'Active · Email verification needed';
+            accountStatus.className = currentUser.emailVerified ? 'font-bold text-emerald-600' : 'font-bold text-amber-600';
+        }
+        if (verifyButton) verifyButton.classList.toggle('hidden', !!currentUser.emailVerified);
     }
 
     // ==========================================================================
@@ -6618,7 +6977,35 @@
             shiftEnd: '07:00',        // clock time the shift ends
             workDays: [1, 2, 3, 4, 5],// 0=Sun..6=Sat that they're on shift
             goal: 'fat_loss',         // 'fat_loss' | 'muscle_gain'
-            useFasting: false         // optional 5:2-style fasting (rest days only)
+            useFasting: false,        // optional 5:2-style fasting (rest days only)
+            rota: {}                  // date-keyed overrides
+        },
+        checkIns: [],
+        readinessLogs: {},
+        coachingTargets: {
+            workoutsPerWeek: 3,
+            calorieTolerancePercent: 10,
+            proteinAdherencePercent: 90
+        },
+        progressionSettings: {
+            enabled: true,
+            targetRir: 2,
+            plateauSessions: 3,
+            deloadPercent: 10
+        },
+        notificationSettings: {
+            enabled: false,
+            reminderTime: '18:00',
+            workouts: true,
+            checkIns: true,
+            hydration: false,
+            coachMessages: true,
+            deviceId: null
+        },
+        privacySettings: {
+            cloudHealthData: true,
+            noticeVersion: null,
+            acknowledgedAt: null
         },
         // Progress-update reminders. Three independent trackers (weight, body
         // measurements, progress photos), each with its own schedule + delivery.
@@ -6742,6 +7129,13 @@
         normalized.dietGoal = Object.assign({}, DEFAULT_STATE.dietGoal, isPlainRecord(raw.dietGoal) ? raw.dietGoal : {});
         normalized.userProfile = Object.assign({}, DEFAULT_STATE.userProfile, isPlainRecord(raw.userProfile) ? raw.userProfile : {});
         normalized.shiftProfile = Object.assign({}, DEFAULT_STATE.shiftProfile, isPlainRecord(raw.shiftProfile) ? raw.shiftProfile : {});
+        normalized.shiftProfile.rota = isPlainRecord(raw.shiftProfile && raw.shiftProfile.rota)
+            ? deepClone(raw.shiftProfile.rota)
+            : {};
+        normalized.coachingTargets = Object.assign({}, DEFAULT_STATE.coachingTargets, isPlainRecord(raw.coachingTargets) ? raw.coachingTargets : {});
+        normalized.progressionSettings = Object.assign({}, DEFAULT_STATE.progressionSettings, isPlainRecord(raw.progressionSettings) ? raw.progressionSettings : {});
+        normalized.notificationSettings = Object.assign({}, DEFAULT_STATE.notificationSettings, isPlainRecord(raw.notificationSettings) ? raw.notificationSettings : {});
+        normalized.privacySettings = Object.assign({}, DEFAULT_STATE.privacySettings, isPlainRecord(raw.privacySettings) ? raw.privacySettings : {});
         normalized.currentPhotos = Object.assign({}, DEFAULT_STATE.currentPhotos, isPlainRecord(raw.currentPhotos) ? raw.currentPhotos : {});
         normalized.equipment = {
             gym: Object.assign({}, DEFAULT_STATE.equipment.gym, isPlainRecord(raw.equipment && raw.equipment.gym) ? raw.equipment.gym : {}),
@@ -6760,14 +7154,14 @@
         const arrayFields = [
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises'
+            'customExercises', 'checkIns'
         ];
         arrayFields.forEach(key => {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
         });
         const recordFields = [
             'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings'
+            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs'
         ];
         recordFields.forEach(key => {
             if (!isPlainRecord(normalized[key])) normalized[key] = {};
@@ -7108,6 +7502,7 @@
             profile: renderProfile,
             settings: renderSettings,
             dashboard: renderDashboard,
+            coaching: renderCoachingHub,
             training: renderCoachPlanInTraining,
             metrics: () => {
                 const picker = document.getElementById('metrics-date-picker');
@@ -9315,8 +9710,11 @@
         } else {
             html += `<span class="text-slate-400">No PB yet — first time logging this</span>`;
         }
-        if (suggestion && suggestion.suggested) {
-            html += ` <span class="text-slate-300">·</span> <span class="${suggestion.bumped ? 'text-emerald-600' : 'text-indigo-600'}">Try ${suggestion.suggested}kg${isAssist ? ' assist' : ''}</span>`;
+        if (suggestion && suggestion.suggested !== undefined) {
+            const suggestionColour = suggestion.action === 'progress' ? 'text-emerald-600'
+                : suggestion.action === 'reduce' || suggestion.action === 'deload' ? 'text-amber-600'
+                : 'text-indigo-600';
+            html += ` <span class="text-slate-300">·</span> <span class="${suggestionColour}" title="${escapeHtml(suggestion.reason || '')}">Try ${suggestion.suggested}kg${isAssist ? ' assist' : ''}</span>`;
         }
         line.innerHTML = html;
     }
@@ -9375,11 +9773,13 @@
         if (suggestion) {
             weightInput.placeholder = (isAssist ? 'Assist ' : '') + suggestion.suggested + 'kg';
             const hint = document.createElement('span');
-            hint.className = "absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.bumped ? 'text-emerald-600' : 'text-slate-400');
-            if (suggestion.bumped) {
+            hint.className = "absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.action === 'progress' ? 'text-emerald-600' : suggestion.changed ? 'text-amber-600' : 'text-slate-400');
+            if (suggestion.action === 'progress') {
                 hint.textContent = isAssist
                     ? `↓ ${suggestion.last}→${suggestion.suggested}kg assist`
                     : `↑ ${suggestion.last}→${suggestion.suggested}kg`;
+            } else if (suggestion.changed) {
+                hint.textContent = `adjust ${suggestion.last}→${suggestion.suggested}kg`;
             } else {
                 hint.textContent = `last ${suggestion.last}kg`;
             }
@@ -9499,37 +9899,18 @@
         return null;
     }
 
-    /**
-     * Suggest a working weight for the next time you do this exercise.
-     * Rule: if the 3rd set last time had RIR > 5 (more than 5 reps left = too easy),
-     * bump the weight. Compounds +5kg, isolation +2.5kg. For assistance exercises,
-     * "bump" means REDUCE the assist weight instead.
-     * Returns { suggested, last, bumped } or null if no history.
-     */
+    /** Suggest a readiness-aware working weight while preserving the legacy UI shape. */
     function getSuggestedWeight(exerciseName) {
-        const last = getLastPerformance(exerciseName);
-        if (!last) return null;
-
-        // Use the 3rd set if it exists, else the last set
-        const refSet = last.sets[2] || last.sets[last.sets.length - 1];
-        const lastWeight = parseFloat(refSet.weight);
-        if (isNaN(lastWeight)) return null;
-
-        const rir = refSet.rir !== undefined && refSet.rir !== '' ? parseFloat(refSet.rir) : null;
-        const increment = isCompoundExercise(exerciseName) ? 5 : 2.5;
-
-        let suggested = lastWeight;
-        let bumped = false;
-        if (rir !== null && rir > 5) {
-            if (isAssistanceExercise(exerciseName)) {
-                // Less assistance = harder = progression. Don't go below 0.
-                suggested = Math.max(0, lastWeight - increment);
-            } else {
-                suggested = lastWeight + increment;
-            }
-            bumped = true;
-        }
-        return { suggested, last: lastWeight, bumped };
+        const recommendation = smartProgressionForExercise(exerciseName, state);
+        if (!recommendation) return null;
+        return {
+            suggested: recommendation.suggested,
+            last: recommendation.current,
+            bumped: recommendation.action === 'progress',
+            changed: recommendation.suggested !== recommendation.current,
+            action: recommendation.action,
+            reason: recommendation.reason
+        };
     }
 
     // Holds the pending workout while the user is rating exercises.
@@ -14434,12 +14815,954 @@
                 }).join('');
             }
         }
+
+        renderNotificationSettings();
+        const targetWorkouts = document.getElementById('target-workouts-week');
+        if (targetWorkouts) targetWorkouts.value = Math.max(1, Math.min(14, Number(state.coachingTargets.workoutsPerWeek) || 3));
     }
 
     function removeGoal(id) {
         state.userGoals = (state.userGoals || []).filter(g => String(g.id) !== String(id));
         saveState();
         renderSettings();
+    }
+
+    // ==========================================================================
+    // COACHING HUB — CHECK-INS, READINESS AND SHIFT ROTA
+    // ==========================================================================
+
+    function clampNumber(value, min, max, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+    }
+
+    function localDateKey(value) {
+        const date = value instanceof Date ? value : new Date(value || Date.now());
+        const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+        return local.toISOString().slice(0, 10);
+    }
+
+    function dateKeyDaysAgo(days) {
+        const date = new Date();
+        date.setHours(12, 0, 0, 0);
+        date.setDate(date.getDate() - days);
+        return localDateKey(date);
+    }
+
+    function getShiftForDate(dateKey) {
+        const profile = state.shiftProfile || DEFAULT_STATE.shiftProfile;
+        const rota = isPlainRecord(profile.rota) ? profile.rota : {};
+        if (isPlainRecord(rota[dateKey])) return Object.assign({}, rota[dateKey], { source: 'rota' });
+        if (!profile.enabled) return { type: 'off', source: 'default' };
+        const date = new Date(dateKey + 'T12:00:00');
+        if (!Array.isArray(profile.workDays) || !profile.workDays.includes(date.getDay())) return { type: 'off', source: 'pattern' };
+        const typeMap = { nights: 'night', days: 'day', earlies: 'early', rotating: 'night' };
+        return {
+            type: typeMap[profile.shiftType] || 'day',
+            start: profile.shiftStart || '07:00',
+            end: profile.shiftEnd || '19:00',
+            source: 'pattern'
+        };
+    }
+
+    function readinessGuidance(score) {
+        if (score >= 75) return { label: 'Ready', color: 'emerald', action: 'Train as planned. Progress a lift if technique and RIR are on target.' };
+        if (score >= 55) return { label: 'Adjust', color: 'amber', action: 'Keep the session, but reduce total sets by around 20% or keep 2–3 RIR.' };
+        return { label: 'Recover', color: 'rose', action: 'Choose recovery work or reduce normal loads by about 10%. Avoid testing maximums.' };
+    }
+
+    function calculateReadinessScore(values) {
+        const sleepHours = clampNumber(values.sleepHours, 0, 16, 0);
+        const sleepQuality = clampNumber(values.sleepQuality, 1, 5, 3);
+        const energy = clampNumber(values.energy, 1, 5, 3);
+        const fatigue = clampNumber(values.fatigue, 1, 5, 3);
+        const soreness = clampNumber(values.soreness, 1, 5, 3);
+        const stress = clampNumber(values.stress, 1, 5, 3);
+        return Math.round(
+            Math.min(30, (sleepHours / 8) * 30) +
+            sleepQuality * 4 + energy * 4 +
+            (6 - fatigue) * 3 + (6 - stress) * 2 + (6 - soreness)
+        );
+    }
+
+    function openReadinessModal() {
+        const existing = state.readinessLogs && state.readinessLogs[localDateKey()];
+        if (existing) {
+            document.getElementById('readiness-sleep-hours').value = existing.sleepHours;
+            document.getElementById('readiness-sleep-quality').value = existing.sleepQuality;
+            document.getElementById('readiness-energy').value = existing.energy;
+            document.getElementById('readiness-fatigue').value = existing.fatigue;
+            document.getElementById('readiness-soreness').value = existing.soreness;
+            document.getElementById('readiness-stress').value = existing.stress;
+        }
+        document.getElementById('readiness-modal').style.display = 'flex';
+        refreshIcons();
+    }
+
+    function closeReadinessModal() {
+        document.getElementById('readiness-modal').style.display = 'none';
+    }
+
+    function saveReadiness() {
+        const date = localDateKey();
+        const values = {
+            sleepHours: clampNumber(document.getElementById('readiness-sleep-hours').value, 0, 16, 7),
+            sleepQuality: clampNumber(document.getElementById('readiness-sleep-quality').value, 1, 5, 3),
+            energy: clampNumber(document.getElementById('readiness-energy').value, 1, 5, 3),
+            fatigue: clampNumber(document.getElementById('readiness-fatigue').value, 1, 5, 3),
+            soreness: clampNumber(document.getElementById('readiness-soreness').value, 1, 5, 3),
+            stress: clampNumber(document.getElementById('readiness-stress').value, 1, 5, 3)
+        };
+        const score = calculateReadinessScore(values);
+        state.readinessLogs[date] = Object.assign({}, values, {
+            date,
+            score,
+            shift: getShiftForDate(date).type,
+            recordedAt: new Date().toISOString()
+        });
+        saveState();
+        closeReadinessModal();
+        renderCoachingHub();
+        showToast(`Readiness ${score}/100 · ${readinessGuidance(score).label}`);
+    }
+
+    function renderReadinessSummary() {
+        const box = document.getElementById('readiness-summary');
+        if (!box) return;
+        const date = localDateKey();
+        const entry = state.readinessLogs && state.readinessLogs[date];
+        const shift = getShiftForDate(date);
+        const shiftLabels = { off: 'Rest / off', day: 'Day shift', early: 'Early shift', night: 'Night shift' };
+        if (!entry) {
+            box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl"><p class="font-bold text-sm">No readiness score yet</p><p class="text-xs text-slate-400 mt-1">Today: ${escapeHtml(shiftLabels[shift.type] || 'No shift set')}. Log how you feel before choosing session intensity.</p></div>`;
+            return;
+        }
+        const guide = readinessGuidance(entry.score);
+        const palette = guide.color === 'emerald' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            : guide.color === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200'
+            : 'bg-rose-50 text-rose-700 border-rose-200';
+        box.innerHTML = `<div class="${palette} border p-4 rounded-2xl">
+            <div class="flex items-end justify-between gap-3"><div><p class="text-4xl font-black">${Math.round(entry.score)}</p><p class="text-xs font-black uppercase">${escapeHtml(guide.label)} · ${escapeHtml(shiftLabels[shift.type] || 'No shift')}</p></div><p class="text-xs font-bold text-right">${nutritionNumber(entry.sleepHours)}h sleep</p></div>
+            <p class="text-xs mt-3">${escapeHtml(guide.action)}</p>
+        </div>`;
+    }
+
+    function openCheckInModal() {
+        const latestMetric = (state.metricsHistory || []).find(metric => Number(metric.weight) > 0);
+        if (latestMetric) document.getElementById('checkin-weight').value = latestMetric.weight;
+        const recentReadiness = Object.values(state.readinessLogs || {}).slice(-7);
+        if (recentReadiness.length) {
+            const sleepAverage = recentReadiness.reduce((sum, item) => sum + Number(item.sleepHours || 0), 0) / recentReadiness.length;
+            document.getElementById('checkin-sleep').value = sleepAverage.toFixed(1);
+        }
+        document.getElementById('checkin-modal').style.display = 'flex';
+    }
+
+    function closeCheckInModal() {
+        document.getElementById('checkin-modal').style.display = 'none';
+    }
+
+    function checkInFlags(checkIn) {
+        const flags = [];
+        if (checkIn.sleepHours > 0 && checkIn.sleepHours < 6) flags.push('Low sleep');
+        if (checkIn.energy <= 2) flags.push('Low energy');
+        if (checkIn.stress >= 4) flags.push('High stress');
+        if (checkIn.hunger >= 5) flags.push('Very high hunger');
+        if (checkIn.trainingAdherence < 70) flags.push('Training adherence below 70%');
+        if (checkIn.nutritionAdherence < 70) flags.push('Nutrition adherence below 70%');
+        return flags;
+    }
+
+    async function saveWeeklyCheckIn() {
+        const checkIn = {
+            id: 'ci_' + Date.now(),
+            date: localDateKey(),
+            createdAt: new Date().toISOString(),
+            weight: clampNumber(document.getElementById('checkin-weight').value, 0, 400, 0),
+            sleepHours: clampNumber(document.getElementById('checkin-sleep').value, 0, 16, 0),
+            energy: clampNumber(document.getElementById('checkin-energy').value, 1, 5, 3),
+            hunger: clampNumber(document.getElementById('checkin-hunger').value, 1, 5, 3),
+            stress: clampNumber(document.getElementById('checkin-stress').value, 1, 5, 3),
+            trainingAdherence: clampNumber(document.getElementById('checkin-training').value, 0, 100, 0),
+            nutritionAdherence: clampNumber(document.getElementById('checkin-nutrition').value, 0, 100, 0),
+            win: String(document.getElementById('checkin-win').value || '').trim().slice(0, 500),
+            challenge: String(document.getElementById('checkin-challenge').value || '').trim().slice(0, 750)
+        };
+        checkIn.flags = checkInFlags(checkIn);
+        checkIn.status = checkIn.flags.length ? 'review' : 'on-track';
+        state.checkIns.unshift(checkIn);
+        state.checkIns = state.checkIns.slice(0, 104);
+        if (checkIn.weight > 0) {
+            const metric = (state.metricsHistory || []).find(item => item.date === checkIn.date);
+            if (metric) metric.weight = checkIn.weight;
+            else state.metricsHistory.unshift({ id: 'metric_' + Date.now(), date: checkIn.date, weight: checkIn.weight });
+        }
+        saveState();
+        closeCheckInModal();
+        renderCoachingHub();
+        await pushMemberDataToCloud();
+        if (firebaseUserData.coachUid) {
+            await pushNotification(firebaseUserData.coachUid, {
+                type: 'weekly-checkin',
+                title: (firebaseUserData.name || 'Your client') + ' completed a check-in',
+                body: checkIn.flags.length ? checkIn.flags.join(' · ') : 'On track — open VFIT to review',
+                fromName: firebaseUserData.name || 'Client'
+            });
+        }
+        showToast(checkIn.flags.length ? 'Check-in saved · coach review flagged' : 'Check-in saved · you’re on track ✓', 5000);
+    }
+
+    function renderCheckInSummary() {
+        const box = document.getElementById('checkin-summary');
+        if (!box) return;
+        const latest = state.checkIns && state.checkIns[0];
+        if (!latest) {
+            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">Complete your first weekly check-in to establish a baseline.</p>';
+            return;
+        }
+        const days = Math.max(0, Math.floor((Date.now() - new Date(latest.createdAt || latest.date).getTime()) / 86400000));
+        const flagHtml = (latest.flags || []).length
+            ? `<div class="flex flex-wrap gap-1 mt-2">${latest.flags.map(flag => `<span class="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full">${escapeHtml(flag)}</span>`).join('')}</div>`
+            : '<p class="text-xs text-emerald-600 font-bold mt-2">✓ No automatic concerns flagged</p>';
+        box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
+            <div class="flex justify-between gap-3"><p class="font-bold">${escapeHtml(latest.date)}</p><span class="text-xs font-bold ${days >= 7 ? 'text-amber-600' : 'text-slate-400'}">${days >= 7 ? 'New check-in due' : days + ' day' + (days === 1 ? '' : 's') + ' ago'}</span></div>
+            <p class="text-xs text-slate-500 mt-2">Training ${Math.round(latest.trainingAdherence)}% · Nutrition ${Math.round(latest.nutritionAdherence)}% · Energy ${Math.round(latest.energy)}/5</p>${flagHtml}
+        </div>`;
+    }
+
+    function openRotaModal() {
+        document.getElementById('rota-date').value = localDateKey();
+        document.getElementById('rota-type').value = 'off';
+        updateRotaTimeVisibility();
+        document.getElementById('rota-modal').style.display = 'flex';
+    }
+
+    function closeRotaModal() {
+        document.getElementById('rota-modal').style.display = 'none';
+    }
+
+    function updateRotaTimeVisibility() {
+        const type = document.getElementById('rota-type').value;
+        document.getElementById('rota-time-fields').classList.toggle('hidden', type === 'off');
+        if (type === 'night') { document.getElementById('rota-start').value = '19:00'; document.getElementById('rota-end').value = '07:00'; }
+        else if (type === 'early') { document.getElementById('rota-start').value = '06:00'; document.getElementById('rota-end').value = '14:00'; }
+        else if (type === 'day') { document.getElementById('rota-start').value = '07:00'; document.getElementById('rota-end').value = '19:00'; }
+    }
+
+    function saveRotaDay() {
+        const date = document.getElementById('rota-date').value;
+        const type = document.getElementById('rota-type').value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { showToast('Choose a valid date'); return; }
+        if (!isPlainRecord(state.shiftProfile.rota)) state.shiftProfile.rota = {};
+        state.shiftProfile.rota[date] = {
+            type,
+            start: type === 'off' ? null : document.getElementById('rota-start').value,
+            end: type === 'off' ? null : document.getElementById('rota-end').value,
+            updatedAt: new Date().toISOString()
+        };
+        saveState();
+        closeRotaModal();
+        renderCoachingHub();
+        if (state.notificationSettings.enabled) syncPushSchedule();
+        showToast('Rota day saved');
+    }
+
+    function removeRotaDay(date) {
+        if (state.shiftProfile && isPlainRecord(state.shiftProfile.rota)) delete state.shiftProfile.rota[date];
+        saveState();
+        renderCoachingHub();
+    }
+
+    function renderRotaSummary() {
+        const box = document.getElementById('rota-summary');
+        if (!box) return;
+        const labels = { off: 'Rest / off', day: 'Day shift', early: 'Early shift', night: 'Night shift' };
+        const rows = [];
+        for (let offset = 0; offset < 7; offset++) {
+            const date = new Date();
+            date.setHours(12, 0, 0, 0);
+            date.setDate(date.getDate() + offset);
+            const key = localDateKey(date);
+            const shift = getShiftForDate(key);
+            rows.push(`<div class="flex items-center justify-between gap-2 bg-slate-50 p-3 rounded-xl">
+                <div><p class="font-bold text-sm">${escapeHtml(date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))}</p><p class="text-xs text-slate-400">${escapeHtml(labels[shift.type] || shift.type)}${shift.start ? ' · ' + escapeHtml(shift.start) + '–' + escapeHtml(shift.end || '') : ''}</p></div>
+                ${shift.source === 'rota' ? `<button onclick="removeRotaDay('${escapeJsString(key)}')" class="text-xs font-bold text-rose-500" aria-label="Remove rota override for ${escapeHtml(key)}">Remove</button>` : '<span class="text-[9px] text-slate-400 uppercase">pattern</span>'}
+            </div>`);
+        }
+        box.innerHTML = rows.join('');
+    }
+
+    function renderCoachingHub() {
+        renderReadinessSummary();
+        renderCheckInSummary();
+        renderProgressionRecommendations();
+        renderRotaSummary();
+        renderWeeklyReportSummary();
+        renderMembership();
+        refreshIcons();
+    }
+
+    // ==========================================================================
+    // SMART PROGRESSION AND WEEKLY REPORTING
+    // ==========================================================================
+
+    function estimatedOneRepMax(weight, reps) {
+        const load = Number(weight);
+        const count = Number(reps);
+        if (!Number.isFinite(load) || !Number.isFinite(count) || load <= 0 || count <= 0) return 0;
+        return load * (1 + Math.min(count, 15) / 30);
+    }
+
+    function exercisePerformances(exerciseName, sourceState, limit) {
+        const source = sourceState || state;
+        const matches = [];
+        const history = (source.workoutHistory || []).slice().sort((a, b) =>
+            String(b.completedAt || b.date || '').localeCompare(String(a.completedAt || a.date || ''))
+        );
+        for (const workout of history) {
+            const exercise = (workout.exercises || []).find(item => String(item.name || '').toLowerCase() === String(exerciseName || '').toLowerCase());
+            if (!exercise || !Array.isArray(exercise.sets) || !exercise.sets.length) continue;
+            const validSets = exercise.sets.map(set => ({
+                weight: Number(set.weight),
+                reps: Number(set.reps),
+                rir: set.rir === '' || set.rir == null ? null : Number(set.rir)
+            })).filter(set => Number.isFinite(set.weight) && set.weight >= 0 && Number.isFinite(set.reps) && set.reps > 0);
+            if (!validSets.length) continue;
+            const best = validSets.slice().sort((a, b) => estimatedOneRepMax(b.weight, b.reps) - estimatedOneRepMax(a.weight, a.reps))[0];
+            matches.push({ date: workout.date || '', sets: validSets, best, e1rm: estimatedOneRepMax(best.weight, best.reps) });
+            if (matches.length >= (limit || 6)) break;
+        }
+        return matches;
+    }
+
+    function smartProgressionForExercise(exerciseName, sourceState) {
+        const source = sourceState || state;
+        const settings = Object.assign({}, DEFAULT_STATE.progressionSettings, source.progressionSettings || {});
+        const sessions = exercisePerformances(exerciseName, source, Math.max(3, Number(settings.plateauSessions) || 3));
+        if (!sessions.length) return null;
+        const latest = sessions[0];
+        const ref = latest.best;
+        const compound = isCompoundExercise(exerciseName);
+        const assistance = isAssistanceExercise(exerciseName);
+        const increment = compound ? 2.5 : 1;
+        const todayReadiness = source.readinessLogs && source.readinessLogs[localDateKey()];
+        const recent = sessions.slice(0, Math.max(3, Number(settings.plateauSessions) || 3));
+        const e1rms = recent.map(item => item.e1rm).filter(Boolean);
+        const plateau = e1rms.length >= 3 && ((Math.max(...e1rms) - Math.min(...e1rms)) / Math.max(...e1rms)) < 0.01;
+        const targetRir = Number(settings.targetRir) || 2;
+        const deloadPercent = clampNumber(settings.deloadPercent, 5, 30, 10);
+        let suggested = ref.weight;
+        let action = 'hold';
+        let reason = `Repeat ${ref.weight}kg and aim for cleaner reps around ${targetRir} RIR.`;
+
+        if (todayReadiness && Number(todayReadiness.score) < 55) {
+            suggested = assistance ? ref.weight * (1 + deloadPercent / 100) : ref.weight * (1 - deloadPercent / 100);
+            action = 'deload';
+            reason = `Readiness is ${Math.round(todayReadiness.score)}/100. Reduce difficulty and keep the session submaximal.`;
+        } else if (plateau && ref.rir !== null && ref.rir <= 1) {
+            suggested = assistance ? ref.weight * 1.1 : ref.weight * (1 - deloadPercent / 100);
+            action = 'deload';
+            reason = `${recent.length} hard sessions show no estimated-strength increase. Use a lighter deload exposure.`;
+        } else if (ref.rir !== null && ref.rir >= targetRir + 1 && ref.reps >= 8) {
+            suggested = assistance ? Math.max(0, ref.weight - increment) : ref.weight + increment;
+            action = 'progress';
+            reason = `${ref.reps} reps with ${ref.rir} RIR suggests room for a small load increase.`;
+        } else if (ref.rir !== null && ref.rir <= 0 && ref.reps < 6) {
+            suggested = assistance ? ref.weight + increment : Math.max(0, ref.weight - increment);
+            action = 'reduce';
+            reason = 'The last working set reached failure below six reps. Reduce difficulty and rebuild quality.';
+        }
+
+        suggested = Math.max(0, Math.round(suggested * 2) / 2);
+        return {
+            exerciseName,
+            current: ref.weight,
+            suggested,
+            reps: ref.reps,
+            rir: ref.rir,
+            e1rm: Math.round(latest.e1rm * 10) / 10,
+            action,
+            plateau,
+            reason
+        };
+    }
+
+    function getProgressionRecommendations(sourceState, limit) {
+        const source = sourceState || state;
+        const names = [];
+        const seen = new Set();
+        (source.workoutHistory || []).slice(0, 12).forEach(workout => {
+            (workout.exercises || []).forEach(exercise => {
+                const name = String(exercise.name || '').trim();
+                const key = name.toLowerCase();
+                if (name && !seen.has(key)) { seen.add(key); names.push(name); }
+            });
+        });
+        const priority = { deload: 0, reduce: 1, progress: 2, hold: 3 };
+        return names.map(name => smartProgressionForExercise(name, source))
+            .filter(Boolean)
+            .sort((a, b) => priority[a.action] - priority[b.action])
+            .slice(0, limit || 6);
+    }
+
+    function renderProgressionRecommendations() {
+        const box = document.getElementById('progression-recommendations');
+        if (!box) return;
+        const recommendations = getProgressionRecommendations(state, 6);
+        if (!recommendations.length) {
+            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">Complete a workout with weights, reps and RIR to unlock suggestions.</p>';
+            return;
+        }
+        box.innerHTML = recommendations.map(item => {
+            const style = item.action === 'progress' ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : item.action === 'deload' || item.action === 'reduce' ? 'bg-amber-50 border-amber-200 text-amber-700'
+                : 'bg-slate-50 border-slate-200 text-slate-600';
+            const action = item.action === 'progress' ? 'Increase' : item.action === 'deload' ? 'Deload' : item.action === 'reduce' ? 'Reduce' : 'Repeat';
+            return `<div class="${style} border p-3 rounded-xl">
+                <div class="flex justify-between gap-3"><p class="font-black text-sm">${escapeHtml(item.exerciseName)}</p><p class="font-black text-sm">${nutritionNumber(item.suggested)}kg</p></div>
+                <p class="text-[10px] font-black uppercase mt-1">${action} · estimated 1RM ${nutritionNumber(item.e1rm)}kg</p>
+                <p class="text-xs mt-1">${escapeHtml(item.reason)}</p>
+            </div>`;
+        }).join('');
+    }
+
+    function sevenDateKeys() {
+        return Array.from({ length: 7 }, (_, index) => dateKeyDaysAgo(6 - index));
+    }
+
+    function nutritionForDate(source, date) {
+        const meals = (source.dailyMeals || []).filter(meal => meal.date === date);
+        if (meals.length) return meals.reduce((total, meal) => ({
+            calories: total.calories + Number(meal.calories || 0),
+            protein: total.protein + Number(meal.protein || 0)
+        }), { calories: 0, protein: 0 });
+        const history = (source.nutritionHistory || []).find(day => day.date === date);
+        return history ? {
+            calories: Number(history.totalCalories || history.calories || 0),
+            protein: Number(history.totalProtein || history.protein || 0)
+        } : { calories: 0, protein: 0 };
+    }
+
+    function weeklyReportFor(sourceState) {
+        const source = normalizeState(sourceState || state);
+        const dates = sevenDateKeys();
+        const dateSet = new Set(dates);
+        const workouts = (source.workoutHistory || []).filter(workout => dateSet.has(workout.date));
+        const targetWorkouts = Math.max(1, Number(source.coachingTargets.workoutsPerWeek) || 3);
+        const dailyNutrition = dates.map(date => nutritionForDate(source, date));
+        const calorieGoal = Number(source.goals.calories || 2500);
+        const proteinGoal = Number(source.proteinGoal || source.goals.protein || 150);
+        const calorieTolerance = clampNumber(source.coachingTargets.calorieTolerancePercent, 5, 30, 10) / 100;
+        const loggedNutrition = dailyNutrition.filter(day => day.calories > 0);
+        const calorieTargetDays = loggedNutrition.filter(day => Math.abs(day.calories - calorieGoal) <= calorieGoal * calorieTolerance).length;
+        const proteinTargetDays = loggedNutrition.filter(day => day.protein >= proteinGoal * 0.9).length;
+        const stepGoal = Number(source.goals.steps || 10000);
+        const stepDays = dates.filter(date => Number(source.stepsLogs[date] || 0) >= stepGoal).length;
+        const readiness = dates.map(date => source.readinessLogs[date]).filter(Boolean);
+        const readinessAverage = readiness.length ? Math.round(readiness.reduce((sum, item) => sum + Number(item.score || 0), 0) / readiness.length) : null;
+        const weights = (source.metricsHistory || []).filter(item => dateSet.has(item.date) && Number(item.weight) > 0)
+            .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const weightAverage = weights.length ? weights.reduce((sum, item) => sum + Number(item.weight), 0) / weights.length : null;
+        const weightChange = weights.length > 1 ? Number(weights[weights.length - 1].weight) - Number(weights[0].weight) : null;
+        const habitIds = (source.habits || []).map(habit => String(habit.id));
+        let habitDone = 0;
+        dates.forEach(date => habitIds.forEach(id => { if (source.habitCompletions[date] && source.habitCompletions[date][id]) habitDone++; }));
+        const habitPossible = habitIds.length * 7;
+        const workoutAdherence = Math.min(100, Math.round((workouts.length / targetWorkouts) * 100));
+        return {
+            dates,
+            workouts: workouts.length,
+            targetWorkouts,
+            workoutAdherence,
+            nutritionDays: loggedNutrition.length,
+            calorieTargetDays,
+            proteinTargetDays,
+            stepDays,
+            readinessAverage,
+            weightAverage,
+            weightChange,
+            habitAdherence: habitPossible ? Math.round((habitDone / habitPossible) * 100) : null,
+            latestCheckIn: (source.checkIns || []).slice().sort((a, b) =>
+                String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || ''))
+            )[0] || null
+        };
+    }
+
+    function renderWeeklyReportSummary() {
+        const box = document.getElementById('weekly-report-summary');
+        if (!box) return;
+        const report = weeklyReportFor(state);
+        const weight = report.weightAverage == null ? '—' : nutritionNumber(report.weightAverage) + 'kg avg';
+        const readiness = report.readinessAverage == null ? '—' : report.readinessAverage + '/100';
+        box.innerHTML = `<div class="grid grid-cols-2 gap-2">
+            <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[10px] uppercase text-slate-400 font-bold">Training</p><p class="text-lg font-black">${report.workouts}/${report.targetWorkouts}</p><p class="text-[10px] text-slate-400">${report.workoutAdherence}% target</p></div>
+            <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[10px] uppercase text-slate-400 font-bold">Nutrition logged</p><p class="text-lg font-black">${report.nutritionDays}/7</p><p class="text-[10px] text-slate-400">Calories ${report.calorieTargetDays} · protein ${report.proteinTargetDays} days</p></div>
+            <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[10px] uppercase text-slate-400 font-bold">Weight</p><p class="text-lg font-black">${escapeHtml(weight)}</p></div>
+            <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[10px] uppercase text-slate-400 font-bold">Readiness</p><p class="text-lg font-black">${escapeHtml(readiness)}</p></div>
+        </div>`;
+    }
+
+    function weeklyReportDocument(sourceState, clientName) {
+        const report = weeklyReportFor(sourceState);
+        const name = clientName || (currentUser && currentUser.displayName) || 'VFIT Member';
+        const latest = report.latestCheckIn;
+        const checkInHtml = latest ? `<h2>Latest check-in</h2><p>Training adherence: ${Math.round(latest.trainingAdherence)}% · Nutrition adherence: ${Math.round(latest.nutritionAdherence)}% · Energy: ${Math.round(latest.energy)}/5</p><p><b>Win:</b> ${escapeHtml(latest.win || '—')}</p><p><b>Challenge:</b> ${escapeHtml(latest.challenge || '—')}</p>` : '<h2>Latest check-in</h2><p>No check-in recorded.</p>';
+        return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>VFIT weekly report</title><style>body{font-family:Arial,sans-serif;background:#1f2937;color:#fb923c;margin:0;padding:28px}.page{max-width:760px;margin:auto;background:#000;border:2px solid #f97316;border-radius:24px;padding:28px}h1,h2{color:#fb923c}p{color:#e5e7eb;line-height:1.55}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{background:#20242b;border:1px solid #f97316;border-radius:14px;padding:16px}.big{font-size:28px;font-weight:800;color:#fb923c}.small{font-size:12px;color:#9ca3af}@media print{body{background:#fff}.page{border:0}}</style></head><body><main class="page"><p class="small">VFIT · ${escapeHtml(report.dates[0])} to ${escapeHtml(report.dates[6])}</p><h1>${escapeHtml(name)} — Weekly Progress</h1><div class="grid"><div class="card"><div class="small">Workouts</div><div class="big">${report.workouts}/${report.targetWorkouts}</div><p>${report.workoutAdherence}% adherence</p></div><div class="card"><div class="small">Nutrition</div><div class="big">${report.nutritionDays}/7</div><p>Calories in target: ${report.calorieTargetDays} days · protein target: ${report.proteinTargetDays} days</p></div><div class="card"><div class="small">Average weight</div><div class="big">${report.weightAverage == null ? '—' : nutritionNumber(report.weightAverage) + 'kg'}</div><p>Weekly change: ${report.weightChange == null ? '—' : (report.weightChange > 0 ? '+' : '') + nutritionNumber(report.weightChange) + 'kg'}</p></div><div class="card"><div class="small">Readiness</div><div class="big">${report.readinessAverage == null ? '—' : report.readinessAverage + '/100'}</div><p>Step goal: ${report.stepDays} days · Habits: ${report.habitAdherence == null ? '—' : report.habitAdherence + '%'}</p></div></div>${checkInHtml}<p class="small">This report summarises logged data and is not medical advice.</p></main></body></html>`;
+    }
+
+    function exportWeeklyReport(sourceState, clientName) {
+        const html = weeklyReportDocument(sourceState || state, clientName);
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `vfit-weekly-report-${localDateKey()}.html`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Weekly report downloaded');
+    }
+
+    function exportViewedClientReport() {
+        if (!viewingClientData) return;
+        exportWeeklyReport(viewingClientData.data || {}, viewingClientData.name || 'Client');
+    }
+
+    // ==========================================================================
+    // MEMBERSHIPS — STRIPE CHECKOUT AND CUSTOMER PORTAL
+    // ==========================================================================
+
+    const MEMBERSHIP_PLANS = Object.freeze([
+        { id: 'free', name: 'Free', price: '£0', note: 'Core beta tracking on this device and cloud sync.' },
+        { id: 'basic', name: 'Basic', price: '£10/mo', note: 'Progress planning and member tools.' },
+        { id: 'platinum', name: 'Platinum', price: '£50/mo', note: 'Advanced coaching insights and priority support.' },
+        { id: 'coaching', name: '1-to-1 Coaching', price: '£250/mo', note: 'Personal coach check-ins, programming and feedback.' }
+    ]);
+
+    function membershipTierLabel(tier) {
+        const plan = MEMBERSHIP_PLANS.find(item => item.id === tier);
+        return plan ? plan.name : 'Free';
+    }
+
+    function showMembershipReturnStatus() {
+        const params = new URLSearchParams(window.location.search || '');
+        const result = params.get('checkout');
+        if (result === 'success') showToast('Payment received — your membership will update shortly ✓', 6500);
+        else if (result === 'cancelled') showToast('Checkout cancelled — no membership change was made', 5000);
+        if (result) {
+            params.delete('checkout');
+            const query = params.toString();
+            history.replaceState(history.state, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+        }
+    }
+
+    function renderMembership() {
+        const status = document.getElementById('membership-status');
+        const plans = document.getElementById('membership-plans');
+        if (!status || !plans) return;
+        const tier = String(accountMembership.tier || 'free').toLowerCase();
+        const active = ['active', 'trialing'].includes(String(accountMembership.status || '').toLowerCase());
+        const end = valueTime(accountMembership.currentPeriodEnd);
+        status.textContent = active
+            ? `${membershipTierLabel(tier)} active${end ? ' · renews ' + new Date(end).toLocaleDateString('en-GB') : ''}`
+            : `${membershipTierLabel(tier)} plan${RUNTIME_CONFIG.paymentsEnabled ? '' : ' · secure checkout awaiting setup'}`;
+
+        plans.innerHTML = MEMBERSHIP_PLANS.map(plan => {
+            const current = plan.id === tier && (plan.id === 'free' || active);
+            const canCheckout = plan.id !== 'free' && RUNTIME_CONFIG.paymentsEnabled;
+            const button = current
+                ? '<span class="text-[10px] font-black uppercase text-emerald-600">Current plan</span>'
+                : plan.id === 'free'
+                    ? '<span class="text-[10px] font-black uppercase text-slate-400">Included</span>'
+                    : `<button onclick="startMembershipCheckout('${escapeJsString(plan.id)}')" class="px-3 py-2 rounded-lg text-[10px] font-black ${canCheckout ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">${canCheckout ? 'Choose' : 'Setup pending'}</button>`;
+            return `<div class="border ${current ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'} rounded-xl p-3 flex items-center justify-between gap-3">
+                <div><p class="font-black text-sm">${escapeHtml(plan.name)} · ${escapeHtml(plan.price)}</p><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(plan.note)}</p></div>${button}
+            </div>`;
+        }).join('') + ((accountMembership.stripeCustomerId || active)
+            ? '<button onclick="openBillingPortal()" class="w-full mt-2 p-3 bg-slate-900 text-white rounded-xl font-bold text-xs">Manage Billing</button>'
+            : '') + '<p class="text-[10px] text-slate-400 mt-2">Memberships do not restrict existing beta features while payments are being configured.</p>';
+    }
+
+    async function startMembershipCheckout(plan) {
+        if (!currentUser) { showToast('Sign in before choosing a membership'); return; }
+        if (!currentUser.emailVerified) {
+            showToast('Verify your email before starting a paid membership', 5500);
+            return;
+        }
+        if (!RUNTIME_CONFIG.paymentsEnabled) {
+            showToast('Secure payments are not live yet — Stripe setup is still required', 5500);
+            return;
+        }
+        const callable = getBackendCallable('createCheckoutSession');
+        if (!callable) { showToast('Secure checkout is temporarily unavailable'); return; }
+        try {
+            showToast('Opening secure Stripe checkout…');
+            const result = await callable({ plan: String(plan || '').toLowerCase() });
+            const target = new URL(result && result.data && result.data.url);
+            if (target.protocol !== 'https:') throw new Error('Unsafe checkout URL');
+            window.location.assign(target.href);
+        } catch (error) {
+            console.error('Checkout failed:', error);
+            showToast('Could not start checkout — try again later', 5500);
+        }
+    }
+
+    async function openBillingPortal() {
+        if (!currentUser || !RUNTIME_CONFIG.paymentsEnabled) {
+            showToast('Billing management is not live yet');
+            return;
+        }
+        const callable = getBackendCallable('createBillingPortalSession');
+        if (!callable) { showToast('Billing management is unavailable'); return; }
+        try {
+            const result = await callable({});
+            const target = new URL(result && result.data && result.data.url);
+            if (target.protocol !== 'https:') throw new Error('Unsafe billing URL');
+            window.location.assign(target.href);
+        } catch (error) {
+            console.error('Billing portal failed:', error);
+            showToast('Could not open billing management', 5000);
+        }
+    }
+
+    // ==========================================================================
+    // ANDROID / WEB PUSH — FCM DEVICE REGISTRATION AND SHIFT-AWARE SCHEDULING
+    // ==========================================================================
+
+    function pushConfigurationReady() {
+        return Boolean(
+            RUNTIME_CONFIG.pushEnabled &&
+            RUNTIME_CONFIG.fcmVapidKey &&
+            RUNTIME_CONFIG.appCheckSiteKey &&
+            appCheckReady &&
+            typeof firebase.messaging === 'function'
+        );
+    }
+
+    function renderNotificationSettings() {
+        const status = document.getElementById('push-status');
+        const button = document.getElementById('push-toggle-btn');
+        if (!status || !button) return;
+        const settings = Object.assign({}, DEFAULT_STATE.notificationSettings, state.notificationSettings || {});
+        const controls = {
+            'push-reminder-time': settings.reminderTime || '18:00',
+            'push-workouts': !!settings.workouts,
+            'push-checkins': !!settings.checkIns,
+            'push-hydration': !!settings.hydration,
+            'push-coach': !!settings.coachMessages
+        };
+        Object.entries(controls).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (!element) return;
+            if (element.type === 'checkbox') element.checked = value;
+            else element.value = value;
+        });
+
+        const supported = typeof Notification !== 'undefined' && 'serviceWorker' in navigator;
+        const permission = supported ? Notification.permission : 'unsupported';
+        if (!supported) status.textContent = 'Push is not supported in this browser';
+        else if (!pushConfigurationReady()) status.textContent = 'Ready in code · Firebase push setup pending';
+        else if (permission === 'denied') status.textContent = 'Blocked in Android browser notification settings';
+        else if (settings.enabled && permission === 'granted') status.textContent = 'Enabled · shift-aware reminders active';
+        else status.textContent = 'Available · permission not yet granted';
+
+        button.textContent = settings.enabled ? 'Disable' : 'Enable';
+        button.className = settings.enabled
+            ? 'px-4 py-3 bg-rose-600 text-white rounded-xl font-bold text-xs'
+            : 'px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs';
+        button.disabled = !supported;
+    }
+
+    function saveCoachingTargets() {
+        const input = document.getElementById('target-workouts-week');
+        state.coachingTargets.workoutsPerWeek = Math.round(clampNumber(input && input.value, 1, 14, 3));
+        saveState();
+        renderWeeklyReportSummary();
+        syncPushSchedule();
+        showToast('Weekly workout target saved');
+    }
+
+    function saveNotificationPreferences() {
+        const settings = state.notificationSettings;
+        const time = document.getElementById('push-reminder-time');
+        settings.reminderTime = /^\d{2}:\d{2}$/.test(time && time.value) ? time.value : '18:00';
+        settings.workouts = !!document.getElementById('push-workouts')?.checked;
+        settings.checkIns = !!document.getElementById('push-checkins')?.checked;
+        settings.hydration = !!document.getElementById('push-hydration')?.checked;
+        settings.coachMessages = !!document.getElementById('push-coach')?.checked;
+        saveState();
+        syncPushSchedule();
+        renderNotificationSettings();
+    }
+
+    function togglePushNotifications() {
+        if (state.notificationSettings.enabled) disablePushNotifications();
+        else enablePushNotifications();
+    }
+
+    async function sha256Hex(value) {
+        if (!window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
+            return 'device_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+        }
+        const data = new TextEncoder().encode(String(value));
+        const digest = await window.crypto.subtle.digest('SHA-256', data);
+        return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function reminderDateForDay(day, shift, configuredTime) {
+        const result = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 18, 0, 0, 0);
+        const time = shift.type !== 'off' && shift.start ? shift.start : configuredTime;
+        const match = /^(\d{1,2}):(\d{2})$/.exec(time || '18:00');
+        result.setHours(match ? Number(match[1]) : 18, match ? Number(match[2]) : 0, 0, 0);
+        if (shift.type !== 'off') result.setMinutes(result.getMinutes() - (shift.type === 'night' ? 120 : 90));
+        return result;
+    }
+
+    function buildPushReminderSchedule(fromValue, days) {
+        const settings = Object.assign({}, DEFAULT_STATE.notificationSettings, state.notificationSettings || {});
+        const now = fromValue instanceof Date ? new Date(fromValue) : new Date(fromValue || Date.now());
+        const schedule = [];
+        const workoutTarget = Math.max(1, Math.min(7, Number(state.coachingTargets.workoutsPerWeek) || 3));
+        const workoutCounts = {};
+        for (let offset = 0; offset < (days || 14); offset++) {
+            const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12, 0, 0, 0);
+            const key = localDateKey(day);
+            const shift = getShiftForDate(key);
+            const at = reminderDateForDay(day, shift, settings.reminderTime);
+            if (at.getTime() <= now.getTime() + 60000) continue;
+            const block = Math.floor(offset / 7);
+            workoutCounts[block] = workoutCounts[block] || 0;
+            let kind = null;
+            if (settings.checkIns && day.getDay() === 0) kind = 'checkin';
+            else if (settings.workouts && workoutCounts[block] < workoutTarget) {
+                kind = 'workout';
+                workoutCounts[block] += 1;
+            } else if (settings.hydration) kind = 'hydration';
+            if (!kind) continue;
+            schedule.push({ at: at.toISOString(), kind, shiftType: shift.type });
+        }
+        return schedule;
+    }
+
+    function nextShiftAwareReminder(fromValue) {
+        return buildPushReminderSchedule(fromValue, 14)[0] || null;
+    }
+
+    async function syncPushSchedule() {
+        if (!currentUser) return false;
+        const settings = state.notificationSettings || DEFAULT_STATE.notificationSettings;
+        const schedule = settings.enabled ? buildPushReminderSchedule(new Date(), 14) : [];
+        const next = schedule[0] || null;
+        const timeZone = (() => {
+            try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+            catch (error) { return 'UTC'; }
+        })();
+        try {
+            await db.collection('users').doc(currentUser.uid).set({
+                pushPreferences: {
+                    enabled: !!settings.enabled,
+                    reminderTime: settings.reminderTime || '18:00',
+                    workouts: !!settings.workouts,
+                    checkIns: !!settings.checkIns,
+                    hydration: !!settings.hydration,
+                    coachMessages: !!settings.coachMessages,
+                    timeZone,
+                    nextReminderAt: next ? new Date(next.at) : null,
+                    nextReminderKind: next ? next.kind : null,
+                    reminderSchedule: schedule,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }
+            }, { merge: true });
+            return true;
+        } catch (error) {
+            console.warn('Push schedule could not be synced:', error);
+            return false;
+        }
+    }
+
+    function bindForegroundMessaging() {
+        if (!messagingApi || foregroundMessagingBound || typeof messagingApi.onMessage !== 'function') return;
+        foregroundMessagingBound = true;
+        messagingApi.onMessage(payload => {
+            const data = payload && dataOrNotification(payload);
+            showToast(`${data.title || 'VFIT'} · ${data.body || 'New update'}`, 6500);
+            refreshNotifBadge();
+        });
+    }
+
+    function dataOrNotification(payload) {
+        return Object.assign({}, (payload && payload.notification) || {}, (payload && payload.data) || {});
+    }
+
+    async function enablePushNotifications(options) {
+        const config = options || {};
+        if (!currentUser) { if (!config.silent) showToast('Sign in to enable notifications'); return false; }
+        if (!pushConfigurationReady()) {
+            if (!config.silent) showToast('Firebase push and App Check setup is still required', 5500);
+            renderNotificationSettings();
+            return false;
+        }
+        if (typeof Notification === 'undefined' || !('serviceWorker' in navigator)) {
+            if (!config.silent) showToast('This browser does not support push notifications');
+            return false;
+        }
+        try {
+            let permission = Notification.permission;
+            if (permission !== 'granted' && !config.silent) permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+                if (!config.silent) showToast(permission === 'denied' ? 'Notifications are blocked in browser settings' : 'Notification permission was not granted', 5500);
+                return false;
+            }
+            const registration = await navigator.serviceWorker.register('./sw.js');
+            await navigator.serviceWorker.ready;
+            messagingApi = messagingApi || firebase.messaging();
+            const token = await messagingApi.getToken({
+                vapidKey: RUNTIME_CONFIG.fcmVapidKey,
+                serviceWorkerRegistration: registration
+            });
+            if (!token) throw new Error('Firebase did not return a device token');
+            const deviceId = await sha256Hex(token);
+            const deviceRef = db.collection('users').doc(currentUser.uid).collection('devices').doc(deviceId);
+            await deviceRef.set({
+                token,
+                active: true,
+                platform: navigator.userAgent || 'web',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            state.notificationSettings.enabled = true;
+            state.notificationSettings.deviceId = deviceId;
+            saveState({ skipCloud: true });
+            await syncPushSchedule();
+            bindForegroundMessaging();
+            renderNotificationSettings();
+            if (!config.silent) showToast('Notifications enabled ✓');
+            return true;
+        } catch (error) {
+            console.error('Push registration failed:', error);
+            if (!config.silent) showToast('Could not enable notifications — check Firebase setup', 5500);
+            renderNotificationSettings();
+            return false;
+        }
+    }
+
+    async function restorePushRegistration() {
+        if (!state.notificationSettings.enabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        await enablePushNotifications({ silent: true });
+    }
+
+    async function disablePushNotifications() {
+        const deviceId = state.notificationSettings.deviceId;
+        state.notificationSettings.enabled = false;
+        state.notificationSettings.deviceId = null;
+        saveState({ skipCloud: true });
+        try {
+            if (currentUser && deviceId) {
+                await db.collection('users').doc(currentUser.uid).collection('devices').doc(deviceId).set({
+                    active: false,
+                    disabledAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+            }
+            if (messagingApi && typeof messagingApi.deleteToken === 'function') await messagingApi.deleteToken();
+            await syncPushSchedule();
+        } catch (error) {
+            console.warn('Push token cleanup pending:', error);
+        }
+        renderNotificationSettings();
+        showToast('Notifications disabled');
+    }
+
+    // ==========================================================================
+    // PRIVACY CENTRE — CONSENT, VERIFICATION, EXPORT AND DELETION
+    // ==========================================================================
+
+    function openPrivacyCenter() {
+        const syncToggle = document.getElementById('privacy-cloud-sync');
+        if (syncToggle) syncToggle.checked = !state.privacySettings || state.privacySettings.cloudHealthData !== false;
+        document.getElementById('privacy-modal').style.display = 'flex';
+        refreshIcons();
+    }
+
+    function closePrivacyCenter() {
+        document.getElementById('privacy-modal').style.display = 'none';
+    }
+
+    async function savePrivacySettings() {
+        const toggle = document.getElementById('privacy-cloud-sync');
+        const enabled = !toggle || !!toggle.checked;
+        state.privacySettings.cloudHealthData = enabled;
+        state.privacySettings.noticeVersion = RUNTIME_CONFIG.privacyVersion;
+        state.privacySettings.acknowledgedAt = new Date().toISOString();
+        saveState({ skipCloud: !enabled });
+        if (currentUser) {
+            try {
+                await db.collection('users').doc(currentUser.uid).set({
+                    privacy: {
+                        cloudHealthData: enabled,
+                        noticeVersion: RUNTIME_CONFIG.privacyVersion,
+                        acknowledgedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    }
+                }, { merge: true });
+            } catch (error) {
+                console.warn('Privacy preference sync pending:', error);
+            }
+        }
+        if (enabled) scheduleCloudSnapshotSync(200);
+        else {
+            clearTimeout(cloudSyncTimer);
+            cloudDirty = false;
+            updateDataSyncStatus();
+        }
+        showToast(enabled ? 'Cloud health-data sync enabled' : 'Future health-data changes stay on this device', 5000);
+    }
+
+    async function resendVerificationEmail() {
+        if (!currentUser) { showToast('Sign in to verify your email'); return; }
+        try {
+            await currentUser.reload();
+            if (currentUser.emailVerified) {
+                renderProfile();
+                showToast('Your email is already verified ✓');
+                return;
+            }
+            await currentUser.sendEmailVerification();
+            showToast('Verification email sent — check your inbox', 5500);
+        } catch (error) {
+            console.error('Email verification failed:', error);
+            showToast('Could not send verification email — try again later', 5000);
+        }
+    }
+
+    async function deleteVfitAccount() {
+        if (!currentUser) { showToast('Sign in before deleting your account'); return; }
+        const confirmation = prompt('This permanently deletes your VFIT account and cloud data. Type DELETE to continue.');
+        if (confirmation !== 'DELETE') { showToast('Account deletion cancelled'); return; }
+        const callable = getBackendCallable('deleteMyAccount');
+        if (!callable || !appCheckReady) {
+            showToast('Secure account deletion needs the Firebase Functions and App Check setup', 6500);
+            return;
+        }
+        const uid = currentUser.uid;
+        try {
+            showToast('Deleting account and cloud data…', 8000);
+            const result = await callable({ confirmation: 'DELETE' });
+            if (!result || !result.data || result.data.deleted !== true) throw new Error('Deletion was not confirmed');
+            localStorage.removeItem(stateStorageKey(uid));
+            localStorage.removeItem(recoveryStorageKey(uid));
+            localStorage.removeItem(notificationStorageKey('vfit_seen_notifs'));
+            localStorage.removeItem(notificationStorageKey('vfit_dismissed_notifs'));
+            if (localStorage.getItem(LEGACY_MIGRATION_KEY) === uid) {
+                localStorage.removeItem(LEGACY_STATE_KEY);
+                localStorage.removeItem(LEGACY_MIGRATION_KEY);
+            }
+            await auth.signOut().catch(() => {});
+            closePrivacyCenter();
+            showToast('Your VFIT account has been deleted');
+        } catch (error) {
+            console.error('Account deletion failed:', error);
+            showToast('Account deletion could not be completed — no local data was removed', 6500);
+        }
     }
 
     // ==========================================================================
