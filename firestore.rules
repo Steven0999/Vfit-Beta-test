@@ -1,0 +1,121 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owns(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function owner() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    function approvedCoach() {
+      return signedIn()
+        && request.auth.token.email is string
+        && exists(/databases/$(database)/documents/config/coachEmails)
+        && get(/databases/$(database)/documents/config/coachEmails).data.emails is list
+        && request.auth.token.email.lower()
+          in get(/databases/$(database)/documents/config/coachEmails).data.emails;
+    }
+
+    function validOwnRole() {
+      return (approvedCoach() && request.resource.data.role == 'coach')
+        || (!approvedCoach() && request.resource.data.role == 'member');
+    }
+
+    match /config/coachEmails {
+      allow read: if signedIn();
+      allow create, update, delete: if owner();
+    }
+
+    // Admin identities are provisioned only through the Firebase Console or
+    // Admin SDK. A signed-in user may check only their own access record.
+    match /admins/{uid} {
+      allow get: if owns(uid);
+      allow list, create, update, delete: if false;
+    }
+
+    // A deliberately small lookup document lets approved coaches find a member
+    // by email without exposing that member's health, workout or nutrition data.
+    match /directory/{uid} {
+      allow read: if owns(uid) || approvedCoach();
+      allow create, update: if owns(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.emailLower == request.auth.token.email.lower()
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'emailLower', 'role', 'updatedAt'
+        ])
+        && (
+          request.resource.data.role == 'member'
+          || (approvedCoach() && request.resource.data.role == 'coach')
+        );
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow create: if owns(uid)
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.emailLower == request.auth.token.email.lower()
+        && (
+          request.resource.data.role == 'member'
+          || (approvedCoach() && request.resource.data.role == 'coach')
+        );
+
+      // Users see their own record. An approved coach sees only a member who has
+      // explicitly approved that coach by setting coachUid.
+      allow read: if owns(uid)
+        || (approvedCoach() && resource.data.coachUid == request.auth.uid);
+
+      allow update: if (
+          owns(uid)
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.emailLower == request.auth.token.email.lower()
+          && validOwnRole()
+        )
+        // An approved coach may send a connection request without reading the
+        // private user document.
+        || (
+          approvedCoach()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pendingRequests'])
+          && request.resource.data.pendingRequests is list
+          && request.resource.data.pendingRequests.size() <= 25
+        )
+        // Once linked, the coach may only maintain assigned workouts.
+        || (
+          approvedCoach()
+          && resource.data.coachUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedWorkouts'])
+        );
+
+      allow delete: if false;
+    }
+
+    function noteParticipant(data) {
+      return signedIn()
+        && (data.coachUid == request.auth.uid || data.memberUid == request.auth.uid);
+    }
+
+    match /notes/{threadId} {
+      allow read: if noteParticipant(resource.data);
+      allow create: if noteParticipant(request.resource.data)
+        && request.resource.data.keys().hasOnly(['coachUid', 'memberUid', 'messages', 'events']);
+      allow update: if noteParticipant(resource.data)
+        && request.resource.data.coachUid == resource.data.coachUid
+        && request.resource.data.memberUid == resource.data.memberUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['messages', 'events']);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
