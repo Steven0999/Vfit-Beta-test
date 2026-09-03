@@ -2,7 +2,7 @@
   "id": "./",
   "name": "VFIT Beta",
   "short_name": "VFIT",
-  "description": "Workout, nutrition, habits and body-progress tracking with account sync.",
+  "description": "Shift-aware workouts, nutrition, coaching check-ins, readiness and body-progress tracking.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -36,6 +36,12 @@
       "name": "Log Food",
       "short_name": "Food",
       "url": "./#nutrition",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Open Coaching Hub",
+      "short_name": "Coaching",
+      "url": "./#coaching",
       "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
     }
   ]
