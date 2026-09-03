@@ -128,6 +128,11 @@ const expose = `
   escapeJsString,
   safeJsonForInline,
   escapeHtml,
+  calculateReadinessScore,
+  getShiftForDate,
+  smartProgressionForExercise,
+  weeklyReportFor,
+  buildPushReminderSchedule,
   saveState,
   loadState,
   getState: () => state,
@@ -165,13 +170,65 @@ const remote = {
   meta: { updatedAt: '2026-02-01T00:00:00.000Z' },
   goals: { calories: 2400 },
   workoutHistory: [{ id: 'cloud-workout', date: '2026-02-01' }],
-  metricsHistory: [{ date: '2026-01-01', weight: 99 }]
+  metricsHistory: [{ date: '2026-01-01', weight: 99 }],
+  checkIns: [{ id: 'cloud-checkin', date: '2026-02-01', energy: 4 }],
+  readinessLogs: { '2026-02-01': { score: 82 } }
 };
 const merged = app.mergeStateSnapshots(local, remote);
 assert.equal(merged.goals.calories, 2400);
 assert.deepEqual([...merged.workoutHistory.map(item => item.id)].sort(), ['cloud-workout', 'local-workout']);
 assert.equal(merged.metricsHistory[0].weight, 99);
 assert.equal(merged.metricsHistory[0].photos.front, 'data:image/jpeg;base64,AA==');
+assert.equal(merged.checkIns[0].id, 'cloud-checkin');
+assert.equal(merged.readinessLogs['2026-02-01'].score, 82);
+
+// Readiness reacts in the right direction and remains a bounded score.
+const highReadiness = app.calculateReadinessScore({ sleepHours: 8, sleepQuality: 5, energy: 5, fatigue: 1, soreness: 1, stress: 1 });
+const lowReadiness = app.calculateReadinessScore({ sleepHours: 3, sleepQuality: 1, energy: 1, fatigue: 5, soreness: 5, stress: 5 });
+assert.ok(highReadiness > lowReadiness);
+assert.ok(highReadiness <= 100 && lowReadiness >= 0);
+
+// A dated rota entry overrides the recurring shift pattern.
+const rotaState = app.defaultState();
+rotaState.shiftProfile.enabled = true;
+rotaState.shiftProfile.rota['2026-09-03'] = { type: 'night', start: '20:00', end: '08:00' };
+rotaState.notificationSettings.enabled = true;
+rotaState.notificationSettings.workouts = true;
+rotaState.notificationSettings.checkIns = false;
+rotaState.notificationSettings.hydration = false;
+rotaState.coachingTargets.workoutsPerWeek = 2;
+app.setState(rotaState);
+assert.equal(app.getShiftForDate('2026-09-03').type, 'night');
+assert.equal(app.getShiftForDate('2026-09-03').source, 'rota');
+const reminderSchedule = app.buildPushReminderSchedule(new Date('2026-09-03T12:00:00Z'), 14);
+assert.equal(reminderSchedule.length, 4);
+assert.equal(reminderSchedule[0].shiftType, 'night');
+assert.equal(new Date(reminderSchedule[0].at).getHours(), 18);
+
+// Smart progression uses reps/RIR, and weekly reports honour the configured target.
+const today = new Date();
+const todayKey = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const oldKey = days => {
+  const date = new Date(today);
+  date.setDate(date.getDate() - days);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+const coachingState = app.defaultState();
+coachingState.coachingTargets.workoutsPerWeek = 2;
+coachingState.workoutHistory = [
+  { id: 'w3', date: todayKey, exercises: [{ name: 'Test Curl', sets: [{ weight: 10, reps: 10, rir: 4 }] }] },
+  { id: 'w2', date: oldKey(14), exercises: [{ name: 'Test Curl', sets: [{ weight: 10, reps: 9, rir: 3 }] }] },
+  { id: 'w1', date: oldKey(21), exercises: [{ name: 'Test Curl', sets: [{ weight: 9, reps: 10, rir: 3 }] }] }
+];
+coachingState.dailyMeals = [{ id: 'meal-1', date: todayKey, calories: 2500, protein: 150 }];
+const progression = app.smartProgressionForExercise('Test Curl', coachingState);
+assert.equal(progression.action, 'progress');
+assert.equal(progression.suggested, 11);
+const report = app.weeklyReportFor(coachingState);
+assert.equal(report.workouts, 1);
+assert.equal(report.targetWorkouts, 2);
+assert.equal(report.workoutAdherence, 50);
+assert.equal(report.nutritionDays, 1);
 
 // Recovery/cloud copies omit progress images; the primary account save keeps them.
 const withoutImages = app.stateWithoutLocalImages(merged);
