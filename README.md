@@ -1,12 +1,14 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.4` restores the original barcode scanner while keeping the unified Coaching Hub, conversational daily check-in, existing tracker and shift-work format.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.5` adds goal-specific weekly-set coaching, a wall-clock workout timer and severe-fatigue deload planning while keeping the restored original barcode scanner and shift-work format.
 
 ## What is included
 
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
-- A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions and shift-specific advice.
-- One Coaching Hub for AI insights, the connected human coach, readiness, weekly check-ins, progression, rota and reports.
+- A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
+- One Coaching Hub inside Settings for AI insights, the connected human coach, readiness, weekly check-ins, progression, rota and reports.
+- Goal-specific muscle building: 12–16 weekly working sets per muscle for full-body development, or 12–20 for selected priority areas.
+- A workout timer based on the saved session start time, so elapsed duration includes time while the screen is locked, the app is backgrounded or the phone is switched off.
 - Weekly client check-ins with adherence, wins, challenges and automatic coach-review flags.
 - Shift rota overrides that feed readiness and notification timing.
 - Smart load progression using recent reps, RIR, estimated 1RM, plateaus and low-readiness deloads.
@@ -101,7 +103,10 @@ Membership state is written only by Cloud Functions. Account deletion cancels/de
 
 - Register, verify the email, sign out and sign back in; confirm accounts remain isolated.
 - Add rota days, log high and low readiness entries, and confirm the recommendation changes.
-- Open the Coaching Hub with no check-in for today; confirm the AI Coach opens, asks seven questions one at a time, and changes its advice for night, early, day and off-day rota entries.
+- Open Settings → Coaching Hub with no check-in for today; confirm the AI Coach asks one question at a time and changes its advice for night, early, day and off-day rota entries.
+- Choose full-body muscle gain and confirm the weekly target is 12–16 sets per muscle; choose specific areas and confirm only those priorities use the 12–20 range.
+- Start a workout, lock or switch off the phone for several minutes, reopen VFIT and confirm the session timer includes the time away.
+- Select heavy fatigue in the AI Coach check-in; confirm it asks whether to start a seven-day deload and applies the easier-week guidance only after Yes is selected.
 - Complete the AI Coach check-in, ask a follow-up, close and reopen the hub, and confirm the result is saved with Today’s Readiness.
 - Complete a weekly check-in; confirm the linked coach sees its flags and can reply in Notes.
 - Complete workouts with weights, reps and RIR; confirm Smart Progression appears in the Coaching Hub and workout fields.

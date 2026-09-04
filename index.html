@@ -795,7 +795,7 @@
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-black">Weekly Volume</h3>
-                            <p class="text-xs text-slate-400">Sets per muscle · last 7 days · target 12-20 · assisting muscles count ½</p>
+                            <p id="volume-target-description" class="text-xs text-slate-400">Sets per muscle · last 7 days · assisting muscles count ½</p>
                         </div>
                         <div class="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center">
                             <i data-lucide="bar-chart-big" class="w-5 h-5 text-indigo-600"></i>
@@ -806,9 +806,9 @@
             </section>
 
             <!-- ============================== -->
-            <!-- COACHING HUB TAB -->
+            <!-- COACHING HUB — mounted inside Settings at runtime -->
             <!-- ============================== -->
-            <section id="coaching" class="tab-content space-y-6">
+            <section id="coaching" class="hidden space-y-6" aria-label="Coaching Hub">
                 <div class="bg-slate-900 rounded-[2.5rem] p-6 text-white relative overflow-hidden shadow-xl">
                     <div class="relative z-10">
                         <p class="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 mb-2">VFIT Coaching Hub</p>
@@ -869,6 +869,17 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <div class="glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Goal & Weekly Sets</h3>
+                            <p class="text-xs text-slate-400">Your muscle-building target from completed workouts</p>
+                        </div>
+                        <button onclick="openGoalSetting()" class="bg-slate-900 text-white px-4 py-3 rounded-xl font-bold text-xs">Set Goal</button>
+                    </div>
+                    <div id="goal-volume-summary"></div>
                 </div>
 
                 <!-- Human coach connection and messages -->
@@ -1481,6 +1492,7 @@
             <!-- SETTINGS TAB -->
             <!-- ============================== -->
             <section id="settings" class="tab-content space-y-6">
+                <div id="coaching-settings-slot" class="space-y-6"></div>
                 <div class="glass-card p-6 rounded-[2.5rem] space-y-8">
                     <!-- EXERCISE DATABASE — choose what's available at your gym -->
                     <div>
@@ -1618,7 +1630,7 @@
                                 <span class="text-xs font-bold text-slate-600">Enable</span>
                             </label>
                         </div>
-                        <p class="text-xs text-slate-500">Show AI-powered training and nutrition recommendations on dashboard</p>
+                        <p class="text-xs text-slate-500">Show training, nutrition and recovery recommendations inside Settings → Coaching Hub</p>
                     </div>
 
                     <div>
@@ -1762,7 +1774,7 @@
                         </div>
                         <span class="font-bold text-slate-700">Training</span>
                     </button>
-                    <button onclick="switchTab('coaching'); toggleSidebar();" class="w-full flex items-center gap-4 p-4 rounded-2xl hover:bg-indigo-50 transition-colors group">
+                    <button onclick="openCoachingHub(); toggleSidebar();" class="w-full flex items-center gap-4 p-4 rounded-2xl hover:bg-indigo-50 transition-colors group">
                         <div class="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center group-hover:bg-orange-200">
                             <i data-lucide="clipboard-check" class="w-5 h-5 text-orange-600"></i>
                         </div>
@@ -1977,7 +1989,7 @@
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Focus</label>
                 <div class="grid grid-cols-3 gap-2">
                     <button type="button" onclick="setGoalFocus('weight_loss')" id="focus-weight_loss" class="p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">
-                        🔥<br>Weight Loss
+                        🔥<br>Fat Loss
                     </button>
                     <button type="button" onclick="setGoalFocus('muscle_gain')" id="focus-muscle_gain" class="p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">
                         💪<br>Muscle Gain
@@ -2024,20 +2036,26 @@
             <!-- MUSCLE GAIN FOLLOW-UPS -->
             <div id="focus-fields-muscle_gain" class="hidden space-y-3 mb-5">
                 <div>
-                    <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Priority muscle group(s)</label>
-                    <select id="mg-priority" class="w-full p-3 bg-slate-50 rounded-xl font-bold text-sm outline-none">
-                        <option value="">Select...</option>
-                        <option value="full">Full body</option>
-                        <option value="upper">Upper body</option>
-                        <option value="lower">Lower body</option>
-                        <option value="chest">Chest</option>
-                        <option value="back">Back</option>
-                        <option value="shoulders">Shoulders</option>
-                        <option value="arms">Arms (biceps/triceps)</option>
-                        <option value="legs">Legs (quads/hamstrings)</option>
-                        <option value="glutes">Glutes</option>
-                        <option value="core">Core</option>
-                    </select>
+                    <label class="text-[10px] font-bold text-slate-400 uppercase mb-2 block">What do you want to build?</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" id="mg-scope-general" onclick="setMuscleGainScope('general')" class="p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600">Full body / general<span class="block text-[9px] font-normal mt-1">12–16 sets per muscle/week</span></button>
+                        <button type="button" id="mg-scope-specific" onclick="setMuscleGainScope('specific')" class="p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600">Specific areas<span class="block text-[9px] font-normal mt-1">12–20 sets per priority/week</span></button>
+                    </div>
+                </div>
+                <div id="mg-specific-areas" class="hidden">
+                    <label class="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Choose priority areas</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button type="button" data-goal-muscle="Chest" onclick="toggleGoalMuscle('Chest')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Chest</button>
+                        <button type="button" data-goal-muscle="Back" onclick="toggleGoalMuscle('Back')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Back</button>
+                        <button type="button" data-goal-muscle="Shoulders" onclick="toggleGoalMuscle('Shoulders')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Shoulders</button>
+                        <button type="button" data-goal-muscle="Biceps" onclick="toggleGoalMuscle('Biceps')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Biceps</button>
+                        <button type="button" data-goal-muscle="Triceps" onclick="toggleGoalMuscle('Triceps')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Triceps</button>
+                        <button type="button" data-goal-muscle="Quads" onclick="toggleGoalMuscle('Quads')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Quads</button>
+                        <button type="button" data-goal-muscle="Hamstrings" onclick="toggleGoalMuscle('Hamstrings')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Hams</button>
+                        <button type="button" data-goal-muscle="Glutes" onclick="toggleGoalMuscle('Glutes')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Glutes</button>
+                        <button type="button" data-goal-muscle="Calves" onclick="toggleGoalMuscle('Calves')" class="p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold">Calves</button>
+                    </div>
+                    <p id="mg-specific-count" class="text-[10px] text-slate-400 mt-2">Choose at least one area.</p>
                 </div>
                 <div>
                     <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Current physique</label>
@@ -3575,8 +3593,8 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.4';
-    const VFIT_STATE_SCHEMA_VERSION = 4;
+    const VFIT_APP_VERSION = '2.1.0-beta.5';
+    const VFIT_STATE_SCHEMA_VERSION = 5;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
         functionsRegion: 'europe-west2',
@@ -5160,7 +5178,7 @@
         if (goals.length > 0) {
             html += goals.map(g => {
                 const focusInfo = {
-                    weight_loss: { emoji: '🔥', label: 'Weight Loss', color: 'text-rose-600' },
+                    weight_loss: { emoji: '🔥', label: 'Fat Loss', color: 'text-rose-600' },
                     muscle_gain: { emoji: '💪', label: 'Muscle Gain', color: 'text-indigo-600' },
                     health:      { emoji: '🌱', label: 'Health',      color: 'text-emerald-600' }
                 }[g.focus] || { emoji: '🎯', label: g.type || 'Goal', color: 'text-slate-600' };
@@ -5174,7 +5192,9 @@
                     if (parts.length) summary = parts.join(' · ');
                 } else if (g.focus === 'muscle_gain' && g.details) {
                     const parts = [];
-                    if (g.details.priority) parts.push(g.details.priority);
+                    if (g.details.scope === 'general') parts.push('Full body · 12–16 sets/muscle/week');
+                    else if (g.details.scope === 'specific' && Array.isArray(g.details.muscles)) parts.push(`${g.details.muscles.join(', ')} · 12–20 sets each/week`);
+                    else if (g.details.priority) parts.push(g.details.priority);
                     if (g.details.physique) parts.push(g.details.physique);
                     if (g.details.experience) parts.push(g.details.experience);
                     if (parts.length) summary = parts.join(' · ');
@@ -7050,6 +7070,13 @@
             plateauSessions: 3,
             deloadPercent: 10
         },
+        deloadPlan: {
+            active: false,
+            startDate: null,
+            endDate: null,
+            source: null,
+            createdAt: null
+        },
         notificationSettings: {
             enabled: false,
             reminderTime: '18:00',
@@ -7113,8 +7140,8 @@
     let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 
     let workoutTimer = null;
-    let workoutStartTime = null;      // timestamp of the current running segment
-    let workoutAccumulatedSeconds = 0; // banked seconds from previous segments (Option 2: frozen while away)
+    let workoutStartTime = null;       // absolute wall-clock timestamp when the workout began
+    let workoutAccumulatedSeconds = 0; // legacy restore fallback for pre-beta.5 snapshots
     let currentWorkoutContext = null; // {env, focus, muscles} — set when a workout starts
     let showAllExercisesInPicker = false; // toggled by the "Show all" link in the dropdown
     let currentFoodItem = null;
@@ -7191,6 +7218,7 @@
             : {};
         normalized.coachingTargets = Object.assign({}, DEFAULT_STATE.coachingTargets, isPlainRecord(raw.coachingTargets) ? raw.coachingTargets : {});
         normalized.progressionSettings = Object.assign({}, DEFAULT_STATE.progressionSettings, isPlainRecord(raw.progressionSettings) ? raw.progressionSettings : {});
+        normalized.deloadPlan = Object.assign({}, DEFAULT_STATE.deloadPlan, isPlainRecord(raw.deloadPlan) ? raw.deloadPlan : {});
         normalized.notificationSettings = Object.assign({}, DEFAULT_STATE.notificationSettings, isPlainRecord(raw.notificationSettings) ? raw.notificationSettings : {});
         normalized.privacySettings = Object.assign({}, DEFAULT_STATE.privacySettings, isPlainRecord(raw.privacySettings) ? raw.privacySettings : {});
         normalized.currentPhotos = Object.assign({}, DEFAULT_STATE.currentPhotos, isPlainRecord(raw.currentPhotos) ? raw.currentPhotos : {});
@@ -7532,13 +7560,29 @@
     // TAB MANAGEMENT
     // ==========================================================================
 
+    function mountCoachingHubInSettings() {
+        const hub = document.getElementById('coaching');
+        const slot = document.getElementById('coaching-settings-slot');
+        if (!hub || !slot) return false;
+        if (hub.parentNode !== slot) slot.appendChild(hub);
+        hub.classList.remove('hidden');
+        return true;
+    }
+
+    function openCoachingHub() {
+        return switchTab('coaching');
+    }
+
     function switchTab(tabId, options) {
         const config = options || {};
         if (!VALID_TAB_IDS.has(tabId)) {
             console.warn('Ignored unknown tab:', tabId);
             return false;
         }
-        const tab = document.getElementById(tabId);
+        const requestedTabId = tabId;
+        const targetTabId = tabId === 'coaching' ? 'settings' : tabId;
+        if (targetTabId === 'settings') mountCoachingHubInSettings();
+        const tab = document.getElementById(targetTabId);
         if (!tab || !tab.classList.contains('tab-content')) return false;
 
         document.querySelectorAll('.tab-content').forEach(content => {
@@ -7548,18 +7592,17 @@
         });
         document.querySelectorAll('[onclick*="switchTab("]').forEach(control => {
             const handler = control.getAttribute('onclick') || '';
-            const active = handler.includes(`switchTab('${tabId}')`) || handler.includes(`switchTab("${tabId}")`);
+            const active = handler.includes(`switchTab('${targetTabId}')`) || handler.includes(`switchTab("${targetTabId}")`);
             if (active) control.setAttribute('aria-current', 'page');
             else control.removeAttribute('aria-current');
         });
-        try { sessionStorage.setItem('vfit_active_tab', tabId); } catch (error) {}
+        try { sessionStorage.setItem('vfit_active_tab', requestedTabId); } catch (error) {}
 
         const renders = {
             logs: () => { renderLogs(); filterWorkouts(); },
             profile: renderProfile,
-            settings: renderSettings,
+            settings: () => { renderSettings(); renderCoachingHub(); },
             dashboard: renderDashboard,
-            coaching: renderCoachingHub,
             training: renderCoachPlanInTraining,
             metrics: () => {
                 const picker = document.getElementById('metrics-date-picker');
@@ -7568,8 +7611,14 @@
                 renderMetricsHistory();
             }
         };
-        if (renders[tabId]) safeInvoke(`${tabId} tab`, renders[tabId]);
+        if (renders[targetTabId]) safeInvoke(`${targetTabId} tab`, renders[targetTabId]);
         if (config.scroll !== false) window.scrollTo({ top: 0, behavior: 'auto' });
+        if (requestedTabId === 'coaching' && config.scroll !== false) {
+            setTimeout(() => {
+                const hub = document.getElementById('coaching');
+                if (hub && hub.scrollIntoView) hub.scrollIntoView({ block: 'start', behavior: 'auto' });
+            }, 0);
+        }
         scheduleAccessibleDomRefresh();
         refreshIcons();
         return true;
@@ -8660,22 +8709,96 @@
         return out;
     }
 
+    function musclesFromGoalDetails(details) {
+        const source = details || {};
+        if (Array.isArray(source.muscles)) {
+            const selected = source.muscles.filter(muscle => SPECIFIC_MUSCLES.includes(muscle));
+            if (selected.length) return [...new Set(selected)];
+        }
+        const legacy = String(source.priority || '').toLowerCase();
+        const map = {
+            upper: ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps'],
+            lower: ['Quads', 'Hamstrings', 'Glutes', 'Calves'],
+            legs: ['Quads', 'Hamstrings', 'Glutes', 'Calves'],
+            arms: ['Biceps', 'Triceps'],
+            chest: ['Chest'], back: ['Back'], shoulders: ['Shoulders'],
+            glutes: ['Glutes'], quads: ['Quads'], hamstrings: ['Hamstrings'], calves: ['Calves']
+        };
+        return map[legacy] ? map[legacy].slice() : [];
+    }
+
+    function activeMuscleGainVolumePlan(sourceState) {
+        const source = sourceState || state;
+        const goal = (source.userGoals || []).find(item => item && item.completed !== true);
+        if (!goal || goal.focus !== 'muscle_gain') return null;
+        const details = goal.details || {};
+        const legacyPriority = String(details.priority || '').toLowerCase();
+        const scope = details.scope === 'specific' || (details.scope !== 'general' && legacyPriority && legacyPriority !== 'full')
+            ? 'specific'
+            : 'general';
+        const muscles = scope === 'specific' ? musclesFromGoalDetails(details) : SPECIFIC_MUSCLES.slice();
+        if (!muscles.length) return null;
+        return {
+            goal,
+            scope,
+            muscles,
+            min: 12,
+            max: scope === 'specific' ? 20 : 16,
+            label: scope === 'specific' ? 'Specific-area muscle gain' : 'Full-body muscle gain'
+        };
+    }
+
+    function weeklySetTargetForMuscle(muscle, sourceState) {
+        const plan = activeMuscleGainVolumePlan(sourceState);
+        if (!plan) return { min: 12, max: 20, focused: false };
+        if (!plan.muscles.includes(muscle)) return null;
+        return { min: plan.min, max: plan.max, focused: plan.scope === 'specific' };
+    }
+
+    function renderGoalVolumeSummary() {
+        const box = document.getElementById('goal-volume-summary');
+        if (!box) return;
+        const activeGoal = (state.userGoals || []).find(item => item && item.completed !== true);
+        if (!activeGoal) {
+            box.innerHTML = '<div class="bg-slate-50 p-4 rounded-2xl"><p class="font-bold text-sm">Choose your main goal</p><p class="text-xs text-slate-400 mt-1">Select fat loss, full-body muscle gain or specific priority areas so coaching can follow the right target.</p></div>';
+            return;
+        }
+        if (activeGoal.focus === 'weight_loss') {
+            box.innerHTML = '<div class="bg-rose-50 border border-rose-200 p-4 rounded-2xl"><p class="font-black text-sm text-rose-700">Fat-loss focus</p><p class="text-xs text-slate-600 mt-1">VFIT will prioritise your calorie target, protein, resistance training and sustainable progress while protecting recovery around shifts.</p></div>';
+            return;
+        }
+        const plan = activeMuscleGainVolumePlan(state);
+        if (plan) {
+            const focus = plan.scope === 'specific' ? plan.muscles.join(', ') : 'all major muscle groups';
+            box.innerHTML = `<div class="bg-indigo-50 border border-indigo-200 p-4 rounded-2xl"><p class="font-black text-sm text-indigo-700">${escapeHtml(plan.label)}</p><p class="text-xs text-slate-600 mt-1">Target <b>${plan.min}–${plan.max} quality working sets per week</b> for ${escapeHtml(focus)}. Completed workouts update the volume tracker automatically.</p></div>`;
+            return;
+        }
+        box.innerHTML = '<div class="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl"><p class="font-black text-sm text-emerald-700">Health focus</p><p class="text-xs text-slate-600 mt-1">Coaching will prioritise consistency, readiness, movement and recovery around your shifts.</p></div>';
+    }
+
     function renderVolumeTracker() {
         const card = document.getElementById('volume-tracker-card');
         const list = document.getElementById('volume-tracker-list');
         if (!card || !list) return;
 
         const level = getExperienceLevel();
+        const plan = activeMuscleGainVolumePlan(state);
+        const description = document.getElementById('volume-target-description');
+        if (description) {
+            description.textContent = plan
+                ? `${plan.label} · target ${plan.min}–${plan.max} sets/week · assisting muscles count ½`
+                : 'Sets per muscle · last 7 days · target 12–20 · assisting muscles count ½';
+        }
 
         // Beginners don't need volume landmarks — keep the card hidden for them.
-        if (level === 'Beginner') {
+        if (level === 'Beginner' && !plan) {
             card.classList.add('hidden');
             return;
         }
 
         // Experience not set yet → show the card but prompt them to set it, so the
         // feature is discoverable rather than silently missing.
-        if (level !== 'Intermediate' && level !== 'Advanced') {
+        if (level !== 'Intermediate' && level !== 'Advanced' && !plan) {
             card.classList.remove('hidden');
             list.innerHTML = `
                 <div class="text-center py-6">
@@ -8690,9 +8813,8 @@
         const counts = getWeeklyVolume();
 
         // Only show muscles trained in the last 7 days, sorted by volume desc
-        const trained = SPECIFIC_MUSCLES
-            .filter(m => counts[m] > 0)
-            .sort((a, b) => counts[b] - counts[a]);
+        const trained = (plan ? plan.muscles.slice() : SPECIFIC_MUSCLES.filter(m => counts[m] > 0))
+            .sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
 
         if (trained.length === 0) {
             card.classList.remove('hidden');
@@ -8702,32 +8824,35 @@
 
         card.classList.remove('hidden');
         list.innerHTML = trained.map(m => {
-            const sets = counts[m];
+            const sets = counts[m] || 0;
+            const target = weeklySetTargetForMuscle(m, state) || { min: 12, max: 20, focused: false };
             // Display whole numbers cleanly, halves as e.g. "13.5"
             const setsLabel = Number.isInteger(sets) ? sets : sets.toFixed(1);
-            // Status: under 12 = below target (amber), 12-20 = on target (green), >20 = over (red)
+            // Status follows the active goal: 12–16 general or 12–20 priority areas.
             let barColor, statusIcon, statusText, pct;
-            if (sets < 12) {
+            if (sets < target.min) {
                 barColor = 'bg-amber-400';
                 statusIcon = '';
-                statusText = `<span class="text-amber-600">${(12 - sets) % 1 === 0 ? (12 - sets) : (12 - sets).toFixed(1)} below min</span>`;
-                pct = Math.min(100, (sets / 20) * 100);
-            } else if (sets <= 20) {
+                const shortfall = target.min - sets;
+                statusText = `<span class="text-amber-600">${shortfall % 1 === 0 ? shortfall : shortfall.toFixed(1)} below min</span>`;
+                pct = Math.min(100, (sets / target.max) * 100);
+            } else if (sets <= target.max) {
                 barColor = 'bg-emerald-500';
                 statusIcon = '✓';
                 statusText = `<span class="text-emerald-600">on target</span>`;
-                pct = (sets / 20) * 100;
+                pct = (sets / target.max) * 100;
             } else {
                 barColor = 'bg-red-400';
                 statusIcon = '';
-                statusText = `<span class="text-red-500">${(sets - 20) % 1 === 0 ? (sets - 20) : (sets - 20).toFixed(1)} over max</span>`;
+                const excess = sets - target.max;
+                statusText = `<span class="text-red-500">${excess % 1 === 0 ? excess : excess.toFixed(1)} over max</span>`;
                 pct = 100;
             }
             return `
                 <div class="bg-slate-50 p-3 rounded-xl">
                     <div class="flex justify-between items-center mb-1.5">
-                        <span class="font-bold text-sm">${m} ${statusIcon}</span>
-                        <span class="text-xs font-black text-slate-700">${setsLabel}<span class="text-slate-400 font-normal">/12-20 sets</span></span>
+                        <span class="font-bold text-sm">${m} ${target.focused ? '<span class="text-[9px] text-indigo-600">PRIORITY</span>' : ''} ${statusIcon}</span>
+                        <span class="text-xs font-black text-slate-700">${setsLabel}<span class="text-slate-400 font-normal">/${target.min}–${target.max} sets</span></span>
                     </div>
                     <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
                         <div class="${barColor} h-full rounded-full transition-all" style="width: ${pct}%"></div>
@@ -9309,10 +9434,17 @@
         return envSet.size > 0 ? Array.from(envSet).sort() : getAvailableExercises(env);
     }
 
+    function elapsedWorkoutSeconds(startedAt, fallbackSeconds, nowValue) {
+        const parsedStart = typeof startedAt === 'number' ? startedAt : new Date(startedAt || '').getTime();
+        const now = Number.isFinite(Number(nowValue)) ? Number(nowValue) : Date.now();
+        if (Number.isFinite(parsedStart) && parsedStart > 0 && parsedStart <= now) {
+            return Math.max(0, Math.floor((now - parsedStart) / 1000));
+        }
+        return Math.max(0, Math.floor(Number(fallbackSeconds) || 0));
+    }
+
     function currentWorkoutElapsed() {
-        // Total elapsed = banked seconds + the segment currently running.
-        const segment = workoutStartTime ? Math.floor((Date.now() - workoutStartTime) / 1000) : 0;
-        return workoutAccumulatedSeconds + segment;
+        return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now());
     }
 
     // ==========================================================================
@@ -9320,7 +9452,8 @@
     // ==========================================================================
     // Keeps an in-progress workout alive across refreshes, tab closes, and
     // accidental navigation. Only Finish or Cancel/Back clears it.
-    // Timer uses Option 2: it freezes while you're away and resumes on return.
+    // The timer is derived from the saved start timestamp, so time continues to
+    // pass while the screen is locked, the app is backgrounded or the phone is off.
 
     /**
      * Read the currently-displayed workout (exercises, typed sets, title, context,
@@ -9355,6 +9488,7 @@
         return {
             title: titleEl ? titleEl.innerText : 'Workout',
             context: currentWorkoutContext,
+            startedAt: workoutStartTime,
             elapsedSeconds: currentWorkoutElapsed(),
             workoutDate: window.selectedWorkoutDate || (document.getElementById('workout-date-picker') || {}).value || new Date().toISOString().split('T')[0],
             exercises: exercises,
@@ -9395,11 +9529,16 @@
         const saved = state.activeWorkout;
         if (!saved || !Array.isArray(saved.exercises)) return false;
 
-        // Restore context + timer state. Option 2: banked elapsed is frozen; the
-        // clock resumes counting forward from here.
+        // Restore the original wall-clock start. Older snapshots did not include
+        // startedAt, so reconstruct it from their last save and elapsed seconds.
         currentWorkoutContext = saved.context || null;
-        workoutAccumulatedSeconds = saved.elapsedSeconds || 0;
-        workoutStartTime = Date.now();
+        const savedStart = typeof saved.startedAt === 'number' ? saved.startedAt : new Date(saved.startedAt || '').getTime();
+        const savedAt = Number(saved.savedAt);
+        const legacyElapsed = Math.max(0, Number(saved.elapsedSeconds) || 0);
+        workoutStartTime = Number.isFinite(savedStart) && savedStart > 0
+            ? savedStart
+            : (Number.isFinite(savedAt) && savedAt > 0 ? savedAt - legacyElapsed * 1000 : Date.now() - legacyElapsed * 1000);
+        workoutAccumulatedSeconds = 0;
 
         // Make sure we're on the Training tab and showing the active workout view
         if (typeof switchTab === 'function') switchTab('training');
@@ -9972,6 +10111,7 @@
     let pendingWorkout = null;
 
     function saveWorkout() {
+        updateWorkoutTimer();
         clearInterval(workoutTimer);
 
         // If a coach is building a workout to assign to a client, finishing means
@@ -10028,6 +10168,9 @@
             date: workoutDate,
             focus: focus,
             duration: document.getElementById('workout-timer').innerText,
+            durationSeconds: currentWorkoutElapsed(),
+            startedAt: workoutStartTime ? new Date(workoutStartTime).toISOString() : null,
+            completedAt: new Date().toISOString(),
             exercises: exercises,
             category: category
         };
@@ -14836,7 +14979,7 @@
             } else {
                 goalsList.innerHTML = goals.map(g => {
                     const focusInfo = {
-                        weight_loss: { emoji: '🔥', label: 'Weight Loss', color: 'text-rose-600' },
+                        weight_loss: { emoji: '🔥', label: 'Fat Loss', color: 'text-rose-600' },
                         muscle_gain: { emoji: '💪', label: 'Muscle Gain', color: 'text-indigo-600' },
                         health:      { emoji: '🌱', label: 'Health',      color: 'text-emerald-600' }
                     }[g.focus] || { emoji: '🎯', label: g.type ? g.type : 'Goal', color: 'text-slate-600' };
@@ -14850,7 +14993,9 @@
                         if (parts.length) summary = parts.join(' · ');
                     } else if (g.focus === 'muscle_gain' && g.details) {
                         const parts = [];
-                        if (g.details.priority) parts.push(g.details.priority);
+                        if (g.details.scope === 'general') parts.push('Full body · 12–16 sets/muscle/week');
+                        else if (g.details.scope === 'specific' && Array.isArray(g.details.muscles)) parts.push(`${g.details.muscles.join(', ')} · 12–20 sets each/week`);
+                        else if (g.details.priority) parts.push(g.details.priority);
                         if (g.details.physique) parts.push(g.details.physique);
                         if (g.details.experience) parts.push(g.details.experience);
                         if (parts.length) summary = parts.join(' · ');
@@ -14881,6 +15026,8 @@
         state.userGoals = (state.userGoals || []).filter(g => String(g.id) !== String(id));
         saveState();
         renderSettings();
+        renderGoalVolumeSummary();
+        renderDashboard();
     }
 
     // ==========================================================================
@@ -14905,6 +15052,49 @@
         return localDateKey(date);
     }
 
+    function buildDeloadPlan(startDate, source) {
+        const start = /^\d{4}-\d{2}-\d{2}$/.test(String(startDate || '')) ? String(startDate) : localDateKey();
+        const end = new Date(start + 'T12:00:00');
+        end.setDate(end.getDate() + 6);
+        return {
+            active: true,
+            startDate: start,
+            endDate: localDateKey(end),
+            source: String(source || 'manual').slice(0, 40),
+            createdAt: new Date().toISOString()
+        };
+    }
+
+    function isDeloadPlanActive(sourceState, dateKey) {
+        const source = sourceState || state;
+        const plan = source.deloadPlan || {};
+        const date = dateKey || localDateKey();
+        return plan.active === true && !!plan.startDate && !!plan.endDate && date >= plan.startDate && date <= plan.endDate;
+    }
+
+    function startDeloadWeek(source, options) {
+        const config = options || {};
+        state.deloadPlan = buildDeloadPlan(localDateKey(), source);
+        if (config.persist !== false) {
+            saveState();
+            renderReadinessSummary();
+            renderProgressionRecommendations();
+            showToast(`Deload week active until ${state.deloadPlan.endDate}`, 5000);
+        }
+        return state.deloadPlan;
+    }
+
+    function endDeloadWeek() {
+        state.deloadPlan = Object.assign({}, state.deloadPlan || {}, {
+            active: false,
+            endedAt: new Date().toISOString()
+        });
+        saveState();
+        renderReadinessSummary();
+        renderProgressionRecommendations();
+        showToast('Deload week ended');
+    }
+
     function getShiftForDate(dateKey) {
         const profile = state.shiftProfile || DEFAULT_STATE.shiftProfile;
         const rota = isPlainRecord(profile.rota) ? profile.rota : {};
@@ -14924,8 +15114,8 @@
     let aiCoachCheckInSession = null;
     let aiCoachPromptedSessionKey = '';
 
-    function aiCoachQuestionnaireSteps() {
-        return [
+    function aiCoachQuestionnaireSteps(answers) {
+        const steps = [
             {
                 id: 'mood',
                 question: 'First, how are you feeling overall today?',
@@ -14965,6 +15155,14 @@
                 ]
             },
             {
+                id: 'deloadWeek',
+                question: 'You are showing signs of severe fatigue. Would you like the next seven days to be a deload week?',
+                options: [
+                    { value: 'yes', label: 'Yes, deload', hint: 'Reduce weekly sets by about 40–50% and avoid failure' },
+                    { value: 'no', label: 'Not right now', hint: 'Keep today recovery-focused and reconsider if fatigue continues' }
+                ]
+            },
+            {
                 id: 'soreness',
                 question: 'What is your muscle or joint soreness like?',
                 options: [
@@ -14992,6 +15190,9 @@
                 ]
             }
         ];
+        return Number(answers && answers.fatigue) >= 5
+            ? steps
+            : steps.filter(step => step.id !== 'deloadWeek');
     }
 
     function aiCoachShiftLabel(shift) {
@@ -15060,6 +15261,9 @@
 
         const safetyFromText = aiCoachSafetySignal(note);
         const safetyLevel = safetyFromText || (values.wellbeing === 'unwell' ? 'concern' : '');
+        const severeFatigue = readinessValues.fatigue >= 5;
+        const deloadOffered = severeFatigue;
+        const deloadAccepted = severeFatigue && values.deloadWeek === 'yes';
         if (safetyLevel === 'urgent') score = Math.min(score, 15);
         else if (safetyLevel === 'concern') score = Math.min(score, 25);
         score = Math.round(Math.min(100, Math.max(0, score)));
@@ -15085,6 +15289,8 @@
         } else if (safetyLevel === 'concern') {
             action = 'Skip hard training today. Seek appropriate medical advice if symptoms are unusual, worsening or concerning.';
             safetyNotice = 'VFIT cannot diagnose pain or illness. Use appropriate professional care before returning to hard training.';
+        } else if (deloadAccepted) {
+            action = `${action} For the next seven days, reduce hard-set volume by about 40–50%, keep 3–4 reps in reserve and avoid failure.`;
         }
 
         return {
@@ -15095,6 +15301,9 @@
             shiftAdvice: aiCoachShiftAdvice(shift, guide.label),
             safetyLevel,
             safetyNotice,
+            severeFatigue,
+            deloadOffered,
+            deloadAccepted,
             drivers,
             readinessValues
         };
@@ -15105,6 +15314,9 @@
         if (stepId === 'mood' && value === 'drained') return 'Thanks for being honest. We’ll keep today realistic.';
         if (stepId === 'sleepHours' && Number(value) < 6) return 'That is a short sleep window, so I’ll factor it into today’s load.';
         if (stepId === 'energy' && Number(value) <= 1) return 'Understood. Low energy matters more than forcing the original plan.';
+        if (stepId === 'fatigue' && Number(value) >= 5) return 'That sounds like severe fatigue. Let’s decide whether a deload week would help.';
+        if (stepId === 'deloadWeek' && value === 'yes') return 'Good call. I’ll make the next seven days a deload and adjust your coaching.';
+        if (stepId === 'deloadWeek' && value === 'no') return 'No problem. Keep today recovery-focused and we can revisit it if the fatigue continues.';
         if (stepId === 'soreness' && Number(value) >= 5) return 'Severe or sharp soreness is a reason to be cautious.';
         if (stepId === 'wellbeing' && value !== 'well') return 'Thanks for flagging that. Safety comes before the programme.';
         return 'Got it.';
@@ -15137,7 +15349,7 @@
                 finished: false,
                 result: null
             };
-            appendAICoachCheckInMessage('coach', `${firstName ? 'Hi ' + firstName + '. ' : 'Hi. '}I have today as ${aiCoachShiftLabel(shift).toLowerCase()}. I’ll ask seven quick questions, one at a time, then adjust the training guidance around your shift.`);
+            appendAICoachCheckInMessage('coach', `${firstName ? 'Hi ' + firstName + '. ' : 'Hi. '}I have today as ${aiCoachShiftLabel(shift).toLowerCase()}. I’ll ask a few quick questions, one at a time, then adjust the training guidance around your shift.`);
             appendAICoachCheckInMessage('coach', aiCoachQuestionnaireSteps()[0].question);
         }
         modal.style.display = 'flex';
@@ -15168,7 +15380,7 @@
             </div>`;
         }).join('');
 
-        const steps = aiCoachQuestionnaireSteps();
+        const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
         if (!aiCoachCheckInSession.awaitingNote && !aiCoachCheckInSession.finished) {
             const step = steps[aiCoachCheckInSession.stepIndex];
             options.innerHTML = step.options.map(option => `<button onclick="answerAICoachCheckIn('${escapeJsString(step.id)}','${escapeJsString(option.value)}','${escapeJsString(option.label)}')" class="text-left bg-slate-900 border border-orange-500 p-3 rounded-xl">
@@ -15199,7 +15411,7 @@
 
     function answerAICoachCheckIn(stepId, value, label) {
         if (!aiCoachCheckInSession || aiCoachCheckInSession.finished || aiCoachCheckInSession.awaitingNote) return;
-        const steps = aiCoachQuestionnaireSteps();
+        const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
         const step = steps[aiCoachCheckInSession.stepIndex];
         if (!step || step.id !== stepId) return;
         const selected = step.options.find(option => String(option.value) === String(value));
@@ -15208,8 +15420,9 @@
         appendAICoachCheckInMessage('user', label || selected.label);
         appendAICoachCheckInMessage('coach', aiCoachAnswerAcknowledgement(step.id, selected.value));
         aiCoachCheckInSession.stepIndex += 1;
-        if (aiCoachCheckInSession.stepIndex < steps.length) {
-            appendAICoachCheckInMessage('coach', steps[aiCoachCheckInSession.stepIndex].question);
+        const nextSteps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
+        if (aiCoachCheckInSession.stepIndex < nextSteps.length) {
+            appendAICoachCheckInMessage('coach', nextSteps[aiCoachCheckInSession.stepIndex].question);
         } else {
             aiCoachCheckInSession.awaitingNote = true;
             appendAICoachCheckInMessage('coach', 'Anything else I should know—such as poor recovery, pain, a stressful shift, or a change to today’s plan? You can also skip this.');
@@ -15259,6 +15472,17 @@
         appendAICoachCheckInMessage('coach', session.result.action);
         appendAICoachCheckInMessage('coach', session.result.shiftAdvice);
         if (session.result.safetyNotice) appendAICoachCheckInMessage('coach', session.result.safetyNotice);
+        session.result.deloadActivated = false;
+        if (session.result.deloadAccepted && !session.result.safetyLevel) {
+            const plan = startDeloadWeek('ai-coach', { persist: false });
+            session.result.deloadActivated = true;
+            session.result.deloadEndDate = plan.endDate;
+            appendAICoachCheckInMessage('coach', `Your deload is now set through ${plan.endDate}. Keep the movement pattern, cut hard-set volume by about 40–50%, use lighter loads and avoid failure.`);
+        } else if (session.result.deloadAccepted && session.result.safetyLevel) {
+            appendAICoachCheckInMessage('coach', 'I have not activated a training deload because the symptoms you reported need the safety advice above to come first.');
+        } else if (session.result.severeFatigue) {
+            appendAICoachCheckInMessage('coach', 'You chose not to start a deload. Keep today recovery-focused and reconsider if severe fatigue continues or performance falls.');
+        }
         appendAICoachCheckInMessage('coach', 'You can ask me a follow-up below, open today’s training, or finish here.');
 
         const readiness = session.result.readinessValues;
@@ -15269,6 +15493,9 @@
             shift: session.shift.type,
             mood: session.answers.mood,
             wellbeing: session.answers.wellbeing,
+            deloadOffered: session.result.deloadOffered,
+            deloadAccepted: session.result.deloadAccepted,
+            deloadActivated: session.result.deloadActivated,
             note: session.note,
             source: 'ai-coach',
             recordedAt: new Date().toISOString()
@@ -15316,7 +15543,9 @@
         }
         if (/\b(shift|night|early|work)/.test(query)) return current.shiftAdvice || 'Keep the session close to your best-energy window and protect sleep around work.';
         if (/\b(train|workout|session|exercise)/.test(query)) return current.action || 'Use today’s readiness to adjust the session rather than forcing the original workload.';
-        if (/\b(sleep|tired|fatigue)/.test(query)) return 'Protect the next main sleep window first. Keep training away from the most exhausted end of a shift and reduce volume when fatigue stays high.';
+        if (/\b(sleep|tired|fatigue|deload)/.test(query)) return current.severeFatigue
+            ? 'You reported severe fatigue. Protect the next main sleep window and use the deload option if you want seven days of reduced volume and easier training.'
+            : 'Protect the next main sleep window first. Keep training away from the most exhausted end of a shift and reduce volume when fatigue stays high.';
         if (/\b(food|meal|eat|nutrition|protein|water|hydr)/.test(query)) return 'For a shift day, plan a repeatable protein-rich meal, fibre-rich food and fluids before work so the hardest hours do not rely on chance.';
         return `For today, the clearest next step is: ${current.action || 'keep the plan realistic and respond to how you feel.'} ${current.shiftAdvice || ''}`.trim();
     }
@@ -15343,7 +15572,7 @@
         if (!latest) {
             box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
                 <div class="flex items-center justify-between gap-3"><p class="font-bold text-sm">Today · ${escapeHtml(aiCoachShiftLabel(shift))}</p><span class="text-[9px] font-black uppercase text-orange-400">Not checked in</span></div>
-                <p class="text-xs text-slate-400 mt-2">Answer seven quick prompts to get a shift-aware train, adjust or recover recommendation.</p>
+                <p class="text-xs text-slate-400 mt-2">Answer a few quick prompts to get a shift-aware train, adjust or recover recommendation.</p>
             </div>`;
             return;
         }
@@ -15366,8 +15595,8 @@
         if (completedToday || aiCoachPromptedSessionKey === sessionKey) return;
         aiCoachPromptedSessionKey = sessionKey;
         setTimeout(() => {
-            const coaching = document.getElementById('coaching');
-            if (coaching && coaching.classList.contains('active')) openAICoachCheckIn();
+            const settings = document.getElementById('settings');
+            if (settings && settings.classList.contains('active')) openAICoachCheckIn();
         }, 450);
     }
 
@@ -15430,6 +15659,9 @@
         closeReadinessModal();
         renderCoachingHub();
         showToast(`Readiness ${score}/100 · ${readinessGuidance(score).label}`);
+        if (values.fatigue >= 5 && state.aiCoachEnabled !== false && !isDeloadPlanActive(state, date)) {
+            setTimeout(() => openAICoachCheckIn(), 350);
+        }
     }
 
     function renderReadinessSummary() {
@@ -15439,18 +15671,26 @@
         const entry = state.readinessLogs && state.readinessLogs[date];
         const shift = getShiftForDate(date);
         const shiftLabels = { off: 'Rest / off', day: 'Day shift', early: 'Early shift', night: 'Night shift' };
+        const deloadActive = isDeloadPlanActive(state, date);
+        const deloadStatus = deloadActive
+            ? `<div class="mt-3 bg-indigo-50 border border-indigo-200 p-3 rounded-xl"><div class="flex items-center justify-between gap-3"><div><p class="font-black text-xs text-indigo-700">Deload week active</p><p class="text-[10px] text-slate-500 mt-1">Through ${escapeHtml(state.deloadPlan.endDate)} · reduce hard-set volume about 40–50% and avoid failure.</p></div><button onclick="endDeloadWeek()" class="text-[10px] font-black text-rose-600">End early</button></div></div>`
+            : '';
         if (!entry) {
-            box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl"><p class="font-bold text-sm">No readiness score yet</p><p class="text-xs text-slate-400 mt-1">Today: ${escapeHtml(shiftLabels[shift.type] || 'No shift set')}. Log how you feel before choosing session intensity.</p></div>`;
+            box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl"><p class="font-bold text-sm">No readiness score yet</p><p class="text-xs text-slate-400 mt-1">Today: ${escapeHtml(shiftLabels[shift.type] || 'No shift set')}. Log how you feel before choosing session intensity.</p></div>${deloadStatus}`;
             return;
         }
         const guide = readinessGuidance(entry.score);
         const palette = guide.color === 'emerald' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
             : guide.color === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200'
             : 'bg-rose-50 text-rose-700 border-rose-200';
+        const fatigueOffer = Number(entry.fatigue) >= 5 && !deloadActive
+            ? `<button onclick="openAICoachCheckIn()" class="w-full mt-3 bg-slate-900 border border-orange-500 text-white p-3 rounded-xl font-black text-xs">Severe fatigue: discuss a deload week</button>`
+            : '';
         box.innerHTML = `<div class="${palette} border p-4 rounded-2xl">
             <div class="flex items-end justify-between gap-3"><div><p class="text-4xl font-black">${Math.round(entry.score)}</p><p class="text-xs font-black uppercase">${escapeHtml(guide.label)} · ${escapeHtml(shiftLabels[shift.type] || 'No shift')}</p></div><p class="text-xs font-bold text-right">${nutritionNumber(entry.sleepHours)}h sleep</p></div>
             <p class="text-xs mt-3">${escapeHtml(guide.action)}</p>
-        </div>`;
+            ${fatigueOffer}
+        </div>${deloadStatus}`;
     }
 
     function openCheckInModal() {
@@ -15601,6 +15841,7 @@
     function renderCoachingHub() {
         renderAICoachCheckInSummary();
         renderAICoach();
+        renderGoalVolumeSummary();
         renderReadinessSummary();
         renderCheckInSummary();
         renderProgressionRecommendations();
@@ -15665,7 +15906,11 @@
         let action = 'hold';
         let reason = `Repeat ${ref.weight}kg and aim for cleaner reps around ${targetRir} RIR.`;
 
-        if (todayReadiness && Number(todayReadiness.score) < 55) {
+        if (isDeloadPlanActive(source, localDateKey())) {
+            suggested = ref.weight * (1 - deloadPercent / 100);
+            action = 'deload';
+            reason = `Your deload week is active through ${source.deloadPlan.endDate}. Reduce hard-set volume about 40–50%, use a lighter load and keep 3–4 RIR.`;
+        } else if (todayReadiness && Number(todayReadiness.score) < 55) {
             suggested = assistance ? ref.weight * (1 + deloadPercent / 100) : ref.weight * (1 - deloadPercent / 100);
             action = 'deload';
             reason = `Readiness is ${Math.round(todayReadiness.score)}/100. Reduce difficulty and keep the session submaximal.`;
@@ -16465,46 +16710,48 @@
      */
     function analyzeWeeklyVolume() {
         const level = getExperienceLevel();
-        if (level !== 'Intermediate' && level !== 'Advanced') return null;
+        const plan = activeMuscleGainVolumePlan(state);
+        if (!plan && level !== 'Intermediate' && level !== 'Advanced') return null;
 
         const volume = getWeeklyVolume();
-        const trained = Object.keys(volume);
-        if (trained.length === 0) return null;
+        const allLoggedSets = Object.values(volume).reduce((sum, value) => sum + value, 0);
+        if (allLoggedSets === 0) return null;
+        const targeted = plan ? plan.muscles.slice() : Object.keys(volume);
+        if (targeted.length === 0) return null;
+        const min = plan ? plan.min : 12;
+        const max = plan ? plan.max : 20;
 
-        // Find muscles below the minimum effective volume (12) and above the max (20)
-        const under = trained.filter(m => volume[m] < 12).sort((a, b) => volume[a] - volume[b]);
-        const over = trained.filter(m => volume[m] > 20).sort((a, b) => volume[b] - volume[a]);
+        const under = targeted.filter(m => (volume[m] || 0) < min).sort((a, b) => (volume[a] || 0) - (volume[b] || 0));
+        const over = targeted.filter(m => (volume[m] || 0) > max).sort((a, b) => (volume[b] || 0) - (volume[a] || 0));
 
         const fmt = (v) => Number.isInteger(v) ? v : v.toFixed(1);
 
-        // Over-training (junk volume) is the higher priority warning
         if (over.length > 0) {
             const m = over[0];
             return { icon: 'alert-triangle', color: 'text-rose-500',
-                title: 'Possible junk volume',
-                text: `${m} is at ${fmt(volume[m])} sets in the last 7 days — above the ~20-set mark where extra volume tends to add fatigue without much extra growth. Consider trimming a little.`,
-                detail: `You've done ${fmt(volume[m])} sets for ${m} in the last 7 days. Research on training volume suggests most muscle groups grow well on roughly 12–20 hard sets per week, and beyond about 20 the extra sets mostly add fatigue rather than more muscle — sometimes called "junk volume". Consider dropping ${m} back toward 15–18 quality sets, making sure each is close to failure, and redirecting that energy to a muscle that's under-trained or to better recovery. This isn't a hard rule — advanced lifters can sometimes handle more — but if progress has stalled or you feel run down, trimming here is a sensible first move.` };
+                title: 'Volume above your goal range',
+                text: `${m} is at ${fmt(volume[m])} sets in the last 7 days — above your ${min}–${max} weekly-set target.`,
+                detail: `You've logged ${fmt(volume[m])} working sets for ${m}. Your selected ${plan ? plan.label.toLowerCase() : 'muscle-building'} target is ${min}–${max} sets per week. Consider keeping the best-quality sets and trimming extra volume if recovery or performance is slipping.` };
         }
 
-        // Under-training — only nag if they've done a fair amount of training already,
-        // so we don't flag "Chest: 6 sets" early in the week.
-        const totalSets = trained.reduce((s, m) => s + volume[m], 0);
-        if (under.length > 0 && totalSets >= 10) {
+        const targetLoggedSets = targeted.reduce((sum, muscle) => sum + (volume[muscle] || 0), 0);
+        if (under.length > 0 && (targetLoggedSets >= 10 || (plan && allLoggedSets >= 10))) {
             const m = under[0];
-            const needed = fmt(12 - volume[m]);
+            const current = volume[m] || 0;
+            const needed = fmt(min - current);
             return { icon: 'plus-circle', color: 'text-indigo-500',
-                title: 'Room to add volume',
-                text: `${m} is at ${fmt(volume[m])} sets over the last 7 days — about ${needed} short of the 12-set minimum for growth. Add a set or two in your next session.`,
-                detail: `Over the last 7 days you've done ${fmt(volume[m])} hard sets for ${m}. The evidence suggests most muscles need at least around 12 challenging sets per week to drive meaningful growth, and you're roughly ${needed} short of that. This doesn't mean you've done anything wrong — it may just be earlier in your week, or ${m} hasn't come up in your recent sessions. To close the gap, add a set or two of a ${m} exercise in your next relevant workout, or slot in a short accessory finisher. Aim to build toward the 12–20 set range across the week, keeping every set close to failure so it actually counts.` };
+                title: plan && plan.scope === 'specific' ? 'Priority area needs more sets' : 'Room to add goal volume',
+                text: `${m} is at ${fmt(current)} sets over the last 7 days — about ${needed} short of your ${min}-set minimum.`,
+                detail: `Your goal sets a ${min}–${max} weekly range for ${m}. You have ${fmt(current)} so far. Add the missing volume across the next relevant sessions when recovery is good; the tracker counts primary-muscle sets fully and assisting-muscle work as half a set.` };
         }
 
-        // Everything on target — give positive reinforcement naming the best-covered muscle
-        const onTarget = trained.filter(m => volume[m] >= 12 && volume[m] <= 20);
-        if (onTarget.length >= 2) {
+        const onTarget = targeted.filter(m => (volume[m] || 0) >= min && (volume[m] || 0) <= max);
+        const successCount = plan && plan.scope === 'specific' ? 1 : 2;
+        if (onTarget.length >= Math.min(successCount, targeted.length)) {
             return { icon: 'check-circle', color: 'text-emerald-500',
-                title: 'Volume in the sweet spot',
-                text: `Volume looking good — ${onTarget.length} muscle groups in the 12-20 set sweet spot over the last 7 days.`,
-                detail: `Nicely balanced week: ${onTarget.length} muscle groups are sitting in the 12–20 hard-sets range that research points to as the productive zone for growth — enough stimulus to grow, not so much that it just piles on fatigue. Keep doing what you're doing. The main thing now is progression: over the coming weeks, gradually add a little weight or a rep where you can, rather than simply adding more and more sets. Quality and consistency at this volume will take you further than chasing bigger numbers.` };
+                title: 'Weekly sets on target',
+                text: `${onTarget.length} target muscle group${onTarget.length === 1 ? ' is' : 's are'} inside your ${min}–${max} weekly-set range.`,
+                detail: `Keep those sets high quality and progress reps or load when technique and recovery allow. The target follows your saved goal: ${plan ? plan.label.toLowerCase() : 'general muscle building'}.` };
         }
         return null;
     }
@@ -16543,6 +16790,12 @@
      * Self-contained: looks at the last 4 weeks of training volume.
      */
     function checkDeloadNeed() {
+        if (isDeloadPlanActive(state, localDateKey())) {
+            return { icon: 'battery-charging', color: 'text-indigo-500',
+                title: 'Deload week active',
+                text: `Your deload runs through ${state.deloadPlan.endDate}. Keep the habit, reduce hard-set volume by about 40–50% and avoid failure.`,
+                detail: 'This easier week is designed to let fatigue fall while you keep practising the main movements. Use lighter loads, leave 3–4 reps in reserve and return to normal volume only when recovery and performance improve.' };
+        }
         const history = state.workoutHistory || [];
         if (history.length < 8) return null;
 
@@ -17312,9 +17565,13 @@
     // ==========================================================================
 
     let currentGoalFocus = null;
+    let currentMuscleGainScope = '';
+    let selectedGoalMuscles = [];
 
     function openGoalSetting() {
         currentGoalFocus = null;
+        currentMuscleGainScope = '';
+        selectedGoalMuscles = [];
         document.getElementById('goal-description').value = '';
         document.getElementById('goal-deadline').value = '';
 
@@ -17328,11 +17585,13 @@
 
         // Reset all follow-up fields
         ['wl-kg', 'wl-weeks', 'wl-style', 'wl-photos',
-         'mg-priority', 'mg-physique',
+         'mg-physique',
          'h-area', 'h-reason'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
+        setMuscleGainScope('', { preview: false });
+        renderGoalMuscleSelection();
 
         document.getElementById('goal-recommendation').classList.add('hidden');
         document.getElementById('goal-modal').style.display = 'flex';
@@ -17340,6 +17599,50 @@
 
     function closeGoalModal() {
         document.getElementById('goal-modal').style.display = 'none';
+    }
+
+    function setMuscleGainScope(scope, options) {
+        const config = options || {};
+        currentMuscleGainScope = scope === 'general' || scope === 'specific' ? scope : '';
+        if (currentMuscleGainScope !== 'specific') selectedGoalMuscles = [];
+        ['general', 'specific'].forEach(value => {
+            const button = document.getElementById('mg-scope-' + value);
+            if (!button) return;
+            const selected = value === currentMuscleGainScope;
+            button.className = selected
+                ? 'p-3 rounded-xl font-bold text-xs bg-indigo-600 text-white shadow-md'
+                : 'p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600';
+            button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
+        const areas = document.getElementById('mg-specific-areas');
+        if (areas) areas.classList.toggle('hidden', currentMuscleGainScope !== 'specific');
+        renderGoalMuscleSelection();
+        if (config.preview !== false) previewGoalRecommendation();
+    }
+
+    function toggleGoalMuscle(muscle) {
+        if (!SPECIFIC_MUSCLES.includes(muscle)) return;
+        if (selectedGoalMuscles.includes(muscle)) {
+            selectedGoalMuscles = selectedGoalMuscles.filter(item => item !== muscle);
+        } else {
+            selectedGoalMuscles.push(muscle);
+        }
+        renderGoalMuscleSelection();
+        previewGoalRecommendation();
+    }
+
+    function renderGoalMuscleSelection() {
+        document.querySelectorAll('[data-goal-muscle]').forEach(button => {
+            const selected = selectedGoalMuscles.includes(button.dataset.goalMuscle);
+            button.className = selected
+                ? 'p-2.5 rounded-xl border-2 border-indigo-600 bg-indigo-600 text-white text-xs font-bold'
+                : 'p-2.5 rounded-xl border-2 border-slate-200 text-xs font-bold';
+            button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
+        const count = document.getElementById('mg-specific-count');
+        if (count) count.textContent = selectedGoalMuscles.length
+            ? `${selectedGoalMuscles.length} priorit${selectedGoalMuscles.length === 1 ? 'y area' : 'y areas'} selected · target 12–20 weekly sets each.`
+            : 'Choose at least one area.';
     }
 
     function setGoalFocus(focus) {
@@ -17363,7 +17666,7 @@
 
         // Wire up follow-up inputs to live-preview
         ['wl-kg', 'wl-weeks', 'wl-style', 'wl-photos',
-         'mg-priority', 'mg-physique',
+         'mg-physique',
          'h-area'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.onchange = previewGoalRecommendation;
@@ -17384,7 +17687,11 @@
         }
         if (currentGoalFocus === 'muscle_gain') {
             return {
-                priority: document.getElementById('mg-priority').value || '',
+                scope: currentMuscleGainScope,
+                muscles: currentMuscleGainScope === 'specific' ? selectedGoalMuscles.slice() : [],
+                priority: currentMuscleGainScope === 'general' ? 'full' : selectedGoalMuscles.join(', '),
+                weeklySetMin: 12,
+                weeklySetMax: currentMuscleGainScope === 'specific' ? 20 : 16,
                 physique: document.getElementById('mg-physique').value || '',
                 experience: getExperienceLevel() || 'Unknown'
             };
@@ -17446,8 +17753,12 @@
                 };
                 lines.push('🎓 <b>' + details.experience + ':</b> ' + tips[details.experience]);
             }
-            if (details.priority) {
-                lines.push(`🎯 Prioritizing: ${details.priority}. Add 1-2 extra direct sets per week.`);
+            if (details.scope === 'general') {
+                lines.push('🎯 <b>Full-body focus:</b> aim for 12–16 quality working sets per muscle group each week.');
+            } else if (details.scope === 'specific' && details.muscles.length) {
+                lines.push(`🎯 <b>Priority areas:</b> ${escapeHtml(details.muscles.join(', '))}. Aim for 12–20 quality working sets per selected area each week.`);
+            } else {
+                lines.push('Choose full-body development or the specific areas you want to prioritise.');
             }
         } else if (currentGoalFocus === 'health') {
             if (details.area === 'bmi') {
@@ -17482,6 +17793,15 @@
     function saveGoal() {
         if (!currentGoalFocus) { showToast('Pick a focus first'); return; }
 
+        if (currentGoalFocus === 'muscle_gain' && !currentMuscleGainScope) {
+            showToast('Choose full body or specific areas');
+            return;
+        }
+        if (currentGoalFocus === 'muscle_gain' && currentMuscleGainScope === 'specific' && selectedGoalMuscles.length === 0) {
+            showToast('Choose at least one priority area');
+            return;
+        }
+
         const desc = document.getElementById('goal-description').value.trim();
         const deadline = document.getElementById('goal-deadline').value;
         if (!desc) { showToast('Enter goal description'); return; }
@@ -17511,6 +17831,7 @@
         saveState();
         closeGoalModal();
         renderSettings();
+        renderGoalVolumeSummary();
         renderDashboard();
     }
 
@@ -17520,6 +17841,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         registerVfitServiceWorker();
+        mountCoachingHubInSettings();
         updateNetworkStatus(false);
         updateInstallButton();
         ensureAccessibleDom(document);
@@ -17588,15 +17910,12 @@
             exListEl.addEventListener('change', schedulePersist);
         }
 
-        // When the page is hidden or about to unload, bank the running timer
-        // segment (Option 2: clock freezes while away) and persist immediately.
+        // Persist the absolute start time whenever the page is hidden. The
+        // interval can stop to save battery because elapsed time is recalculated
+        // from that timestamp when the app becomes visible again.
         function bankAndPersist() {
             const activeEl = document.getElementById('workout-active');
             if (activeEl && !activeEl.classList.contains('hidden')) {
-                if (workoutStartTime) {
-                    workoutAccumulatedSeconds += Math.floor((Date.now() - workoutStartTime) / 1000);
-                    workoutStartTime = Date.now();
-                }
                 persistActiveWorkout();
             }
         }
@@ -17609,10 +17928,10 @@
                 if (scannerModal && scannerModal.style.display === 'flex') closeBarcodeScanner();
             }
             else if (document.visibilityState === 'visible') {
-                // Resume: restart the segment clock without counting the away time
+                // Resume display updates; the away time is already included by
+                // currentWorkoutElapsed() because workoutStartTime never changed.
                 const activeEl = document.getElementById('workout-active');
                 if (activeEl && !activeEl.classList.contains('hidden')) {
-                    workoutStartTime = Date.now();
                     startWorkoutTimer();
                 }
             }

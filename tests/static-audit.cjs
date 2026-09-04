@@ -101,6 +101,12 @@ for (const feature of [
   'function buildAICoachCheckInResult(',
   'function openAICoachCheckIn(',
   'function renderAICoachCheckInSummary(',
+  'function buildDeloadPlan(',
+  'function isDeloadPlanActive(',
+  'function activeMuscleGainVolumePlan(',
+  'function weeklySetTargetForMuscle(',
+  'function elapsedWorkoutSeconds(',
+  'function mountCoachingHubInSettings(',
   'function saveWeeklyCheckIn(',
   'function smartProgressionForExercise(',
   'function weeklyReportFor(',
@@ -114,15 +120,26 @@ for (const feature of [
 const dashboardStart = html.indexOf('<section id="dashboard"');
 const coachingStart = html.indexOf('<section id="coaching"');
 const profileStart = html.indexOf('<section id="profile"');
-assert.ok(dashboardStart >= 0 && coachingStart > dashboardStart && profileStart > coachingStart, 'main tab sections must be present in order');
+const settingsStart = html.indexOf('<section id="settings"');
+assert.ok(dashboardStart >= 0 && coachingStart > dashboardStart && profileStart > coachingStart && settingsStart > profileStart, 'main sections must be present in order');
 const dashboardMarkup = html.slice(dashboardStart, coachingStart);
 const coachingMarkup = html.slice(coachingStart, profileStart);
 assert.ok(!dashboardMarkup.includes('id="ai-coach-bubble"'), 'AI Coach insights must not remain split across the Dashboard');
 for (const coachingId of ['ai-coach-checkin-summary', 'ai-coach-bubble', 'member-coach-section', 'readiness-summary', 'checkin-summary']) {
   assert.ok(coachingMarkup.includes(`id="${coachingId}"`), `${coachingId} must live in the Coaching Hub`);
 }
+assert.ok(html.includes('id="coaching-settings-slot"'), 'Settings must provide the Coaching Hub mount point');
+assert.ok(html.includes("slot.appendChild(hub)"), 'the Coaching Hub must mount inside Settings');
+assert.ok(html.includes("tabId === 'coaching' ? 'settings' : tabId"), 'legacy Coaching Hub links must open Settings');
+assert.ok(html.includes('onclick="openCoachingHub(); toggleSidebar();"'), 'the Coaching Hub menu item must route into Settings');
 assert.ok(html.includes('id="ai-coach-checkin-modal"'), 'conversational AI Coach modal must be present');
 assert.ok(html.includes('role="log" aria-live="polite"'), 'AI Coach conversation must announce new messages accessibly');
+assert.ok(html.includes('id="mg-scope-general"') && html.includes('id="mg-scope-specific"'), 'muscle goals must distinguish full-body and specific-area focus');
+assert.ok(html.includes('12–16 sets per muscle/week') && html.includes('12–20 sets per priority/week'), 'goal-specific weekly set ranges must be visible');
+assert.ok(html.includes("id: 'deloadWeek'"), 'severe fatigue must reveal a deload-week question');
+assert.ok(html.includes('startedAt: workoutStartTime'), 'active workouts must persist the absolute start timestamp');
+assert.ok(html.includes('return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now())'), 'workout duration must derive from wall-clock time');
+assert.ok(!html.includes('workoutAccumulatedSeconds += Math.floor'), 'backgrounding must not freeze and bank the workout timer');
 
 const runtimeConfig = fs.readFileSync(path.join(root, 'vfit-config.js'), 'utf8');
 assert.ok(runtimeConfig.includes('paymentsEnabled: false'), 'payments must default off until Stripe is configured');

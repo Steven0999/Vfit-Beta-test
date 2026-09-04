@@ -140,6 +140,11 @@ const expose = `
   smartProgressionForExercise,
   weeklyReportFor,
   buildPushReminderSchedule,
+  activeMuscleGainVolumePlan,
+  weeklySetTargetForMuscle,
+  elapsedWorkoutSeconds,
+  buildDeloadPlan,
+  isDeloadPlanActive,
   saveState,
   loadState,
   getState: () => state,
@@ -198,11 +203,42 @@ const lowReadiness = app.calculateReadinessScore({ sleepHours: 3, sleepQuality: 
 assert.ok(highReadiness > lowReadiness);
 assert.ok(highReadiness <= 100 && lowReadiness >= 0);
 
+// Goal scope controls the weekly working-set range used by coaching.
+const generalGoalState = app.defaultState();
+generalGoalState.userGoals = [{ id: 'general-goal', focus: 'muscle_gain', completed: false, details: { scope: 'general', muscles: [] } }];
+const generalPlan = app.activeMuscleGainVolumePlan(generalGoalState);
+assert.equal(generalPlan.scope, 'general');
+assert.equal(generalPlan.min, 12);
+assert.equal(generalPlan.max, 16);
+assert.equal(app.weeklySetTargetForMuscle('Chest', generalGoalState).max, 16);
+
+const specificGoalState = app.defaultState();
+specificGoalState.userGoals = [{ id: 'specific-goal', focus: 'muscle_gain', completed: false, details: { scope: 'specific', muscles: ['Glutes', 'Shoulders'] } }];
+const specificPlan = app.activeMuscleGainVolumePlan(specificGoalState);
+assert.deepEqual([...specificPlan.muscles], ['Glutes', 'Shoulders']);
+assert.equal(specificPlan.max, 20);
+assert.equal(app.weeklySetTargetForMuscle('Glutes', specificGoalState).max, 20);
+assert.equal(app.weeklySetTargetForMuscle('Chest', specificGoalState), null);
+
+// Session duration is calculated from the original start timestamp, including time away.
+assert.equal(app.elapsedWorkoutSeconds(1_000, 0, 3_661_000), 3660);
+assert.equal(app.elapsedWorkoutSeconds(null, 75, 3_661_000), 75);
+
+const deloadPlan = app.buildDeloadPlan('2026-09-04', 'test');
+assert.equal(deloadPlan.endDate, '2026-09-10');
+assert.equal(app.isDeloadPlanActive({ deloadPlan }, '2026-09-07'), true);
+assert.equal(app.isDeloadPlanActive({ deloadPlan }, '2026-09-11'), false);
+
 // The conversational coach is one-question-at-a-time, shift-aware and safety bounded.
-const coachQuestions = app.aiCoachQuestionnaireSteps();
+const coachQuestions = app.aiCoachQuestionnaireSteps({});
 assert.equal(coachQuestions.length, 7);
 assert.equal(new Set(coachQuestions.map(step => step.id)).size, 7);
 assert.ok(coachQuestions.every(step => step.question && step.options.length >= 3));
+assert.ok(!coachQuestions.some(step => step.id === 'deloadWeek'));
+const severeFatigueQuestions = app.aiCoachQuestionnaireSteps({ fatigue: '5' });
+assert.equal(severeFatigueQuestions.length, 8);
+assert.equal(severeFatigueQuestions[4].id, 'deloadWeek');
+assert.equal(severeFatigueQuestions[4].options.length, 2);
 
 const readyOffDay = app.buildAICoachCheckInResult({
   mood: 'great', sleepHours: '8.5', energy: '5', fatigue: '1', soreness: '1', stress: '1', wellbeing: 'well'
@@ -212,10 +248,13 @@ assert.ok(readyOffDay.score >= 75 && readyOffDay.score <= 100);
 assert.match(readyOffDay.shiftAdvice, /off day/i);
 
 const tiredNightShift = app.buildAICoachCheckInResult({
-  mood: 'drained', sleepHours: '4.5', energy: '1', fatigue: '5', soreness: '3', stress: '5', wellbeing: 'well'
+  mood: 'drained', sleepHours: '4.5', energy: '1', fatigue: '5', deloadWeek: 'yes', soreness: '3', stress: '5', wellbeing: 'well'
 }, { type: 'night', start: '19:00', end: '07:00' }, 'Long shift');
 assert.equal(tiredNightShift.label, 'Recover');
 assert.match(tiredNightShift.shiftAdvice, /after waking|main sleep/i);
+assert.equal(tiredNightShift.severeFatigue, true);
+assert.equal(tiredNightShift.deloadAccepted, true);
+assert.match(tiredNightShift.action, /seven days|40–50%/i);
 
 const unwellCheckIn = app.buildAICoachCheckInResult({
   mood: 'great', sleepHours: '8.5', energy: '5', fatigue: '1', soreness: '1', stress: '1', wellbeing: 'unwell'
@@ -246,6 +285,25 @@ assert.equal(completedChatState.coachConversations[0].result.label, 'Ready');
 document.getElementById('ai-coach-checkin-input').value = 'Why this score?';
 app.sendAICoachCheckInMessage();
 assert.match(completedChatState.coachConversations[0].messages.at(-1).text, /main factors/i);
+
+// Severe fatigue inserts a deload choice and activates the seven-day plan only after Yes.
+const severeChatState = app.defaultState();
+app.setState(severeChatState);
+app.openAICoachCheckIn();
+const severeAnswers = {
+  mood: 'drained', sleepHours: '4.5', energy: '1', fatigue: '5', deloadWeek: 'yes',
+  soreness: '3', stress: '5', wellbeing: 'well'
+};
+for (const step of app.aiCoachQuestionnaireSteps({ fatigue: '5' })) {
+  const option = step.options.find(item => String(item.value) === severeAnswers[step.id]);
+  assert.ok(option, `missing severe-fatigue answer for ${step.id}`);
+  app.answerAICoachCheckIn(step.id, option.value, option.label);
+}
+app.skipAICoachCheckInNote();
+const severeCompletedState = app.getState();
+assert.equal(severeCompletedState.deloadPlan.active, true);
+assert.equal(severeCompletedState.coachConversations[0].result.deloadActivated, true);
+assert.equal(severeCompletedState.readinessLogs[chatDateKey].deloadAccepted, true);
 
 // A dated rota entry overrides the recurring shift pattern.
 const rotaState = app.defaultState();
