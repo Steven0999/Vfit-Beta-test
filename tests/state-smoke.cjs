@@ -140,9 +140,6 @@ const expose = `
   smartProgressionForExercise,
   weeklyReportFor,
   buildPushReminderSchedule,
-  normaliseBarcodeValue,
-  barcodeLookupCandidates,
-  isSupportedFoodBarcode,
   saveState,
   loadState,
   getState: () => state,
@@ -291,14 +288,6 @@ assert.equal(report.workouts, 1);
 assert.equal(report.targetWorkouts, 2);
 assert.equal(report.workoutAdherence, 50);
 assert.equal(report.nutritionDays, 1);
-
-// Barcode handling keeps leading zeroes and checks equivalent UPC/EAN forms.
-assert.equal(app.normaliseBarcodeValue(' 0 1234-5678 905 '), '012345678905');
-assert.equal(app.normaliseBarcodeValue('(01)05012345678903'), '05012345678903');
-assert.deepEqual([...app.barcodeLookupCandidates('012345678905')], ['012345678905', '0012345678905']);
-assert.deepEqual([...app.barcodeLookupCandidates('0012345678905')], ['0012345678905', '012345678905']);
-assert.equal(app.isSupportedFoodBarcode('012345678905'), true);
-assert.equal(app.isSupportedFoodBarcode('12345'), false);
 
 // Recovery/cloud copies omit progress images; the primary account save keeps them.
 const withoutImages = app.stateWithoutLocalImages(merged);

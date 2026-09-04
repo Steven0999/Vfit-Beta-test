@@ -37,9 +37,12 @@ for (const handler of html.matchAll(/\b(?:onclick|onchange|oninput|onkeydown|ons
 assert.ok(!/lucide@latest/.test(html), 'Lucide must be version-pinned');
 assert.ok(html.includes('html5-qrcode@2.3.8/html5-qrcode.min.js'), 'html5-qrcode must be version-pinned');
 assert.ok(!html.includes('html5-qrcode@latest'), 'html5-qrcode must not use latest');
-assert.ok(html.includes("useBarCodeDetectorIfSupported: true"), 'barcode scanner should use the native detector when available');
-assert.ok(html.includes("'EAN_13', 'EAN_8', 'UPC_A', 'UPC_E', 'CODE_128', 'ITF'"), 'barcode scanner must target food barcode formats');
-assert.ok(html.includes("width: { ideal: 1920, min: 640 }"), 'barcode scanner should request a high-resolution rear camera');
+assert.ok(html.includes("new Html5Qrcode('barcode-reader')"), 'the original barcode scanner must be used');
+assert.ok(html.includes('fps: 10'), 'the original barcode scanner frame rate must be preserved');
+assert.ok(html.includes('aspectRatio: 1.6'), 'the original barcode scanner aspect ratio must be preserved');
+assert.ok(html.includes('maxlength="64" placeholder="Or enter barcode manually..."'), 'the original manual barcode entry must be preserved');
+assert.ok(!html.includes('barcode-torch-button'), 'the replacement torch control must not remain');
+assert.ok(!html.includes('scanBarcodePhoto('), 'the replacement photo-scanning path must not remain');
 assert.ok(!/localStorage\.setItem\(['"]fittrack_state/.test(html), 'legacy shared state must never be overwritten');
 assert.ok(!/\beval\s*\(/.test(inlineScripts[0]), 'eval is not permitted');
 assert.ok(!/\bnew\s+Function\s*\(/.test(inlineScripts[0]), 'dynamic Function is not permitted');
@@ -101,9 +104,6 @@ for (const feature of [
   'function saveWeeklyCheckIn(',
   'function smartProgressionForExercise(',
   'function weeklyReportFor(',
-  'function normaliseBarcodeValue(',
-  'function barcodeLookupCandidates(',
-  'function scanBarcodePhoto(',
   'function enablePushNotifications(',
   'function startMembershipCheckout(',
   'function deleteVfitAccount('
