@@ -1,0 +1,48 @@
+{
+  "id": "./",
+  "name": "VFIT Beta",
+  "short_name": "VFIT",
+  "description": "Shift-aware workouts, nutrition, coaching check-ins, readiness and body-progress tracking.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#111827",
+  "theme_color": "#1f2937",
+  "categories": ["fitness", "health", "lifestyle"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Start Workout",
+      "short_name": "Workout",
+      "url": "./#training",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Log Food",
+      "short_name": "Food",
+      "url": "./#nutrition",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Open Coaching Hub",
+      "short_name": "Coaching",
+      "url": "./#coaching",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

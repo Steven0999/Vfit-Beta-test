@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">VFIT</title>
+  <desc id="desc">Orange VFIT mark on a charcoal background</desc>
+  <rect width="512" height="512" rx="112" fill="#111827"/>
+  <rect x="28" y="28" width="456" height="456" rx="92" fill="#252a32" stroke="#f97316" stroke-width="16"/>
+  <path d="M104 142h66l86 225 86-225h66L287 398h-62z" fill="#fb923c"/>
+  <path d="M154 116h204" fill="none" stroke="#f97316" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="116" cy="116" r="25" fill="#fb923c"/>
+  <circle cx="396" cy="116" r="25" fill="#fb923c"/>
+</svg>
