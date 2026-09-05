@@ -10175,6 +10175,12 @@
 
     let barcodeScanMode = 'food'; // 'food' → food popup; 'meal' → add as meal ingredient
 
+    function normaliseBarcode(value) {
+        // Keep barcode identifiers as text so every digit — including leading zeroes —
+        // survives unchanged instead of ever being treated as a JavaScript number.
+        return String(value ?? '').trim().replace(/\s+/g, '');
+    }
+
     function openMealBarcodeScanner() {
         barcodeScanMode = 'meal';
         openBarcodeScanner();
@@ -10185,12 +10191,25 @@
         modal.style.display = 'flex';
         if (!html5QrCode) html5QrCode = new Html5Qrcode("barcode-reader");
 
-        const config = { fps: 10, qrbox: { width: 250, height: 100 } };
+        const config = {
+            fps: 10,
+            // Use most of the camera width so long EAN/UPC/GTIN barcodes fit inside
+            // the detection area on a phone.
+            qrbox: (viewfinderWidth, viewfinderHeight) => ({
+                width: Math.floor(viewfinderWidth * 0.9),
+                height: Math.floor(viewfinderHeight * 0.4)
+            })
+        };
 
         const onScan = async (decodedText) => {
+            const fullBarcode = normaliseBarcode(decodedText);
+            if (!fullBarcode) return;
+
+            // Show the full decoded identifier immediately, then use this exact
+            // string for the lookup rather than converting or re-reading it.
+            document.getElementById('manual-barcode').value = fullBarcode;
             try { await html5QrCode.stop(); } catch (e) {}
-            document.getElementById('manual-barcode').value = decodedText;
-            lookupBarcode();
+            await lookupBarcode(fullBarcode);
         };
 
         // Strict back-camera-only policy. Try in order of strictness:
@@ -10235,11 +10254,13 @@
         document.getElementById('barcode-scanner-modal').style.display = 'none';
     }
 
-    async function lookupBarcode() {
-        const code = document.getElementById('manual-barcode').value.trim();
+    async function lookupBarcode(scannedCode) {
+        const barcodeInput = document.getElementById('manual-barcode');
+        const code = normaliseBarcode(scannedCode ?? barcodeInput.value);
+        barcodeInput.value = code;
         if (!code) { showToast('Enter or scan a barcode'); return; }
         try {
-            const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`);
+            const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(code)}.json`);
             const d = await r.json();
             if (d.status === 1 && d.product) {
                 await closeBarcodeScanner();
