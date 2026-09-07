@@ -11,7 +11,7 @@
 
     <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" type="text/javascript"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
@@ -2133,6 +2133,7 @@
                     <img id="popup-image" src="" class="w-full h-full object-contain" alt="Food image">
                 </div>
                 <h2 id="popup-name" class="text-xl sm:text-2xl font-black text-center leading-tight mb-2">Product</h2>
+                <p id="popup-barcode" class="hidden text-[11px] font-bold text-slate-400 tracking-wider"></p>
             </div>
             <div class="bg-gradient-to-r from-indigo-50 to-blue-50 p-5 rounded-3xl mb-6 shadow-sm">
                 <div class="grid grid-cols-2 gap-4 mb-4">
@@ -2273,13 +2274,16 @@
                 <h3 class="text-xl font-black">Scan Barcode</h3>
                 <button onclick="closeBarcodeScanner()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
             </div>
-            <div id="barcode-reader" class="w-full h-80 sm:h-96 bg-black rounded-2xl mb-3 overflow-hidden"></div>
+            <div id="barcode-reader" class="w-full h-[55vh] min-h-[20rem] max-h-[34rem] bg-black rounded-2xl mb-3 overflow-hidden"></div>
+            <p id="barcode-scan-status" class="text-sm font-black text-indigo-600 mb-1 text-center" role="status" aria-live="polite">
+                Starting back camera…
+            </p>
             <p class="text-xs font-semibold text-slate-500 mb-4 text-center">
-                Hold the complete barcode bars and the printed number beneath them inside the frame.
+                Hold the complete barcode bars and the printed number beneath them inside the camera window.
             </p>
             <div class="flex gap-2">
-                <input id="manual-barcode" type="text" inputmode="numeric" autocomplete="off" placeholder="Or enter barcode manually..." class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
-                <button onclick="lookupBarcode()" class="bg-slate-900 text-white px-6 rounded-xl font-bold hover:bg-slate-800">Search</button>
+                <input id="manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Barcode number" placeholder="Or enter barcode manually..." oninput="this.value = normaliseBarcode(this.value)" onkeydown="if (event.key === 'Enter') lookupBarcode()" class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
+                <button id="barcode-search-button" onclick="lookupBarcode()" class="bg-slate-900 text-white px-6 rounded-xl font-bold hover:bg-slate-800">Search</button>
             </div>
         </div>
     </div>
@@ -3458,6 +3462,7 @@
                 pendingRequests: [],
                 // Exercise database is account-level, so it follows the user across devices
                 customExercises: [],
+                barcodeFoods: [],
                 disabledExercises: { gym: [], home: [] }
             });
 
@@ -3530,6 +3535,7 @@
                 // Exercise database is account-level: pull the cloud copy so your
                 // equipment setup and custom exercises follow you to any device.
                 applyExercisePrefsFromCloud(firebaseUserData);
+                mergeBarcodeFoodsFromCloud(firebaseUserData.barcodeFoods);
             } else {
                 await db.collection('users').doc(currentUser.uid).set({
                     name: currentUser.displayName || 'User',
@@ -3546,6 +3552,7 @@
                     clientUids: [],
                     pendingRequests: [],
                     customExercises: state.customExercises || [],
+                    barcodeFoods: state.barcodeFoods || [],
                     disabledExercises: {
                         gym: (state.disabledExercises && state.disabledExercises.gym) || [],
                         home: (state.disabledExercises && state.disabledExercises.home) || []
@@ -6005,6 +6012,7 @@
         metricsHistory: [],
         createdMeals: [],
         customFoods: [],
+        barcodeFoods: [],
         workoutEnv: 'gym',
         currentPhotos: { front: null, side: null, back: null },
         habits: [],
@@ -6150,6 +6158,7 @@
                 };
                 // Ensure the exercise-database fields exist and have the right shape
                 if (!Array.isArray(state.customExercises)) state.customExercises = [];
+                if (!Array.isArray(state.barcodeFoods)) state.barcodeFoods = [];
                 state.disabledExercises = {
                     gym: Array.isArray(parsed.disabledExercises && parsed.disabledExercises.gym) ? parsed.disabledExercises.gym : [],
                     home: Array.isArray(parsed.disabledExercises && parsed.disabledExercises.home) ? parsed.disabledExercises.home : []
@@ -9110,7 +9119,12 @@
             sodium: base.sodium || 0,
             cholesterol: base.cholesterol || 0,
             isCustom: !!base.isCustom,
-            serving: base.serving || (base.isCustom ? '1 portion' : '100g')
+            serving: base.serving || (base.isCustom ? '1 portion' : '100g'),
+            servingGrams: base.servingGrams || null,
+            barcode: base.barcode || m.barcode || '',
+            scannedBarcode: base.scannedBarcode || m.scannedBarcode || '',
+            brand: base.brand || m.brand || '',
+            source: base.source || m.source || ''
         };
 
         editingLoggedMealId = id; // popup is now editing this entry
@@ -9852,25 +9866,125 @@
         renderFoodPopup();
     }
 
-    function openFoodPopup(product) {
-        currentFoodItem = {
-            id: Date.now(),
-            name: product.product_name,
-            image: product.image_url || '',
-            calories: product.nutriments['energy-kcal_100g'] || 0,
-            protein: product.nutriments.proteins_100g || 0,
-            carbs: product.nutriments.carbohydrates_100g || 0,
-            fat: product.nutriments.fat_100g || 0,
-            fiber: product.nutriments.fiber_100g || 0,
-            sugar: product.nutriments.sugars_100g || 0,
-            satFat: product.nutriments['saturated-fat_100g'] || 0,
-            sodium: product.nutriments.sodium_100g || 0,
-            cholesterol: 0,
-            serving: product.serving_size || '100g',
+    /**
+     * Convert Open Food Facts values into a predictable per-100g model.
+     * OFF records are community supplied, so fields can be absent, strings, or
+     * available only per serving. Keeping this normalization in one place prevents
+     * a valid barcode lookup from failing just because one nutriment is missing.
+     */
+    function toFiniteNumber(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const normalized = typeof value === 'string' ? value.trim().replace(',', '.') : value;
+        const number = Number(normalized);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function parseServingGrams(product) {
+        const direct = toFiniteNumber(product && product.serving_quantity);
+        const directUnit = String((product && product.serving_quantity_unit) || 'g').toLowerCase();
+        if (direct !== null && direct > 0) {
+            if (directUnit === 'kg') return direct * 1000;
+            if (directUnit === 'oz') return direct * 28.3495;
+            if (directUnit === 'cl') return direct * 10;
+            if (directUnit === 'l') return direct * 1000;
+            return direct; // g or ml
+        }
+
+        const servingText = String((product && product.serving_size) || '');
+        const match = servingText.match(/(\d+(?:[.,]\d+)?)\s*(kg|g|ml|cl|l|oz)\b/i);
+        if (!match) return 100;
+        const amount = Number(match[1].replace(',', '.'));
+        const unit = match[2].toLowerCase();
+        if (unit === 'kg') return amount * 1000;
+        if (unit === 'oz') return amount * 28.3495;
+        if (unit === 'cl') return amount * 10;
+        if (unit === 'l') return amount * 1000;
+        return amount; // g or ml
+    }
+
+    function readOpenFoodFactsNutrient(nutriments, nutrient, servingGrams) {
+        const per100 = toFiniteNumber(nutriments[nutrient + '_100g']);
+        if (per100 !== null) return Math.max(0, per100);
+
+        const perServing = toFiniteNumber(nutriments[nutrient + '_serving']);
+        if (perServing !== null && servingGrams > 0) {
+            return Math.max(0, perServing * 100 / servingGrams);
+        }
+        return 0;
+    }
+
+    function normaliseOpenFoodFactsProduct(product, requestedBarcode) {
+        product = product && typeof product === 'object' ? product : {};
+        const nutriments = product.nutriments && typeof product.nutriments === 'object'
+            ? product.nutriments
+            : {};
+        const servingGrams = parseServingGrams(product);
+        let calories = readOpenFoodFactsNutrient(nutriments, 'energy-kcal', servingGrams);
+
+        // Some OFF entries contain energy only in kilojoules.
+        if (!calories) {
+            let kilojoules = readOpenFoodFactsNutrient(nutriments, 'energy-kj', servingGrams);
+            if (!kilojoules && String(nutriments.energy_unit || '').toLowerCase() === 'kj') {
+                kilojoules = readOpenFoodFactsNutrient(nutriments, 'energy', servingGrams);
+            }
+            if (kilojoules) calories = kilojoules / 4.184;
+        }
+
+        const sodium = readOpenFoodFactsNutrient(nutriments, 'sodium', servingGrams);
+        const salt = readOpenFoodFactsNutrient(nutriments, 'salt', servingGrams);
+        const cholesterolValue = readOpenFoodFactsNutrient(nutriments, 'cholesterol', servingGrams);
+        const cholesterolUnit = String(nutriments.cholesterol_unit || 'g').toLowerCase();
+        const scannedBarcode = normaliseBarcode(requestedBarcode);
+        const apiBarcode = normaliseBarcode(product.code) || scannedBarcode;
+
+        return {
+            name: product.product_name || product.product_name_en || product.generic_name || product.brands || 'Scanned item',
+            brand: product.brands || '',
+            image: product.image_front_url || product.image_url || product.image_front_small_url || '',
+            calories,
+            protein: readOpenFoodFactsNutrient(nutriments, 'proteins', servingGrams),
+            carbs: readOpenFoodFactsNutrient(nutriments, 'carbohydrates', servingGrams),
+            fat: readOpenFoodFactsNutrient(nutriments, 'fat', servingGrams),
+            fiber: readOpenFoodFactsNutrient(nutriments, 'fiber', servingGrams),
+            sugar: readOpenFoodFactsNutrient(nutriments, 'sugars', servingGrams),
+            satFat: readOpenFoodFactsNutrient(nutriments, 'saturated-fat', servingGrams),
+            sodium: sodium || (salt ? salt / 2.5 : 0),
+            cholesterol: cholesterolUnit === 'mg' ? cholesterolValue : cholesterolValue * 1000,
+            serving: product.serving_size || (servingGrams !== 100 ? Math.round(servingGrams * 10) / 10 + 'g' : '100g'),
+            servingGrams,
+            barcode: apiBarcode,
+            scannedBarcode: scannedBarcode || apiBarcode,
+            source: 'openfoodfacts',
             isCustom: false
         };
+    }
+
+    function openFoodPopupModel(food) {
+        currentFoodItem = Object.assign({
+            name: 'Scanned item',
+            image: '',
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+            fiber: 0,
+            sugar: 0,
+            satFat: 0,
+            sodium: 0,
+            cholesterol: 0,
+            serving: '100g',
+            servingGrams: 100,
+            barcode: '',
+            scannedBarcode: '',
+            source: 'openfoodfacts',
+            isCustom: false
+        }, food || {}, { id: Date.now() });
         editingLoggedMealId = null;
         renderFoodPopup();
+    }
+
+    function openFoodPopup(product, requestedBarcode) {
+        openFoodPopupModel(normaliseOpenFoodFactsProduct(product, requestedBarcode));
     }
 
     function openFoodPopupCustom(food) {
@@ -9902,6 +10016,12 @@
         const addBtnLabel = document.getElementById('popup-add-btn');
         if (addBtnLabel && editingLoggedMealId == null) addBtnLabel.textContent = 'Add to Diary';
         document.getElementById('popup-name').textContent = currentFoodItem.name;
+        const barcodeEl = document.getElementById('popup-barcode');
+        const visibleBarcode = currentFoodItem.scannedBarcode || currentFoodItem.barcode || '';
+        if (barcodeEl) {
+            barcodeEl.textContent = visibleBarcode ? 'Barcode ' + visibleBarcode : '';
+            barcodeEl.classList.toggle('hidden', !visibleBarcode);
+        }
         const img = document.getElementById('popup-image');
         if (img) {
             img.src = currentFoodItem.image || 'https://via.placeholder.com/200?text=No+Image';
@@ -9916,7 +10036,10 @@
         document.getElementById('popup-nutrition-satfat').textContent = (currentFoodItem.satFat).toFixed(1) + 'g';
         document.getElementById('popup-nutrition-sodium').textContent = (currentFoodItem.sodium).toFixed(1) + 'g';
         document.getElementById('popup-nutrition-cholesterol').textContent = currentFoodItem.cholesterol + 'mg';
-        document.getElementById('popup-nutrition').textContent = `Per ${currentFoodItem.isCustom ? currentFoodItem.serving : '100g'}`;
+        const nutritionBasis = currentFoodItem.isCustom
+            ? 'Per ' + currentFoodItem.serving
+            : 'Per 100g' + (currentFoodItem.serving && currentFoodItem.serving !== '100g' ? ' • 1 portion = ' + currentFoodItem.serving : '');
+        document.getElementById('popup-nutrition').textContent = nutritionBasis;
 
         document.getElementById('popup-amount').value = 1;
         currentAmountType = currentFoodItem.isCustom ? 'portion' : 'portion';
@@ -9997,15 +10120,17 @@
         updatePopupTotals();
     }
 
+    function foodAmountMultiplier(food, amount, amountType) {
+        if (amountType === 'grams') return amount / 100;
+        if (food && food.isCustom) return amount;
+        const servingGrams = toFiniteNumber(food && food.servingGrams);
+        return amount * ((servingGrams !== null && servingGrams > 0 ? servingGrams : 100) / 100);
+    }
+
     function updatePopupTotals() {
         if (!currentFoodItem) return;
         const amount = parseFloat(document.getElementById('popup-amount').value) || 1;
-        let mult;
-        if (currentAmountType === 'grams') {
-            mult = amount / 100;
-        } else {
-            mult = currentFoodItem.isCustom ? amount : amount;
-        }
+        const mult = foodAmountMultiplier(currentFoodItem, amount, currentAmountType);
         document.getElementById('popup-total-kcal').textContent = Math.round((currentFoodItem.calories || 0) * mult);
         document.getElementById('popup-total-protein').textContent = ((currentFoodItem.protein || 0) * mult).toFixed(1) + 'g';
     }
@@ -10026,7 +10151,7 @@
         if (!currentFoodItem) return;
         const amount = parseFloat(document.getElementById('popup-amount').value) || 1;
         const mealType = document.getElementById('popup-meal-type').value;
-        const mult = currentAmountType === 'grams' ? amount / 100 : amount;
+        const mult = foodAmountMultiplier(currentFoodItem, amount, currentAmountType);
 
         const base = {
             calories: currentFoodItem.calories || 0,
@@ -10035,8 +10160,16 @@
             fat: currentFoodItem.fat || 0,
             fiber: currentFoodItem.fiber || 0,
             sugar: currentFoodItem.sugar || 0,
+            satFat: currentFoodItem.satFat || 0,
+            sodium: currentFoodItem.sodium || 0,
+            cholesterol: currentFoodItem.cholesterol || 0,
             isCustom: !!currentFoodItem.isCustom,
-            serving: currentFoodItem.serving || null
+            serving: currentFoodItem.serving || null,
+            servingGrams: currentFoodItem.servingGrams || null,
+            barcode: currentFoodItem.barcode || '',
+            scannedBarcode: currentFoodItem.scannedBarcode || '',
+            brand: currentFoodItem.brand || '',
+            source: currentFoodItem.source || ''
         };
 
         const computed = {
@@ -10051,6 +10184,10 @@
             fat: base.fat * mult,
             fiber: base.fiber * mult,
             sugar: base.sugar * mult,
+            barcode: base.barcode,
+            scannedBarcode: base.scannedBarcode,
+            brand: base.brand,
+            source: base.source,
             amount,
             amountType: currentAmountType,
             base
@@ -10177,11 +10314,213 @@
     // ==========================================================================
 
     let barcodeScanMode = 'food'; // 'food' → food popup; 'meal' → add as meal ingredient
+    let barcodeScanLocked = false;
+    let barcodeLookupInProgress = false;
+
+    const OPEN_FOOD_FACTS_PRODUCT_FIELDS = [
+        'code',
+        'product_name',
+        'product_name_en',
+        'generic_name',
+        'brands',
+        'serving_size',
+        'serving_quantity',
+        'serving_quantity_unit',
+        'image_front_url',
+        'image_front_small_url',
+        'image_url',
+        'nutriments'
+    ].join(',');
 
     function normaliseBarcode(value) {
-        // Keep barcode identifiers as text so every digit — including leading zeroes —
-        // survives unchanged instead of ever being treated as a JavaScript number.
-        return String(value ?? '').trim().replace(/\s+/g, '');
+        // A barcode is always kept as text. This preserves every digit and leading
+        // zero, while removing spaces/hyphens from printed or manually entered codes.
+        const withoutAimPrefix = String(value ?? '').trim().replace(/^\][A-Za-z0-9]{2}/, '');
+        return withoutAimPrefix.replace(/[^0-9]/g, '');
+    }
+
+    function isPlausibleFoodBarcode(code) {
+        // Common consumer codes: UPC-E (7), EAN-8, UPC-A (12), EAN-13 and GTIN-14.
+        return /^\d{7,14}$/.test(code);
+    }
+
+    /**
+     * Match the key normalization used by Open Food Facts without changing the
+     * exact scanned value sent to the API or shown to the user.
+     */
+    function openFoodFactsBarcodeKey(value) {
+        const code = normaliseBarcode(value);
+        const significant = code.replace(/^0+/, '') || '0';
+        if (significant.length <= 7) return significant.padStart(8, '0');
+        if (significant.length >= 9 && significant.length <= 12) return significant.padStart(13, '0');
+        return code;
+    }
+
+    function setBarcodeScanStatus(message, tone) {
+        const status = document.getElementById('barcode-scan-status');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.remove('text-indigo-600', 'text-emerald-600', 'text-rose-600', 'text-amber-600');
+        status.classList.add(
+            tone === 'success' ? 'text-emerald-600' :
+            tone === 'error' ? 'text-rose-600' :
+            tone === 'warning' ? 'text-amber-600' :
+            'text-indigo-600'
+        );
+    }
+
+    function setBarcodeLookupBusy(busy) {
+        const button = document.getElementById('barcode-search-button');
+        const input = document.getElementById('manual-barcode');
+        if (button) {
+            button.disabled = busy;
+            button.textContent = busy ? 'Finding…' : 'Search';
+            button.classList.toggle('opacity-60', busy);
+        }
+        if (input) input.readOnly = busy;
+    }
+
+    function getFoodBarcodeFormats() {
+        if (typeof Html5QrcodeSupportedFormats === 'undefined') return null;
+        return [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.CODE_128
+        ];
+    }
+
+    function createFoodBarcodeScanner() {
+        const fullConfig = {
+            verbose: false,
+            useBarCodeDetectorIfSupported: true
+        };
+        const formats = getFoodBarcodeFormats();
+        if (formats && formats.length) fullConfig.formatsToSupport = formats;
+        return new Html5Qrcode('barcode-reader', fullConfig);
+    }
+
+    async function optimiseBarcodeCamera() {
+        if (!html5QrCode || !html5QrCode.isScanning) return;
+        try {
+            const capabilities = html5QrCode.getRunningTrackCapabilities
+                ? html5QrCode.getRunningTrackCapabilities()
+                : {};
+            const advanced = {};
+            if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+                advanced.focusMode = 'continuous';
+            }
+            if (Object.keys(advanced).length && html5QrCode.applyVideoConstraints) {
+                await html5QrCode.applyVideoConstraints({ advanced: [advanced] });
+            }
+        } catch (error) {
+            // Not every mobile browser exposes focus controls; decoding still works without them.
+            console.debug('Barcode camera focus control unavailable:', error);
+        }
+    }
+
+    function mergeBarcodeFoodsFromCloud(cloudFoods) {
+        if (!Array.isArray(cloudFoods) || cloudFoods.length === 0) return;
+        const combined = [...(Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []), ...cloudFoods]
+            .filter(item => item && (item.barcode || item.scannedBarcode))
+            .sort((a, b) => Date.parse(b.cachedAt || 0) - Date.parse(a.cachedAt || 0));
+        const seen = new Set();
+        state.barcodeFoods = combined.filter(item => {
+            const key = openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode);
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        }).slice(0, 100);
+        saveState();
+    }
+
+    function findCachedBarcodeFood(code) {
+        const key = openFoodFactsBarcodeKey(code);
+        return (Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []).find(item =>
+            openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode) === key
+        ) || null;
+    }
+
+    async function cacheBarcodeFood(food) {
+        if (!food || !(food.barcode || food.scannedBarcode)) return;
+        const clean = {
+            name: food.name || 'Scanned item',
+            brand: food.brand || '',
+            image: food.image || '',
+            calories: food.calories || 0,
+            protein: food.protein || 0,
+            carbs: food.carbs || 0,
+            fat: food.fat || 0,
+            fiber: food.fiber || 0,
+            sugar: food.sugar || 0,
+            satFat: food.satFat || 0,
+            sodium: food.sodium || 0,
+            cholesterol: food.cholesterol || 0,
+            serving: food.serving || '100g',
+            servingGrams: food.servingGrams || 100,
+            barcode: food.barcode || food.scannedBarcode,
+            scannedBarcode: food.scannedBarcode || food.barcode,
+            source: 'openfoodfacts',
+            isCustom: false,
+            cachedAt: new Date().toISOString()
+        };
+
+        const key = openFoodFactsBarcodeKey(clean.barcode);
+        const existing = Array.isArray(state.barcodeFoods) ? state.barcodeFoods : [];
+        state.barcodeFoods = [clean, ...existing.filter(item =>
+            openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode) !== key
+        )].slice(0, 100);
+        saveState();
+
+        // Keep the user's scanned-food database with their Firebase account as well
+        // as localStorage, so the barcode data survives a device change.
+        if (currentUser && db) {
+            try {
+                await db.collection('users').doc(currentUser.uid).set({
+                    barcodeFoods: state.barcodeFoods
+                }, { merge: true });
+            } catch (error) {
+                console.warn('Barcode food saved locally but cloud sync failed:', error);
+            }
+        }
+    }
+
+    async function fetchOpenFoodFactsProduct(code) {
+        const encodedCode = encodeURIComponent(code);
+        const fields = encodeURIComponent(OPEN_FOOD_FACTS_PRODUCT_FIELDS);
+        const endpoints = [
+            `https://world.openfoodfacts.org/api/v3/product/${encodedCode}?fields=${fields}&lc=en&cc=gb`,
+            `https://world.openfoodfacts.org/api/v2/product/${encodedCode}.json?fields=${fields}&lc=en&cc=gb`
+        ];
+        let lastError = null;
+
+        for (let i = 0; i < endpoints.length; i++) {
+            try {
+                const response = await fetchWithTimeout(endpoints[i], 9000);
+                if (response.status === 404) return { found: false, code };
+                if (!response.ok) throw new Error('Open Food Facts HTTP ' + response.status);
+
+                const data = await response.json();
+                if (data && data.product) {
+                    return {
+                        found: true,
+                        code: normaliseBarcode(data.code || data.product.code || code),
+                        product: data.product
+                    };
+                }
+                if (data && (data.status === 0 || data.status === 'failure')) {
+                    return { found: false, code: normaliseBarcode(data.code || code) };
+                }
+                throw new Error('Open Food Facts returned no product');
+            } catch (error) {
+                lastError = error;
+                // v3 is primary; v2 is a compatibility fallback for older browsers/proxies.
+                if (i === endpoints.length - 1) throw lastError;
+            }
+        }
+        throw lastError || new Error('Open Food Facts lookup failed');
     }
 
     function openMealBarcodeScanner() {
@@ -10189,102 +10528,178 @@
         openBarcodeScanner();
     }
 
-    function openBarcodeScanner() {
+    async function openBarcodeScanner() {
         const modal = document.getElementById('barcode-scanner-modal');
+        const input = document.getElementById('manual-barcode');
         modal.style.display = 'flex';
-        if (!html5QrCode) html5QrCode = new Html5Qrcode("barcode-reader");
+        if (input) input.value = '';
+        barcodeScanLocked = false;
+        barcodeLookupInProgress = false;
+        setBarcodeLookupBusy(false);
+        setBarcodeScanStatus('Starting back camera…');
+
+        if (typeof Html5Qrcode === 'undefined') {
+            setBarcodeScanStatus('Scanner failed to load — enter the number below', 'error');
+            showToast('Scanner failed to load — enter barcode manually', 5000);
+            return;
+        }
+
+        if (html5QrCode && html5QrCode.isScanning) {
+            try { await html5QrCode.stop(); } catch (error) {}
+        }
+        if (!html5QrCode) html5QrCode = createFoodBarcodeScanner();
 
         const config = {
-            fps: 10,
+            fps: 12,
             aspectRatio: 4 / 3,
-            // Keep the scan frame large enough to contain both the complete barcode
-            // bars and the human-readable number printed directly underneath them.
-            qrbox: (viewfinderWidth, viewfinderHeight) => ({
-                width: Math.floor(viewfinderWidth * 0.95),
-                height: Math.floor(viewfinderHeight * 0.65)
-            })
+            disableFlip: true,
+            // A wide, shallow target gives the decoder more pixels across long
+            // EAN/UPC bars. The full camera window remains tall enough to show the
+            // printed number underneath, as requested.
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                const width = Math.min(
+                    Math.max(180, Math.floor(viewfinderWidth * 0.96)),
+                    Math.max(100, viewfinderWidth - 4)
+                );
+                const height = Math.min(
+                    Math.max(100, Math.floor(viewfinderHeight * 0.42)),
+                    Math.max(80, viewfinderHeight - 4)
+                );
+                return { width, height };
+            }
         };
 
         const onScan = async (decodedText) => {
+            if (barcodeScanLocked || barcodeLookupInProgress) return;
             const fullBarcode = normaliseBarcode(decodedText);
-            if (!fullBarcode) return;
+            if (!isPlausibleFoodBarcode(fullBarcode)) {
+                setBarcodeScanStatus('Keep the whole barcode inside the frame', 'warning');
+                return;
+            }
 
-            // Show the full decoded identifier immediately, then use this exact
-            // string for the lookup rather than converting or re-reading it.
-            document.getElementById('manual-barcode').value = fullBarcode;
-            try { await html5QrCode.stop(); } catch (e) {}
+            barcodeScanLocked = true;
+            if (input) input.value = fullBarcode;
+            setBarcodeScanStatus('Barcode read: ' + fullBarcode + ' — finding product…', 'success');
+            try {
+                if (navigator.vibrate) navigator.vibrate(90);
+            } catch (error) {}
+            try {
+                if (html5QrCode && html5QrCode.isScanning) await html5QrCode.stop();
+            } catch (error) {}
             await lookupBarcode(fullBarcode);
         };
 
-        // Strict back-camera-only policy. Try in order of strictness:
-        // 1. exact: "environment"  — hard requirement, fails fast if no back camera
-        // 2. ideal: "environment"  — softer hint, in case the browser rejects `exact`
-        // 3. Enumerate cameras and pick one whose label clearly says back/rear
-        // If none of these find a back camera, we refuse to start rather than
-        // silently falling back to the front (selfie) camera.
+        try {
+            // Request a high-resolution rear stream; long 1-D barcodes need horizontal
+            // detail, especially on Android phones and curved packaging.
+            await html5QrCode.start({
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }, config, onScan, () => {});
+            await optimiseBarcodeCamera();
+            setBarcodeScanStatus('Camera ready — hold the full barcode steady');
+        } catch (firstError) {
+            try {
+                if (html5QrCode && html5QrCode.isScanning) await html5QrCode.stop();
+                try { html5QrCode.clear(); } catch (error) {}
+                html5QrCode = createFoodBarcodeScanner();
 
-        html5QrCode.start({ facingMode: { exact: "environment" } }, config, onScan, () => {})
-            .catch(() => {
-                return html5QrCode.start({ facingMode: { ideal: "environment" } }, config, onScan, () => {});
-            })
-            .catch(() => {
-                return Html5Qrcode.getCameras().then(cams => {
-                    if (!cams || cams.length === 0) {
-                        throw new Error('no-camera');
-                    }
-                    const backCam = cams.find(c => /back|rear|environment/i.test(c.label || ''));
-                    if (!backCam) {
-                        throw new Error('no-back-camera');
-                    }
-                    return html5QrCode.start(backCam.id, config, onScan, () => {});
-                });
-            })
-            .catch(err => {
-                console.warn('Back camera unavailable:', err);
-                if (err && err.message === 'no-camera') {
-                    showToast('No camera found — enter barcode manually', 5000);
-                } else if (err && err.message === 'no-back-camera') {
-                    showToast('No back camera detected — enter barcode manually', 5000);
-                } else {
-                    showToast('Back camera unavailable — enter barcode manually', 5000);
-                }
-            });
+                const cameras = await Html5Qrcode.getCameras();
+                if (!cameras || cameras.length === 0) throw new Error('no-camera');
+                // Prefer a labelled rear camera. Some Android browsers hide labels,
+                // in which case the last enumerated camera is normally the rear lens.
+                const rearCamera = cameras.find(camera =>
+                    /back|rear|environment/i.test(camera.label || '')
+                ) || cameras[cameras.length - 1];
+
+                await html5QrCode.start(rearCamera.id, config, onScan, () => {});
+                await optimiseBarcodeCamera();
+                setBarcodeScanStatus('Camera ready — hold the full barcode steady');
+            } catch (error) {
+                console.warn('Barcode camera unavailable:', firstError, error);
+                setBarcodeScanStatus('Camera unavailable — enter the number below', 'error');
+                showToast(
+                    error && error.message === 'no-camera'
+                        ? 'No camera found — enter barcode manually'
+                        : 'Camera unavailable — enter barcode manually',
+                    5000
+                );
+            }
+        }
     }
 
     async function closeBarcodeScanner() {
         if (html5QrCode && html5QrCode.isScanning) {
-            try { await html5QrCode.stop(); } catch (e) {}
+            try { await html5QrCode.stop(); } catch (error) {}
         }
+        barcodeScanLocked = false;
+        setBarcodeLookupBusy(false);
         document.getElementById('barcode-scanner-modal').style.display = 'none';
+    }
+
+    async function useResolvedBarcodeFood(food) {
+        const requestedMode = barcodeScanMode;
+        barcodeScanMode = 'food';
+        await closeBarcodeScanner();
+
+        if (requestedMode === 'meal') {
+            addIngredient({
+                name: food.name || 'Scanned item',
+                cal: food.calories || 0,
+                protein: food.protein || 0
+            });
+        } else {
+            openFoodPopupModel(food);
+        }
     }
 
     async function lookupBarcode(scannedCode) {
         const barcodeInput = document.getElementById('manual-barcode');
-        const code = normaliseBarcode(scannedCode ?? barcodeInput.value);
-        barcodeInput.value = code;
-        if (!code) { showToast('Enter or scan a barcode'); return; }
+        const code = normaliseBarcode(scannedCode ?? (barcodeInput && barcodeInput.value));
+        if (barcodeInput) barcodeInput.value = code;
+
+        if (!isPlausibleFoodBarcode(code)) {
+            barcodeScanLocked = false;
+            setBarcodeScanStatus('Enter the complete 7–14 digit barcode', 'error');
+            showToast('Enter the complete barcode number');
+            return;
+        }
+        if (barcodeLookupInProgress) return;
+
+        barcodeLookupInProgress = true;
+        barcodeScanLocked = true;
+        setBarcodeLookupBusy(true);
+        setBarcodeScanStatus('Finding ' + code + ' in Open Food Facts…');
+
+        const cached = findCachedBarcodeFood(code);
         try {
-            const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(code)}.json`);
-            const d = await r.json();
-            if (d.status === 1 && d.product) {
-                await closeBarcodeScanner();
-                if (barcodeScanMode === 'meal') {
-                    // Add the scanned product straight into the meal being built
-                    const p = d.product;
-                    addIngredient({
-                        name: p.product_name || 'Scanned item',
-                        cal: p.nutriments['energy-kcal_100g'] || 0,
-                        protein: p.nutriments.proteins_100g || 0
-                    });
-                    barcodeScanMode = 'food'; // reset for next time
-                } else {
-                    openFoodPopup(d.product);
-                }
-            } else {
-                showToast('Product not found');
+            const result = await fetchOpenFoodFactsProduct(code);
+            if (!result.found || !result.product) {
+                barcodeScanLocked = false;
+                setBarcodeScanStatus('Barcode read, but the product is not in Open Food Facts', 'warning');
+                showToast('Product not found in Open Food Facts');
+                return;
             }
-        } catch (e) {
-            showToast('Lookup failed');
+
+            const food = normaliseOpenFoodFactsProduct(result.product, code);
+            food.barcode = result.code || food.barcode || code;
+            food.scannedBarcode = code;
+            await cacheBarcodeFood(food);
+            await useResolvedBarcodeFood(food);
+        } catch (error) {
+            console.warn('Open Food Facts barcode lookup failed:', error);
+            if (cached) {
+                await useResolvedBarcodeFood(cached);
+                showToast('Loaded saved product — Open Food Facts is unavailable');
+            } else {
+                barcodeScanLocked = false;
+                setBarcodeScanStatus('Could not reach Open Food Facts — try again', 'error');
+                showToast('Could not reach Open Food Facts');
+            }
+        } finally {
+            barcodeLookupInProgress = false;
+            setBarcodeLookupBusy(false);
         }
     }
 
