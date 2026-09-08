@@ -3022,15 +3022,16 @@
     <div id="shift-setup-modal" class="modal-overlay" style="z-index:210;">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-5">
-                <h3 class="text-xl font-black">Your Shift Pattern</h3>
+                <h3 class="text-xl font-black">Default Shift Pattern</h3>
                 <button onclick="closeShiftSetup()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none">×</button>
             </div>
 
             <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Shift type</label>
-            <select id="shift-type-select" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none mb-4">
+            <select id="shift-type-select" onchange="applyShiftPatternTypeDefaults()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none mb-4">
                 <option value="nights">Night shifts</option>
                 <option value="days">Day shifts</option>
                 <option value="earlies">Early shifts</option>
+                <option value="lates">Late shifts</option>
                 <option value="rotating">Rotating shifts</option>
             </select>
 
@@ -3071,6 +3072,47 @@
             </div>
 
             <button onclick="saveShiftSetup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Save My Plan</button>
+        </div>
+    </div>
+
+    <!-- DATE-SPECIFIC SHIFT PLANNER EDITOR -->
+    <div id="planned-shift-modal" class="modal-overlay" style="z-index:220;">
+        <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-5">
+                <div>
+                    <p class="text-[10px] font-black uppercase text-indigo-500">Linked to daily advice</p>
+                    <h3 class="text-xl font-black">Plan This Shift</h3>
+                </div>
+                <button onclick="closePlannedShiftEditor()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none">×</button>
+            </div>
+
+            <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Date</label>
+            <input type="date" id="planned-shift-date" onchange="loadPlannedShiftEditorDate(this.value)" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none mb-4">
+
+            <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Shift for this date</label>
+            <select id="planned-shift-type" onchange="applyPlannedShiftTypeDefaults()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none mb-4">
+                <option value="off">Rest / off day</option>
+                <option value="earlies">Early shift</option>
+                <option value="days">Day shift</option>
+                <option value="lates">Late shift</option>
+                <option value="nights">Night shift</option>
+            </select>
+
+            <div id="planned-shift-times" class="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                    <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Starts</label>
+                    <input type="time" id="planned-shift-start" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                </div>
+                <div>
+                    <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Ends</label>
+                    <input type="time" id="planned-shift-end" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                </div>
+            </div>
+
+            <p id="planned-shift-source" class="text-xs text-slate-500 bg-indigo-50 rounded-2xl p-3 mb-5"></p>
+
+            <button onclick="savePlannedShift()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Save & Update This Day's Advice</button>
+            <button id="planned-shift-use-pattern" onclick="useShiftPatternForDate()" class="w-full mt-2 bg-slate-100 text-slate-700 p-3 rounded-2xl text-sm font-bold">Use Default Pattern Instead</button>
         </div>
     </div>
 
@@ -3501,6 +3543,7 @@
                 // Exercise database is account-level, so it follows the user across devices
                 customExercises: [],
                 barcodeFoods: [],
+                shiftProfile: state.shiftProfile || null,
                 disabledExercises: { gym: [], home: [] }
             });
 
@@ -3574,6 +3617,7 @@
                 // equipment setup and custom exercises follow you to any device.
                 applyExercisePrefsFromCloud(firebaseUserData);
                 mergeBarcodeFoodsFromCloud(firebaseUserData.barcodeFoods);
+                applyShiftProfileFromCloud(firebaseUserData);
             } else {
                 await db.collection('users').doc(currentUser.uid).set({
                     name: currentUser.displayName || 'User',
@@ -3591,6 +3635,7 @@
                     pendingRequests: [],
                     customExercises: state.customExercises || [],
                     barcodeFoods: state.barcodeFoods || [],
+                    shiftProfile: state.shiftProfile || null,
                     disabledExercises: {
                         gym: (state.disabledExercises && state.disabledExercises.gym) || [],
                         home: (state.disabledExercises && state.disabledExercises.home) || []
@@ -3712,6 +3757,7 @@
                 workoutHistory: (state.workoutHistory || []).slice(0, 100),
                 nutritionHistory: (state.nutritionHistory || []).slice(0, 60),
                 dailyMeals: state.dailyMeals || [],
+                shiftProfile: state.shiftProfile || {},
                 // Goals, focus & targets — so the coach can see what the client is working toward
                 userGoals: state.userGoals || [],
                 goalTargets: state.goals || {},
@@ -5368,9 +5414,73 @@
     // the aim is to reduce eating in the biological night and place training when
     // the body is most primed.
 
+    let shiftPlannerWeekOffset = 0;
+    let shiftAdviceDateKey = null;
+    let plannedShiftEditorDateKey = null;
+
     function shiftP() {
         if (!state.shiftProfile) state.shiftProfile = JSON.parse(JSON.stringify(DEFAULT_STATE.shiftProfile));
+        state.shiftProfile = Object.assign({}, DEFAULT_STATE.shiftProfile, state.shiftProfile);
+        if (
+            !state.shiftProfile.plannedShifts ||
+            typeof state.shiftProfile.plannedShifts !== 'object' ||
+            Array.isArray(state.shiftProfile.plannedShifts)
+        ) {
+            state.shiftProfile.plannedShifts = {};
+        }
         return state.shiftProfile;
+    }
+
+    async function syncShiftProfileToCloud() {
+        if (!currentUser || !db) return;
+        try {
+            await db.collection('users').doc(currentUser.uid).set({
+                shiftProfile: JSON.parse(JSON.stringify(shiftP())),
+                shiftProfileUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        } catch (error) {
+            console.warn('Shift planner saved locally but cloud sync failed:', error);
+        }
+    }
+
+    function applyShiftProfileFromCloud(data) {
+        if (!data) return;
+        const localProfile = shiftP();
+        if (!data.shiftProfile || typeof data.shiftProfile !== 'object') {
+            if (localProfile.enabled) syncShiftProfileToCloud();
+            return;
+        }
+
+        const cloudProfile = Object.assign(
+            {},
+            DEFAULT_STATE.shiftProfile,
+            data.shiftProfile,
+            {
+                plannedShifts: Object.assign(
+                    {},
+                    (data.shiftProfile && data.shiftProfile.plannedShifts) || {}
+                )
+            }
+        );
+        const cloudUpdated = cloudProfile.updatedAt ? (Date.parse(cloudProfile.updatedAt) || 0) : 0;
+        const localUpdated = localProfile.updatedAt ? (Date.parse(localProfile.updatedAt) || 0) : 0;
+
+        // A legacy local plan may pre-date timestamps. Do not let an older,
+        // disabled cloud placeholder erase an already configured device.
+        if (!localProfile.enabled || (cloudUpdated > 0 && cloudUpdated >= localUpdated)) {
+            state.shiftProfile = cloudProfile;
+            saveState();
+        } else {
+            syncShiftProfileToCloud();
+        }
+    }
+
+    function persistShiftProfile() {
+        const sp = shiftP();
+        sp.updatedAt = new Date().toISOString();
+        saveState();
+        syncShiftProfileToCloud();
+        if (typeof pushMemberDataToCloud === 'function') pushMemberDataToCloud();
     }
 
     function renderShiftWorker() {
@@ -5393,15 +5503,15 @@
                         <i data-lucide="moon" class="w-8 h-8 text-indigo-600"></i>
                     </div>
                     <h3 class="text-xl font-black mb-2">Shift Worker Mode</h3>
-                    <p class="text-sm text-slate-500 mb-5">Meal timing and training built around your shift pattern, using circadian-rhythm science. Working nights makes your body eat and train "against the clock" — this helps you work with it.</p>
-                    <button onclick="openShiftSetup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Set Up My Shift</button>
+                    <p class="text-sm text-slate-500 mb-5">Plan individual shifts and receive meal and training advice for that exact day. Your repeating pattern remains available as a fallback.</p>
+                    <button onclick="openShiftSetup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Set Up My Default Pattern</button>
                     <button onclick="reshowShiftDisclaimer()" class="w-full mt-2 text-xs text-slate-400 font-bold">Review the health disclaimer</button>
                 </div>`;
             lucide.createIcons();
             return;
         }
 
-        // ENABLED: show today's plan
+        if (!shiftAdviceDateKey) shiftAdviceDateKey = localDateKey();
         box.innerHTML = shiftPlanHTML();
         lucide.createIcons();
     }
@@ -5431,13 +5541,13 @@
         const cb = document.getElementById('shift-disclaimer-check');
         if (!cb || !cb.checked) { showToast('Please tick the box to confirm you understand'); return; }
         shiftP().acknowledgedDisclaimer = true;
-        saveState();
+        persistShiftProfile();
         renderShiftWorker();
     }
 
     function reshowShiftDisclaimer() {
         shiftP().acknowledgedDisclaimer = false;
-        saveState();
+        persistShiftProfile();
         renderShiftWorker();
     }
 
@@ -5470,11 +5580,24 @@
         if (wrap) wrap.style.display = (goal === 'fat_loss') ? '' : 'none';
     }
 
+    function applyShiftPatternTypeDefaults() {
+        const type = document.getElementById('shift-type-select')?.value;
+        if (!type || type === 'rotating') return;
+        const defaults = defaultTimesForShiftType(normaliseShiftType(type));
+        const startInput = document.getElementById('shift-start-input');
+        const endInput = document.getElementById('shift-end-input');
+        if (startInput) startInput.value = defaults.start;
+        if (endInput) endInput.value = defaults.end;
+    }
+
     function saveShiftSetup() {
         const sp = shiftP();
         sp.shiftType = document.getElementById('shift-type-select').value;
-        sp.shiftStart = document.getElementById('shift-start-input').value || '19:00';
-        sp.shiftEnd = document.getElementById('shift-end-input').value || '07:00';
+        const defaultTimes = sp.shiftType === 'rotating'
+            ? { start: '19:00', end: '07:00' }
+            : defaultTimesForShiftType(normaliseShiftType(sp.shiftType));
+        sp.shiftStart = document.getElementById('shift-start-input').value || defaultTimes.start;
+        sp.shiftEnd = document.getElementById('shift-end-input').value || defaultTimes.end;
         sp.goal = document.getElementById('shift-goal-select').value;
         sp.useFasting = (sp.goal === 'fat_loss') && document.getElementById('shift-fasting-check').checked;
         sp.workDays = [0,1,2,3,4,5,6].filter(d => {
@@ -5482,17 +5605,19 @@
             return cb && cb.checked;
         });
         sp.enabled = true;
-        saveState();
+        persistShiftProfile();
         closeShiftSetup();
         renderShiftWorker();
-        showToast('Shift plan ready 🌙');
+        showToast('Default pattern saved — daily advice updated');
     }
 
-    // ---- Helpers for time maths ----
+
+    // ---- Shift planner and date-specific advice ----
     function hmToMin(hm) {
         const [h, m] = (hm || '0:0').split(':').map(Number);
         return (h * 60 + (m || 0));
     }
+
     function minToHM(min) {
         min = ((min % 1440) + 1440) % 1440;
         const h = Math.floor(min / 60), m = min % 60;
@@ -5500,49 +5625,370 @@
         let h12 = h % 12; if (h12 === 0) h12 = 12;
         return `${h12}:${String(m).padStart(2, '0')}${ap}`;
     }
-    function isOnShiftToday() {
+
+    function localDateKey(date = new Date()) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    function dateFromLocalKey(key) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+        if (!match) return null;
+        const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+        if (
+            date.getFullYear() !== Number(match[1]) ||
+            date.getMonth() !== Number(match[2]) - 1 ||
+            date.getDate() !== Number(match[3])
+        ) return null;
+        return date;
+    }
+
+    function addLocalDays(date, days) {
+        const next = new Date(date);
+        next.setDate(next.getDate() + days);
+        return next;
+    }
+
+    function defaultTimesForShiftType(type) {
+        const defaults = {
+            earlies: { start: '06:00', end: '14:00' },
+            days: { start: '08:00', end: '16:00' },
+            lates: { start: '14:00', end: '22:00' },
+            nights: { start: '19:00', end: '07:00' },
+            off: { start: '', end: '' }
+        };
+        return defaults[type] || defaults.days;
+    }
+
+    function normaliseShiftType(type) {
+        return ['off', 'earlies', 'days', 'lates', 'nights'].includes(type) ? type : 'off';
+    }
+
+    function resolvePatternShiftType(sp) {
+        if (['earlies', 'days', 'lates', 'nights'].includes(sp.shiftType)) return sp.shiftType;
+        const start = hmToMin(sp.shiftStart);
+        const end = hmToMin(sp.shiftEnd);
+        if (end < start || start >= 17 * 60) return 'nights';
+        if (start < 7 * 60) return 'earlies';
+        if (start >= 12 * 60) return 'lates';
+        return 'days';
+    }
+
+    function shiftTypeMeta(type) {
+        const types = {
+            off: { emoji: '☀️', label: 'Rest / Off Day', short: 'Off', badge: 'bg-slate-100 text-slate-600' },
+            earlies: { emoji: '🌅', label: 'Early Shift', short: 'Early', badge: 'bg-amber-100 text-amber-700' },
+            days: { emoji: '☀️', label: 'Day Shift', short: 'Day', badge: 'bg-sky-100 text-sky-700' },
+            lates: { emoji: '🌆', label: 'Late Shift', short: 'Late', badge: 'bg-violet-100 text-violet-700' },
+            nights: { emoji: '🌙', label: 'Night Shift', short: 'Night', badge: 'bg-indigo-100 text-indigo-700' }
+        };
+        return types[normaliseShiftType(type)];
+    }
+
+    function getShiftForDate(dateKey) {
         const sp = shiftP();
-        const today = new Date().getDay();
-        return (sp.workDays || []).indexOf(today) >= 0;
+        const date = dateFromLocalKey(dateKey) || new Date();
+        const safeDateKey = dateFromLocalKey(dateKey) ? dateKey : localDateKey(date);
+        const planned = sp.plannedShifts && Object.prototype.hasOwnProperty.call(sp.plannedShifts, safeDateKey)
+            ? sp.plannedShifts[safeDateKey]
+            : null;
+
+        if (planned && typeof planned === 'object') {
+            const type = normaliseShiftType(planned.type);
+            const defaults = defaultTimesForShiftType(type);
+            return {
+                dateKey: safeDateKey,
+                type,
+                start: type === 'off' ? '' : (planned.start || defaults.start),
+                end: type === 'off' ? '' : (planned.end || defaults.end),
+                source: 'planned'
+            };
+        }
+
+        const isPatternWorkDay = !!sp.enabled && (sp.workDays || []).includes(date.getDay());
+        if (!isPatternWorkDay) {
+            return { dateKey: safeDateKey, type: 'off', start: '', end: '', source: 'pattern' };
+        }
+
+        const type = resolvePatternShiftType(sp);
+        const defaults = defaultTimesForShiftType(type);
+        return {
+            dateKey: safeDateKey,
+            type,
+            start: sp.shiftStart || defaults.start,
+            end: sp.shiftEnd || defaults.end,
+            source: 'pattern'
+        };
+    }
+
+    function isOnShiftToday() {
+        return getShiftForDate(localDateKey()).type !== 'off';
+    }
+
+    function formatShiftPlannerDate(date, options) {
+        return date.toLocaleDateString('en-GB', options || {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short'
+        });
+    }
+
+    function getShiftPlannerWeekStart() {
+        const today = new Date();
+        today.setHours(12, 0, 0, 0);
+        const mondayOffset = (today.getDay() + 6) % 7;
+        return addLocalDays(today, -mondayOffset + (shiftPlannerWeekOffset * 7));
+    }
+
+    function shiftPlannerHTML() {
+        const weekStart = getShiftPlannerWeekStart();
+        const todayKey = localDateKey();
+        const selectedKey = shiftAdviceDateKey || todayKey;
+        const rows = [];
+
+        for (let i = 0; i < 7; i++) {
+            const date = addLocalDays(weekStart, i);
+            const dateKey = localDateKey(date);
+            const shift = getShiftForDate(dateKey);
+            const meta = shiftTypeMeta(shift.type);
+            const isSelected = dateKey === selectedKey;
+            const isToday = dateKey === todayKey;
+            const timeText = shift.type === 'off'
+                ? 'Recovery day'
+                : `${minToHM(hmToMin(shift.start))} – ${minToHM(hmToMin(shift.end))}`;
+            rows.push(`
+                <div class="flex items-center gap-2 p-2 rounded-2xl border ${isSelected ? 'border-indigo-400 bg-indigo-50' : 'border-slate-100 bg-white'}">
+                    <button type="button" onclick="selectShiftAdviceDate('${dateKey}')" class="flex-1 min-w-0 flex items-center gap-3 text-left">
+                        <div class="w-14 shrink-0">
+                            <p class="text-[10px] font-black uppercase ${isToday ? 'text-indigo-600' : 'text-slate-400'}">${formatShiftPlannerDate(date, { weekday: 'short' })}${isToday ? ' · Today' : ''}</p>
+                            <p class="text-sm font-black text-slate-800">${formatShiftPlannerDate(date, { day: 'numeric', month: 'short' })}</p>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <span class="inline-flex px-2 py-1 rounded-lg text-[10px] font-black uppercase ${meta.badge}">${meta.emoji} ${meta.short}</span>
+                            <p class="text-xs text-slate-500 mt-1 truncate">${timeText} · ${shift.source === 'planned' ? 'Planned' : 'Default pattern'}</p>
+                        </div>
+                    </button>
+                    <button type="button" onclick="openPlannedShiftEditor('${dateKey}')" class="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center" aria-label="Edit shift for ${formatShiftPlannerDate(date)}">
+                        <i data-lucide="pencil" class="w-4 h-4"></i>
+                    </button>
+                </div>`);
+        }
+
+        return `
+            <div class="glass-card p-5 rounded-[2.5rem]">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                        <p class="text-[10px] font-black uppercase text-indigo-500">Linked Shift Planner</p>
+                        <h3 class="text-lg font-black">Choose a day for tailored advice</h3>
+                    </div>
+                    <button type="button" onclick="openShiftSetup()" class="text-[11px] font-black text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl">Default Pattern</button>
+                </div>
+                <div class="flex items-center justify-between gap-2 mb-3">
+                    <button type="button" onclick="changeShiftPlannerWeek(-1)" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center" aria-label="Previous week">
+                        <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                    </button>
+                    <div class="text-center">
+                        <p class="text-xs font-black text-slate-700">${formatShiftPlannerDate(weekStart, { day: 'numeric', month: 'short' })} – ${formatShiftPlannerDate(addLocalDays(weekStart, 6), { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                        <button type="button" onclick="goToCurrentShiftWeek()" class="text-[10px] font-bold text-indigo-600 mt-1">Jump to today</button>
+                    </div>
+                    <button type="button" onclick="changeShiftPlannerWeek(1)" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center" aria-label="Next week">
+                        <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                <div class="space-y-2">${rows.join('')}</div>
+                <p class="text-[11px] text-slate-400 mt-3">Tap a day to update the advice below. The pencil saves a one-day shift that overrides your repeating pattern.</p>
+            </div>`;
+    }
+
+    function changeShiftPlannerWeek(direction) {
+        shiftPlannerWeekOffset += direction;
+        renderShiftWorker();
+    }
+
+    function goToCurrentShiftWeek() {
+        shiftPlannerWeekOffset = 0;
+        shiftAdviceDateKey = localDateKey();
+        renderShiftWorker();
+    }
+
+    function selectShiftAdviceDate(dateKey) {
+        if (!dateFromLocalKey(dateKey)) return;
+        shiftAdviceDateKey = dateKey;
+        renderShiftWorker();
+    }
+
+    function updatePlannedShiftTimeVisibility() {
+        const type = document.getElementById('planned-shift-type')?.value;
+        const timeWrap = document.getElementById('planned-shift-times');
+        if (timeWrap) timeWrap.style.display = type === 'off' ? 'none' : '';
+    }
+
+    function applyPlannedShiftTypeDefaults() {
+        const type = normaliseShiftType(document.getElementById('planned-shift-type')?.value);
+        const defaults = defaultTimesForShiftType(type);
+        const startInput = document.getElementById('planned-shift-start');
+        const endInput = document.getElementById('planned-shift-end');
+        if (startInput) startInput.value = defaults.start;
+        if (endInput) endInput.value = defaults.end;
+        updatePlannedShiftTimeVisibility();
+    }
+
+    function openPlannedShiftEditor(dateKey) {
+        if (!dateFromLocalKey(dateKey)) return;
+        const modal = document.getElementById('planned-shift-modal');
+        if (!modal) return;
+
+        plannedShiftEditorDateKey = dateKey;
+        shiftAdviceDateKey = dateKey;
+        const sp = shiftP();
+        const hasOverride = Object.prototype.hasOwnProperty.call(sp.plannedShifts, dateKey);
+        const shift = getShiftForDate(dateKey);
+        const dateInput = document.getElementById('planned-shift-date');
+        const typeInput = document.getElementById('planned-shift-type');
+        const startInput = document.getElementById('planned-shift-start');
+        const endInput = document.getElementById('planned-shift-end');
+        const source = document.getElementById('planned-shift-source');
+        const fallbackButton = document.getElementById('planned-shift-use-pattern');
+
+        if (dateInput) dateInput.value = dateKey;
+        if (typeInput) typeInput.value = shift.type;
+        if (startInput) startInput.value = shift.start || defaultTimesForShiftType(shift.type).start;
+        if (endInput) endInput.value = shift.end || defaultTimesForShiftType(shift.type).end;
+        if (source) source.textContent = hasOverride
+            ? 'This date has a saved one-day shift. It overrides your default pattern.'
+            : 'This currently follows your default repeating pattern. Saving creates a one-day override.';
+        if (fallbackButton) {
+            fallbackButton.disabled = !hasOverride;
+            fallbackButton.classList.toggle('opacity-40', !hasOverride);
+        }
+
+        updatePlannedShiftTimeVisibility();
+        modal.style.display = 'flex';
+        lucide.createIcons();
+    }
+
+    function loadPlannedShiftEditorDate(dateKey) {
+        if (!dateFromLocalKey(dateKey)) return;
+        openPlannedShiftEditor(dateKey);
+    }
+
+    function closePlannedShiftEditor() {
+        const modal = document.getElementById('planned-shift-modal');
+        if (modal) modal.style.display = 'none';
+        plannedShiftEditorDateKey = null;
+    }
+
+    function prunePlannedShifts(plannedShifts) {
+        const keys = Object.keys(plannedShifts || {});
+        if (keys.length <= 400) return;
+        keys.sort((a, b) => {
+            const aTime = Date.parse(plannedShifts[a]?.updatedAt || '') || 0;
+            const bTime = Date.parse(plannedShifts[b]?.updatedAt || '') || 0;
+            return bTime - aTime;
+        });
+        keys.slice(400).forEach(key => delete plannedShifts[key]);
+    }
+
+    function savePlannedShift() {
+        const dateKey = document.getElementById('planned-shift-date')?.value || plannedShiftEditorDateKey;
+        if (!dateFromLocalKey(dateKey)) {
+            showToast('Choose a valid date');
+            return;
+        }
+
+        const type = normaliseShiftType(document.getElementById('planned-shift-type')?.value);
+        const defaults = defaultTimesForShiftType(type);
+        const start = document.getElementById('planned-shift-start')?.value || defaults.start;
+        const end = document.getElementById('planned-shift-end')?.value || defaults.end;
+        if (type !== 'off' && (!start || !end)) {
+            showToast('Add the shift start and finish times');
+            return;
+        }
+
+        const sp = shiftP();
+        sp.plannedShifts[dateKey] = {
+            type,
+            start: type === 'off' ? '' : start,
+            end: type === 'off' ? '' : end,
+            updatedAt: new Date().toISOString()
+        };
+        sp.enabled = true;
+        prunePlannedShifts(sp.plannedShifts);
+        shiftAdviceDateKey = dateKey;
+        persistShiftProfile();
+        closePlannedShiftEditor();
+        renderShiftWorker();
+        showToast(`${shiftTypeMeta(type).label} saved — advice updated`);
+    }
+
+    function useShiftPatternForDate() {
+        const dateKey = document.getElementById('planned-shift-date')?.value || plannedShiftEditorDateKey;
+        if (!dateFromLocalKey(dateKey)) return;
+        const sp = shiftP();
+        delete sp.plannedShifts[dateKey];
+        shiftAdviceDateKey = dateKey;
+        persistShiftProfile();
+        closePlannedShiftEditor();
+        renderShiftWorker();
+        showToast('Using your default pattern — advice updated');
     }
 
     function shiftPlanHTML() {
         const sp = shiftP();
-        const onShift = isOnShiftToday();
-        const isNight = sp.shiftType === 'nights' || sp.shiftType === 'rotating';
-        let html = '';
+        const adviceDateKey = dateFromLocalKey(shiftAdviceDateKey) ? shiftAdviceDateKey : localDateKey();
+        shiftAdviceDateKey = adviceDateKey;
+        const adviceDate = dateFromLocalKey(adviceDateKey);
+        const shiftForDay = getShiftForDate(adviceDateKey);
+        const meta = shiftTypeMeta(shiftForDay.type);
+        const onShift = shiftForDay.type !== 'off';
+        const isNight = shiftForDay.type === 'nights';
+        const dayLabel = formatShiftPlannerDate(adviceDate, {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
+        const sourceLabel = shiftForDay.source === 'planned' ? 'Saved in Shift Planner' : 'From Default Pattern';
 
+        let html = shiftPlannerHTML();
         html += `
-            <div class="glass-card p-6 rounded-[2.5rem]">
-                <div class="flex justify-between items-start mb-2">
+            <div class="glass-card p-6 rounded-[2.5rem] border-2 border-indigo-100">
+                <div class="flex justify-between items-start gap-3 mb-2">
                     <div>
-                        <p class="text-[10px] font-black uppercase text-slate-400">Today</p>
-                        <h3 class="text-xl font-black">${onShift ? '🌙 On Shift' : '☀️ Off Shift / Rest Day'}</h3>
+                        <p class="text-[10px] font-black uppercase text-indigo-500">Advice for ${dayLabel}</p>
+                        <h3 class="text-xl font-black">${meta.emoji} ${meta.label}</h3>
+                        <span class="inline-flex mt-2 px-2 py-1 rounded-lg text-[10px] font-black uppercase ${meta.badge}">${sourceLabel}</span>
                     </div>
-                    <button onclick="openShiftSetup()" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl">Edit</button>
+                    <button type="button" onclick="openPlannedShiftEditor('${adviceDateKey}')" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl shrink-0">Edit Day</button>
                 </div>
                 <p class="text-sm text-slate-500">${onShift
-                    ? `Your shift runs ${minToHM(hmToMin(sp.shiftStart))} – ${minToHM(hmToMin(sp.shiftEnd))}. Plan below is tuned for a working ${isNight ? 'night' : 'day'}.`
-                    : 'A rest/off day — the plan shifts toward normal daytime eating to help your body clock re-anchor.'}
+                    ? `Your planned shift runs ${minToHM(hmToMin(shiftForDay.start))} – ${minToHM(hmToMin(shiftForDay.end))}. Every meal, training and fasting suggestion below uses this shift.`
+                    : 'This is marked as a rest day, so the advice below returns to daytime meals, recovery and sleep re-anchoring.'}
                 </p>
             </div>`;
 
-        html += onShift
-            ? (isNight ? nightShiftMealHTML() : dayShiftMealHTML())
-            : offDayMealHTML();
+        if (!onShift) html += offDayMealHTML();
+        else if (shiftForDay.type === 'nights') html += nightShiftMealHTML(shiftForDay);
+        else if (shiftForDay.type === 'earlies') html += earlyShiftMealHTML(shiftForDay);
+        else if (shiftForDay.type === 'lates') html += lateShiftMealHTML(shiftForDay);
+        else html += dayShiftMealHTML(shiftForDay);
 
-        html += shiftTrainingHTML(onShift, isNight);
+        html += shiftTrainingHTML(onShift, isNight, shiftForDay);
 
-        if (sp.goal === 'fat_loss' && sp.useFasting) html += fastingGuidanceHTML(onShift);
+        if (sp.goal === 'fat_loss' && sp.useFasting) {
+            html += fastingGuidanceHTML(onShift, dayLabel);
+        }
 
         html += shiftFoodIdeasHTML(isNight && onShift);
         html += shiftScienceHTML();
 
         html += `
             <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-                <p class="text-xs text-amber-800"><b>Not medical advice.</b> This is general guidance. Speak to your GP before significant changes, especially with any health condition or medication. <button onclick="reshowShiftDisclaimer()" class="underline font-bold">Review disclaimer</button></p>
+                <p class="text-xs text-amber-800"><b>Not medical advice.</b> This is general guidance. Speak to your GP before significant changes, especially if you have diabetes, heart/kidney conditions, take medication, are pregnant, or have a history of disordered eating.</p>
+                <button onclick="reshowShiftDisclaimer()" class="text-[11px] font-bold text-amber-700 underline mt-2">View safety notice again</button>
             </div>`;
-
         return html;
     }
 
@@ -5563,34 +6009,61 @@
             </div>`;
     }
 
-    function nightShiftMealHTML() {
-        const sp = shiftP();
-        const start = hmToMin(sp.shiftStart);
-        const end = hmToMin(sp.shiftEnd);
+
+    function nightShiftMealHTML(shiftInfo) {
+        const start = hmToMin(shiftInfo.start);
+        const end = hmToMin(shiftInfo.end);
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
-                <h3 class="text-lg font-black mb-1">Meal Timing — Working Night</h3>
-                <p class="text-xs text-slate-400 mb-4">The goal: eat your main food before/early in the shift, keep the deep-night hours light, and don't go to bed on a full stomach.</p>
-                ${mealRow(minToHM(start - 120), 'Anchor meal (before shift)', 'Your biggest, most balanced meal ~2h before starting. Lean protein + complex carbs + veg for steady 4–6h energy — this is what stops the 3am vending-machine trap.', 'main')}
-                ${mealRow(minToHM(start + 180), 'Mid-shift protein snack', 'A protein-forward snack ~3–4h in. Greek yogurt, cottage cheese, boiled eggs, or a lean-protein wrap. Keeps you full without a sugar crash.', 'light')}
-                ${mealRow('12am–6am', 'Biological night — keep minimal', 'Try to avoid a full meal in these hours: this is when your body handles food worst (higher glucose & fat in the blood). If you must eat, keep it small and protein/veg based, not sugary or heavy.', 'avoid')}
-                ${mealRow(minToHM(end), 'Post-shift: light only', 'A small, easy-to-digest meal at most. Finish eating at least ~1h before sleep so it doesn\'t wreck your sleep quality.', 'light')}
-                ${mealRow('Daytime', 'Sleep', 'Protect your sleep window. Dark, cool, quiet room. Sleep is where fat-loss and muscle-building actually happen.', 'sleep')}
+                <h3 class="text-lg font-black mb-1">Meal Timing — Night Shift</h3>
+                <p class="text-xs text-slate-400 mb-4">Built from the ${minToHM(start)}–${minToHM(end)} shift saved in your planner. Put most food before and early in the shift, then keep the biological night light.</p>
+                ${mealRow(minToHM(start - 120), 'Anchor meal before shift', 'Your largest balanced meal about two hours before starting: lean protein, complex carbs and vegetables for steady energy.', 'main')}
+                ${mealRow(minToHM(start + 180), 'Mid-shift protein snack', 'A protein-forward snack around three hours in: Greek yogurt, cottage cheese, eggs or a lean-protein wrap.', 'light')}
+                ${mealRow('12am–6am', 'Biological night — keep food minimal', 'If you need to eat, choose a small protein-and-vegetable option. Avoid a full, sugary or heavy meal during the hours your body handles food least effectively.', 'avoid')}
+                ${mealRow(minToHM(end), 'After shift — light only', 'Keep any post-shift food small and easy to digest, then leave roughly an hour before sleep where possible.', 'light')}
+                ${mealRow('After work', 'Protect daytime sleep', 'Use a dark, cool and quiet room. Consistent sleep supports recovery, appetite control and training progress.', 'sleep')}
             </div>`;
     }
 
-    function dayShiftMealHTML() {
-        const sp = shiftP();
-        const start = hmToMin(sp.shiftStart);
-        const end = hmToMin(sp.shiftEnd);
+    function earlyShiftMealHTML(shiftInfo) {
+        const start = hmToMin(shiftInfo.start);
+        const end = hmToMin(shiftInfo.end);
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
-                <h3 class="text-lg font-black mb-1">Meal Timing — Working Day</h3>
-                <p class="text-xs text-slate-400 mb-4">Daytime shifts are more circadian-friendly. Front-load your calories earlier and keep the evening lighter.</p>
-                ${mealRow(minToHM(start - 60), 'Breakfast', 'A solid protein + carb breakfast within ~an hour of waking. Insulin sensitivity is highest earlier in the day.', 'main')}
-                ${mealRow('Midday', 'Lunch — main meal', 'Make lunch your largest meal where you can. Protein, complex carbs, veg.', 'main')}
-                ${mealRow(minToHM(end), 'Dinner — lighter & earlier', 'Aim to finish your main evening eating before ~9pm. Late, large dinners are linked to worse metabolic outcomes.', 'light')}
-                ${mealRow('After 9pm', 'Wind down', 'Avoid late heavy meals and sugary snacks. A small protein snack is fine if genuinely hungry.', 'avoid')}
+                <h3 class="text-lg font-black mb-1">Meal Timing — Early Shift</h3>
+                <p class="text-xs text-slate-400 mb-4">Built from the ${minToHM(start)}–${minToHM(end)} shift saved in your planner. Keep the pre-work meal practical, then eat your main meal after the early start is behind you.</p>
+                ${mealRow(minToHM(start - 45), 'Pre-shift breakfast', 'Have a digestible protein-and-carbohydrate meal before work. If appetite is low, split breakfast and take the second half with you.', 'main')}
+                ${mealRow(minToHM(start + 180), 'Mid-shift top-up', 'Use a prepared protein snack plus fruit or wholegrain carbohydrates to avoid relying on pastries or vending food.', 'light')}
+                ${mealRow(minToHM(end + 45), 'Main meal after shift', 'Make this the largest balanced meal of the day while it is still daytime: protein, vegetables and a useful carbohydrate portion.', 'main')}
+                ${mealRow('By ~8–9pm', 'Finish with a lighter dinner', 'Keep dinner lighter and reasonably early so eating does not push back the sleep you need for the next early start.', 'light')}
+            </div>`;
+    }
+
+    function dayShiftMealHTML(shiftInfo) {
+        const start = hmToMin(shiftInfo.start);
+        const end = hmToMin(shiftInfo.end);
+        return `
+            <div class="glass-card p-6 rounded-[2.5rem]">
+                <h3 class="text-lg font-black mb-1">Meal Timing — Day Shift</h3>
+                <p class="text-xs text-slate-400 mb-4">Built from the ${minToHM(start)}–${minToHM(end)} shift saved in your planner. Day shifts suit normal daytime eating, so keep meals regular and avoid pushing most calories late.</p>
+                ${mealRow(minToHM(start - 60), 'Breakfast', 'Start with protein and carbohydrates before work so the first half of the shift is not fuelled by snacks alone.', 'main')}
+                ${mealRow(minToHM(start + 240), 'Lunch — main work meal', 'Pack a balanced lunch with protein, complex carbohydrates and vegetables. A planned meal makes afternoon energy more predictable.', 'main')}
+                ${mealRow(minToHM(end + 60), 'Dinner after shift', 'Eat a balanced but slightly lighter dinner after work. Adjust the portion around your calorie and protein targets.', 'light')}
+                ${mealRow('After ~9pm', 'Wind down', 'Avoid a late heavy meal. A small protein snack is reasonable if you are genuinely hungry.', 'avoid')}
+            </div>`;
+    }
+
+    function lateShiftMealHTML(shiftInfo) {
+        const start = hmToMin(shiftInfo.start);
+        const end = hmToMin(shiftInfo.end);
+        return `
+            <div class="glass-card p-6 rounded-[2.5rem]">
+                <h3 class="text-lg font-black mb-1">Meal Timing — Late Shift</h3>
+                <p class="text-xs text-slate-400 mb-4">Built from the ${minToHM(start)}–${minToHM(end)} shift saved in your planner. Front-load food before work so finishing late does not turn into the day’s biggest meal.</p>
+                ${mealRow(minToHM(start - 240), 'Breakfast after waking', 'Use a normal daytime breakfast with protein, fruit and a fibre-rich carbohydrate.', 'light')}
+                ${mealRow(minToHM(start - 90), 'Main meal before shift', 'Make this your largest balanced meal. Starting well fed reduces the urge for high-sugar food late in the shift.', 'main')}
+                ${mealRow(minToHM(start + 240), 'Work-break meal or snack', 'Choose a smaller prepared meal with lean protein and vegetables, or a protein snack with fruit.', 'light')}
+                ${mealRow(minToHM(end + 30), 'After shift — light only', 'If hungry, keep it small and easy to digest rather than having a large late-night dinner just before bed.', 'avoid')}
             </div>`;
     }
 
@@ -5598,41 +6071,54 @@
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
                 <h3 class="text-lg font-black mb-1">Meal Timing — Rest / Off Day</h3>
-                <p class="text-xs text-slate-400 mb-4">Use rest days to nudge your body clock back toward daytime eating — it helps recovery and metabolic health.</p>
-                ${mealRow('On waking', 'Breakfast', 'Eat within ~an hour of waking to anchor your body clock to daytime. Protein + carbs.', 'main')}
-                ${mealRow('Midday', 'Lunch — main meal', 'Largest meal of the day around midday when your metabolism is best set up for it.', 'main')}
-                ${mealRow('~6–7pm', 'Early dinner', 'Finish your main eating earlier in the evening. Aim to stop before ~9pm.', 'light')}
-                ${mealRow('Late', 'Minimise late eating', 'Keep the late-evening hours light. This re-trains your system after nights.', 'avoid')}
+                <p class="text-xs text-slate-400 mb-4">The selected date is marked off in your planner. Use it to return to daytime eating and support recovery.</p>
+                ${mealRow('On waking', 'Breakfast', 'Eat within roughly an hour of waking to anchor the day. Include protein and a useful carbohydrate source.', 'main')}
+                ${mealRow('Midday', 'Lunch — main meal', 'Place the largest balanced meal near the middle of your waking day when practical.', 'main')}
+                ${mealRow('~6–7pm', 'Earlier dinner', 'Finish the main evening meal earlier and adjust portions to your calorie and protein targets.', 'light')}
+                ${mealRow('Late evening', 'Minimise late eating', 'Keep late food light. This can help re-anchor your routine after night or late shifts.', 'avoid')}
             </div>`;
     }
 
-    function shiftTrainingHTML(onShift, isNight) {
+    function shiftTrainingHTML(onShift, isNight, shiftInfo) {
         const sp = shiftP();
         const fatLoss = sp.goal === 'fat_loss';
+        const type = shiftInfo?.type || (onShift ? (isNight ? 'nights' : 'days') : 'off');
+        const start = hmToMin(shiftInfo?.start || '08:00');
+        const end = hmToMin(shiftInfo?.end || '16:00');
         let inner = '';
 
-        if (onShift && isNight) {
+        if (type === 'nights') {
             inner = `
-                <p class="text-sm text-slate-600 mb-3">On a night-shift day, your strength peak and your available energy don't line up with a normal schedule. Best options:</p>
-                ${trainTip('Before your shift (2–4h after waking)', 'Your best window on a night-shift day. Core body temperature and neuromuscular readiness are higher a few hours after you wake — that\'s when to do your hardest lifting or intervals, not right after rolling out of bed.', 'primary')}
-                ${trainTip('On a mid-shift break', 'A short, lower-sweat strength session (compound lifts, moderate load) works well mid-shift and can boost alertness without frying you.', 'ok')}
-                ${trainTip('After a night shift — keep it gentle', 'Post-shift your body temp is at its lowest and cortisol can spike from hard training. Save heavy sessions for another time; a short walk to wind down is ideal before sleep.', 'avoid')}`;
-        } else if (onShift && !isNight) {
+                <p class="text-sm text-slate-600 mb-3">This is tied to your ${minToHM(start)}–${minToHM(end)} night shift.</p>
+                ${trainTip(`${minToHM(start - 180)}–${minToHM(start - 60)} before work`, 'The best slot for a demanding strength or interval session is usually after waking but before the shift. Leave time to eat and travel.', 'primary')}
+                ${trainTip('During a work break', 'Keep movement short and moderate: walking, mobility or a compact strength session if your workplace and energy allow it.', 'ok')}
+                ${trainTip(`After ${minToHM(end)} — recovery only`, 'After a night shift, favour a gentle walk or mobility. Hard training can make it harder to wind down and adds fatigue when alertness is already low.', 'avoid')}`;
+        } else if (type === 'earlies') {
             inner = `
-                <p class="text-sm text-slate-600 mb-3">Day shifts fit the body clock better. Strength naturally peaks late afternoon/early evening.</p>
-                ${trainTip('Before or after your shift', 'If your job is physically tiring, train before work so fatigue doesn\'t rob the session. If it\'s a desk job, late afternoon/evening after work is your natural strength peak.', 'primary')}
-                ${trainTip('Consistency beats perfection', 'Training at the same time daily trains your muscle clocks to perform then — even a "non-optimal" time becomes optimal with consistency.', 'ok')}`;
+                <p class="text-sm text-slate-600 mb-3">This is tied to your ${minToHM(start)}–${minToHM(end)} early shift.</p>
+                ${trainTip(`${minToHM(end + 60)}–${minToHM(end + 180)} after work`, 'After food and a short decompression period is often the most realistic quality-training window. Keep the session concise if the early start reduced your sleep.', 'primary')}
+                ${trainTip('Before work — light only', 'Mobility or an easy walk is fine. Avoid sacrificing sleep for a hard pre-dawn session.', 'ok')}`;
+        } else if (type === 'lates') {
+            inner = `
+                <p class="text-sm text-slate-600 mb-3">This is tied to your ${minToHM(start)}–${minToHM(end)} late shift.</p>
+                ${trainTip(`${minToHM(start - 240)}–${minToHM(start - 120)} before work`, 'Train after waking and before the main pre-shift meal. This protects the session from work fatigue and avoids hard exercise close to bedtime.', 'primary')}
+                ${trainTip(`After ${minToHM(end)} — wind down`, 'Choose only gentle walking or mobility after work so sleep is not pushed even later.', 'avoid')}`;
+        } else if (type === 'days') {
+            inner = `
+                <p class="text-sm text-slate-600 mb-3">This is tied to your ${minToHM(start)}–${minToHM(end)} day shift.</p>
+                ${trainTip(`${minToHM(end + 60)}–${minToHM(end + 180)} after work`, 'For a desk-based shift, this is a practical strength window. If work is physically demanding, use a shorter session or train before work instead.', 'primary')}
+                ${trainTip('Use the option you can repeat', 'A consistent slot that preserves sleep and recovery is more useful than chasing a theoretically perfect time.', 'ok')}`;
         } else {
             inner = `
-                <p class="text-sm text-slate-600 mb-3">Rest days are ideal for your hardest training — you're not also carrying shift fatigue.</p>
-                ${trainTip('Late afternoon / early evening (~4–7pm)', 'Maximal strength peaks in the evening and is lowest early morning. If you want a heavy session, this is the window.', 'primary')}
-                ${trainTip(fatLoss ? 'Add easy cardio / steps' : 'Prioritise progressive overload', fatLoss ? 'On rest days, low-intensity cardio or a long walk adds fat-loss without denting recovery.' : 'Push your key lifts a little heavier or add a rep — rest days are when you can genuinely progress.', 'ok')}`;
+                <p class="text-sm text-slate-600 mb-3">The selected date is marked as a rest day in your planner, so no work-shift fatigue is assumed.</p>
+                ${trainTip('Late afternoon / early evening', 'Use the rest day for a key strength session if recovery is good, while still protecting the following sleep period.', 'primary')}
+                ${trainTip(fatLoss ? 'Add easy cardio or steps' : 'Prioritise progressive overload', fatLoss ? 'Low-intensity cardio or a longer walk can add activity without heavily taxing recovery.' : 'Use the fresher day to progress a key lift by load, repetitions or technique quality.', 'ok')}`;
         }
 
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
-                <h3 class="text-lg font-black mb-1">Training Today — ${fatLoss ? 'Fat Loss' : 'Muscle Gain'}</h3>
-                <p class="text-xs text-slate-400 mb-4">Timed to your circadian phase, not the clock on the wall.</p>
+                <h3 class="text-lg font-black mb-1">Training Advice — ${fatLoss ? 'Fat Loss' : 'Muscle Gain'}</h3>
+                <p class="text-xs text-slate-400 mb-4">Linked to the selected day and its saved shift times.</p>
                 ${inner}
             </div>`;
     }
@@ -5649,22 +6135,24 @@
             </div>`;
     }
 
-    function fastingGuidanceHTML(onShift) {
+
+    function fastingGuidanceHTML(onShift, dayLabel) {
+        const label = dayLabel || 'Selected day';
         return `
             <div class="glass-card p-6 rounded-[2.5rem] border-2 border-dashed border-indigo-200">
                 <div class="flex items-center gap-2 mb-1">
                     <i data-lucide="timer" class="w-5 h-5 text-indigo-600"></i>
                     <h3 class="text-lg font-black">Optional: Intermittent Fasting</h3>
                 </div>
-                <p class="text-xs text-slate-400 mb-4">You've turned this on for fat loss. In a 2025 trial with night-shift workers, a 5:2-style approach produced similar weight loss to normal calorie restriction — so it's an option, not a must.</p>
+                <p class="text-xs text-slate-400 mb-4">You enabled this option for fat loss. The planner now checks the selected date before suggesting it; fasting is optional and overall intake still matters.</p>
                 <div class="p-3 bg-rose-50 border border-rose-200 rounded-2xl mb-3">
-                    <p class="text-sm font-bold text-rose-700">⚠️ Never fast during a night shift</p>
-                    <p class="text-xs text-rose-600 mt-1">Fasting while awake and working overnight worsens fatigue and concentration — a safety risk. Put fasting days on rest days or day-off periods only.</p>
+                    <p class="text-sm font-bold text-rose-700">⚠️ Do not fast through a work shift</p>
+                    <p class="text-xs text-rose-600 mt-1">Working while under-fuelled can worsen fatigue and concentration. Keep any optional fasting day on a suitable rest day, and stop if you feel unwell.</p>
                 </div>
                 ${onShift
-                    ? mealRow('Today', 'Not a fasting day', 'You\'re on shift — eat normally per the plan above. Save any fasting for a rest day.', 'light')
-                    : mealRow('Today (rest day)', 'Optional fasting day', 'If you choose to fast today: keep it to the lighter "5:2" style (~500–600 kcal), stay hydrated, and stop if you feel unwell. Protein + veg + plenty of water.', 'main')}
-                <p class="text-[11px] text-slate-400 mt-2">Fasting isn't safe for everyone. If you have any doubt, don't fast — and check with your GP.</p>
+                    ? mealRow(label, 'Not a fasting day', 'The Shift Planner marks this as a work shift, so follow the meal plan above and save optional fasting for a rest day.', 'light')
+                    : mealRow(label, 'Optional rest-day fasting', 'The planner marks this as off. If fasting is appropriate for you, keep it moderate, hydrate, prioritise protein and vegetables, and remain within your personal plan.', 'main')}
+                <p class="text-[11px] text-slate-400 mt-2">Fasting is not safe for everyone. If you have any doubt, do not fast and speak with your GP or dietitian.</p>
             </div>`;
     }
 
@@ -6074,12 +6562,14 @@
         shiftProfile: {
             enabled: false,
             acknowledgedDisclaimer: false,
-            shiftType: 'nights',      // 'days' | 'nights' | 'rotating' | 'earlies'
-            shiftStart: '19:00',      // clock time the shift starts
-            shiftEnd: '07:00',        // clock time the shift ends
-            workDays: [1, 2, 3, 4, 5],// 0=Sun..6=Sat that they're on shift
+            shiftType: 'nights',      // 'days' | 'nights' | 'rotating' | 'earlies' | 'lates'
+            shiftStart: '19:00',      // default clock time the shift starts
+            shiftEnd: '07:00',        // default clock time the shift ends
+            workDays: [1, 2, 3, 4, 5],// repeating fallback, 0=Sun..6=Sat
             goal: 'fat_loss',         // 'fat_loss' | 'muscle_gain'
-            useFasting: false         // optional 5:2-style fasting (rest days only)
+            useFasting: false,        // optional 5:2-style fasting (rest days only)
+            plannedShifts: {},        // dateKey -> { type, start, end, updatedAt }
+            updatedAt: null           // ISO timestamp for account sync
         },
         // Progress-update reminders. Three independent trackers (weight, body
         // measurements, progress photos), each with its own schedule + delivery.
@@ -11656,6 +12146,9 @@
                 saveState();
                 renderDiary();
                 renderDashboard();
+                shiftAdviceDateKey = localDateKey();
+                shiftPlannerWeekOffset = 0;
+                renderShiftWorker();
             }
         }, 60000);
     }
