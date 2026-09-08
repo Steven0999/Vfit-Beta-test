@@ -10454,7 +10454,9 @@
     }
 
     function hasValidGtinCheckDigit(code) {
-        if (!/^\d+$/.test(code) || ![8, 12, 13, 14].includes(code.length)) return true;
+        // Eight digits can be EAN-8 or UPC-E, whose check digit is derived differently.
+        // Both scanner engines already validate those formats internally.
+        if (!/^\d+$/.test(code) || ![12, 13, 14].includes(code.length)) return true;
         const digits = code.split('').map(Number);
         const supplied = digits.pop();
         let total = 0;
