@@ -6388,7 +6388,6 @@
         return new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate();
     }
 
-    /** Mark a reminder as completed today (called when the user logs that item). */
     function markReminderDone(key) {
         const cfg = updReminders()[key];
         if (!cfg) return;
@@ -6397,9 +6396,6 @@
         refreshDueAlertBadgeSoon();
     }
 
-    // ---- The sign-in ALERT flow (delivery === 'alert') ----
-    // Builds a queue of due 'alert' reminders and walks the user through ticking
-    // each. They tick the box and press Next; on the last one it's Finish.
     let alertQueue = [];
     let alertIndex = 0;
 
@@ -6434,7 +6430,6 @@
         bodyEl.textContent = 'Take a moment to log your ' + meta.label.toLowerCase() + '. Tick below once done, or come back to it later.';
         checkLabel.textContent = "I've logged my " + meta.label.toLowerCase() + " (or I'll do it now)";
         check.checked = false;
-        // Last in queue → "Finish", otherwise "Next"
         nextBtn.textContent = (alertIndex >= alertQueue.length - 1) ? 'Finish' : 'Next';
 
         document.getElementById('update-alerts-modal').style.display = 'flex';
@@ -6445,8 +6440,6 @@
         const key = alertQueue[alertIndex];
         const check = document.getElementById('update-alert-check');
         if (check && check.checked) {
-            // They confirmed — mark done so it stops reminding this period, and
-            // jump them to the right logging screen.
             markReminderDone(key);
             openLoggerFor(key);
         }
@@ -6459,13 +6452,10 @@
     }
 
     function snoozeUpdateAlerts() {
-        // Dismiss for now; they'll be reminded again next sign-in / next day
         document.getElementById('update-alerts-modal').style.display = 'none';
     }
 
-    /** Send the user to the relevant logging screen for a reminder type. */
     function openLoggerFor(key) {
-        // Close any alert modal first
         const am = document.getElementById('update-alerts-modal');
         if (am) am.style.display = 'none';
         setTimeout(() => {
@@ -6479,17 +6469,8 @@
     }
 
     function refreshDueAlertBadgeSoon() {
-        // (Hook for a future badge; safe no-op if not present.)
     }
 
-
-    // Evidence-based guidance (NOT medical advice) that adapts meal timing and
-    // training to a person's shift. Keyed to circadian science: the SCN (the
-    // brain's master clock in the hypothalamus) is set mainly by light, while
-    // "peripheral clocks" in the gut/muscle respond to zeitgebers ("time-givers")
-    // like food timing, activity and light. Shift work desynchronises these, so
-    // the aim is to reduce eating in the biological night and place training when
-    // the body is most primed.
 
     function shiftP() {
         if (!state.shiftProfile) state.shiftProfile = JSON.parse(JSON.stringify(DEFAULT_STATE.shiftProfile));
@@ -6501,15 +6482,14 @@
         if (!box) return;
         const sp = shiftP();
 
-        // GATE 1: must acknowledge the medical disclaimer before anything else
         if (!sp.acknowledgedDisclaimer) {
             box.innerHTML = shiftDisclaimerHTML();
             refreshIcons();
             return;
         }
 
-        // GATE 2: not enabled yet → show intro + setup button
-        if (!sp.enabled) {
+        const hasSavedRota = isPlainRecord(sp.rota) && Object.keys(sp.rota).length > 0;
+        if (!sp.enabled && !hasSavedRota) {
             box.innerHTML = `
                 <div class="glass-card p-6 rounded-[2.5rem] text-center">
                     <div class="w-16 h-16 mx-auto mb-4 bg-indigo-50 rounded-2xl flex items-center justify-center">
@@ -6524,7 +6504,6 @@
             return;
         }
 
-        // ENABLED: show today's plan
         box.innerHTML = shiftPlanHTML();
         refreshIcons();
     }
@@ -6564,7 +6543,6 @@
         renderShiftWorker();
     }
 
-    // ---- SETUP ----
     function openShiftSetup() {
         const sp = shiftP();
         const modal = document.getElementById('shift-setup-modal');
@@ -6611,7 +6589,6 @@
         showToast('Shift plan ready 🌙');
     }
 
-    // ---- Helpers for time maths ----
     function hmToMin(hm) {
         const [h, m] = (hm || '0:0').split(':').map(Number);
         return (h * 60 + (m || 0));
@@ -6623,38 +6600,47 @@
         let h12 = h % 12; if (h12 === 0) h12 = 12;
         return `${h12}:${String(m).padStart(2, '0')}${ap}`;
     }
-    function isOnShiftToday() {
-        const sp = shiftP();
-        const today = new Date().getDay();
-        return (sp.workDays || []).indexOf(today) >= 0;
-    }
-
     function shiftPlanHTML() {
         const sp = shiftP();
-        const onShift = isOnShiftToday();
-        const isNight = sp.shiftType === 'nights' || sp.shiftType === 'rotating';
+        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : localDateKey();
+        const shift = getShiftForDate(dateKey);
+        const type = ['night', 'early', 'day'].includes(shift.type) ? shift.type : 'off';
+        const onShift = type !== 'off';
+        const isNight = type === 'night';
+        const isEarly = type === 'early';
+        const labels = { off: 'Rest / Off Day', day: 'Day Shift', early: 'Early Shift', night: 'Night Shift' };
+        const icons = { off: '☀️', day: '🏢', early: '🌅', night: '🌙' };
+        const date = new Date(dateKey + 'T12:00:00');
+        const dateLabel = date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+        const sourceLabel = shift.source === 'rota' ? 'Saved rota' : shift.source === 'pattern' ? 'Normal weekly pattern' : 'No shift scheduled';
+        const timeLabel = onShift && shift.start ? `${minToHM(hmToMin(shift.start))} – ${minToHM(hmToMin(shift.end || shift.start))}` : '';
         let html = '';
 
         html += `
-            <div class="glass-card p-6 rounded-[2.5rem]">
-                <div class="flex justify-between items-start mb-2">
+            <div class="glass-card p-5 rounded-[2.5rem]" data-shift-nutrition-type="${type}" data-shift-nutrition-date="${dateKey}">
+                <div class="flex items-center gap-2 mb-4">
+                    <button onclick="changeNutritionDate(-1)" class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center" aria-label="Previous nutrition day"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                    <label class="flex-1 text-center"><span class="block text-[10px] font-black uppercase text-slate-400">Nutrition plan date</span><input type="date" id="shift-nutrition-date-picker" value="${dateKey}" onchange="selectNutritionDate(this.value)" class="w-full bg-transparent text-sm font-black text-center outline-none"></label>
+                    <button onclick="changeNutritionDate(1)" class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center" aria-label="Next nutrition day"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+                </div>
+                <div class="flex justify-between items-start gap-3 mb-2">
                     <div>
-                        <p class="text-[10px] font-black uppercase text-slate-400">Today</p>
-                        <h3 class="text-xl font-black">${onShift ? '🌙 On Shift' : '☀️ Off Shift / Rest Day'}</h3>
+                        <p class="text-[10px] font-black uppercase text-orange-500">${sourceLabel} · ${dateLabel}</p>
+                        <h3 class="text-xl font-black">${icons[type]} ${labels[type]}</h3>
                     </div>
-                    <button onclick="openShiftSetup()" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl">Edit</button>
+                    <div class="flex flex-col gap-2 flex-shrink-0"><button onclick="openShiftRotaFromNutrition()" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl">Open Rota</button><button onclick="openShiftSetup()" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl">Pattern</button></div>
                 </div>
                 <p class="text-sm text-slate-500">${onShift
-                    ? `Your shift runs ${minToHM(hmToMin(sp.shiftStart))} – ${minToHM(hmToMin(sp.shiftEnd))}. Plan below is tuned for a working ${isNight ? 'night' : 'day'}.`
-                    : 'A rest/off day — the plan shifts toward normal daytime eating to help your body clock re-anchor.'}
+                    ? `Your ${labels[type].toLowerCase()} runs ${timeLabel}. The meals, training and recovery below use this date's saved shift.`
+                    : 'This date is a rest/off day, so the plan switches to daytime eating and recovery. Changes made in your rota update this automatically.'}
                 </p>
             </div>`;
 
         html += onShift
-            ? (isNight ? nightShiftMealHTML() : dayShiftMealHTML())
+            ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
             : offDayMealHTML();
 
-        html += shiftTrainingHTML(onShift, isNight);
+        html += shiftTrainingHTML(onShift, isNight, isEarly);
 
         if (sp.goal === 'fat_loss' && sp.useFasting) html += fastingGuidanceHTML(onShift);
 
@@ -6667,6 +6653,10 @@
             </div>`;
 
         return html;
+    }
+
+    function openShiftRotaFromNutrition() {
+        if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
     }
 
     function mealRow(time, title, desc, tone) {
@@ -6686,10 +6676,10 @@
             </div>`;
     }
 
-    function nightShiftMealHTML() {
+    function nightShiftMealHTML(shift) {
         const sp = shiftP();
-        const start = hmToMin(sp.shiftStart);
-        const end = hmToMin(sp.shiftEnd);
+        const start = hmToMin((shift && shift.start) || sp.shiftStart);
+        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
                 <h3 class="text-lg font-black mb-1">Meal Timing — Working Night</h3>
@@ -6702,10 +6692,10 @@
             </div>`;
     }
 
-    function dayShiftMealHTML() {
+    function dayShiftMealHTML(shift) {
         const sp = shiftP();
-        const start = hmToMin(sp.shiftStart);
-        const end = hmToMin(sp.shiftEnd);
+        const start = hmToMin((shift && shift.start) || sp.shiftStart);
+        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
                 <h3 class="text-lg font-black mb-1">Meal Timing — Working Day</h3>
@@ -6714,6 +6704,21 @@
                 ${mealRow('Midday', 'Lunch — main meal', 'Make lunch your largest meal where you can. Protein, complex carbs, veg.', 'main')}
                 ${mealRow(minToHM(end), 'Dinner — lighter & earlier', 'Aim to finish your main evening eating before ~9pm. Late, large dinners are linked to worse metabolic outcomes.', 'light')}
                 ${mealRow('After 9pm', 'Wind down', 'Avoid late heavy meals and sugary snacks. A small protein snack is fine if genuinely hungry.', 'avoid')}
+            </div>`;
+    }
+
+    function earlyShiftMealHTML(shift) {
+        const sp = shiftP();
+        const start = hmToMin((shift && shift.start) || sp.shiftStart);
+        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
+        return `
+            <div class="glass-card p-6 rounded-[2.5rem]">
+                <h3 class="text-lg font-black mb-1">Meal Timing — Working Early</h3>
+                <p class="text-xs text-slate-400 mb-4">Protect sleep by preparing breakfast and shift food in advance, then place your main meal after work rather than skipping through the morning.</p>
+                ${mealRow(minToHM(start - 45), 'Pre-shift breakfast', 'Keep it quick but balanced: protein plus slow-release carbs. Prepare it the night before so the early start does not become a missed meal.', 'main')}
+                ${mealRow(minToHM(start + 180), 'Mid-shift meal or snack', 'Use a packed protein-forward option with fruit or wholegrain carbs to keep energy steadier through the early shift.', 'light')}
+                ${mealRow(minToHM(end + 30), 'Post-shift main meal', 'Have your largest balanced meal soon after work, while there is still plenty of daytime left for digestion and recovery.', 'main')}
+                ${mealRow('~6–7pm', 'Lighter evening meal', 'Keep dinner lighter and finish early enough to protect the earlier bedtime your next shift needs.', 'light')}
             </div>`;
     }
 
@@ -6729,7 +6734,7 @@
             </div>`;
     }
 
-    function shiftTrainingHTML(onShift, isNight) {
+    function shiftTrainingHTML(onShift, isNight, isEarly) {
         const sp = shiftP();
         const fatLoss = sp.goal === 'fat_loss';
         let inner = '';
@@ -6740,7 +6745,12 @@
                 ${trainTip('Before your shift (2–4h after waking)', 'Your best window on a night-shift day. Core body temperature and neuromuscular readiness are higher a few hours after you wake — that\'s when to do your hardest lifting or intervals, not right after rolling out of bed.', 'primary')}
                 ${trainTip('On a mid-shift break', 'A short, lower-sweat strength session (compound lifts, moderate load) works well mid-shift and can boost alertness without frying you.', 'ok')}
                 ${trainTip('After a night shift — keep it gentle', 'Post-shift your body temp is at its lowest and cortisol can spike from hard training. Save heavy sessions for another time; a short walk to wind down is ideal before sleep.', 'avoid')}`;
-        } else if (onShift && !isNight) {
+        } else if (onShift && isEarly) {
+            inner = `
+                <p class="text-sm text-slate-600 mb-3">Early shifts make sleep the priority. Do not trade sleep for a hard pre-shift workout.</p>
+                ${trainTip('After work, if energy is steady', 'Train after your shift and after a planned meal or snack. Keep the session concise so you can still wind down for an early bedtime.', 'primary')}
+                ${trainTip('Before work: mobility only', 'If moving first helps you wake up, use a short walk or mobility routine. Save heavy lifting and hard intervals for after work or an off day.', 'ok')}`;
+        } else if (onShift) {
             inner = `
                 <p class="text-sm text-slate-600 mb-3">Day shifts fit the body clock better. Strength naturally peaks late afternoon/early evening.</p>
                 ${trainTip('Before or after your shift', 'If your job is physically tiring, train before work so fatigue doesn\'t rob the session. If it\'s a desk job, late afternoon/evening after work is your natural strength peak.', 'primary')}
@@ -6754,7 +6764,7 @@
 
         return `
             <div class="glass-card p-6 rounded-[2.5rem]">
-                <h3 class="text-lg font-black mb-1">Training Today — ${fatLoss ? 'Fat Loss' : 'Muscle Gain'}</h3>
+                <h3 class="text-lg font-black mb-1">Training Plan — ${fatLoss ? 'Fat Loss' : 'Muscle Gain'}</h3>
                 <p class="text-xs text-slate-400 mb-4">Timed to your circadian phase, not the clock on the wall.</p>
                 ${inner}
             </div>`;
@@ -10962,12 +10972,15 @@
     function selectNutritionDate(dateStr) {
         state.viewDate = dateStr;
         saveState();
-        const picker = document.getElementById('nutrition-date-picker');
-        if (picker) picker.value = dateStr;
+        ['nutrition-date-picker', 'shift-nutrition-date-picker'].forEach(id => {
+            const picker = document.getElementById(id);
+            if (picker) picker.value = dateStr;
+        });
         const today = new Date().toISOString().split('T')[0];
         const warning = document.getElementById('nutrition-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
         renderDiary();
+        renderShiftWorker();
         renderDashboard();
     }
 
@@ -17318,6 +17331,7 @@
         saveState();
         closeRotaModal();
         renderCoachingHub();
+        renderShiftWorker();
         if (state.notificationSettings.enabled) syncPushSchedule();
         showToast('Rota day saved');
     }
@@ -17326,6 +17340,7 @@
         if (state.shiftProfile && isPlainRecord(state.shiftProfile.rota)) delete state.shiftProfile.rota[date];
         saveState();
         renderCoachingHub();
+        renderShiftWorker();
     }
 
     function renderRotaSummary() {
