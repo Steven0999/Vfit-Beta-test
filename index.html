@@ -590,6 +590,7 @@
             box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.10);
             pointer-events: none;
         }
+        #coaching [data-coaching-page].hidden { display: none !important; }
     </style>
 </head>
 <body>
@@ -845,16 +846,29 @@
             <!-- COACHING HUB — mounted inside Settings at runtime -->
             <!-- ============================== -->
             <section id="coaching" class="hidden space-y-6" aria-label="Coaching Hub">
-                <div class="bg-slate-900 rounded-[2.5rem] p-6 text-white relative overflow-hidden shadow-xl">
-                    <div class="relative z-10">
-                        <p class="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 mb-2">VFIT Coaching Hub</p>
-                        <h2 class="text-2xl font-black mb-2">Your plan, readiness and progress</h2>
-                        <p class="text-sm opacity-80">Built around your shifts, completed sessions and weekly check-ins.</p>
+                <div id="coaching-menu" class="space-y-4">
+                    <div class="bg-slate-900 rounded-[2.5rem] p-6 text-white shadow-xl">
+                        <p class="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 mb-2">VFIT Daily Coaching Hub</p>
+                        <h2 id="coaching-menu-title" tabindex="-1" class="text-2xl font-black mb-2">Choose a coaching section</h2>
+                        <p class="text-sm text-slate-300">Open only the guidance you need today.</p>
+                    </div>
+                    <div class="glass-card p-4 rounded-[2rem] space-y-3" aria-label="Daily coaching sections">
+                        <button type="button" onclick="openCoachingPage('daily')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-orange-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="sunrise" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Today’s Coaching</span><span class="block text-xs text-slate-500 mt-1">Daily conversation, readiness and AI advice</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('training')" class="w-full min-h-[78px] bg-indigo-50 border-2 border-indigo-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="dumbbell" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Training &amp; Goals</span><span class="block text-xs text-slate-500 mt-1">Weekly sets, progression and deload guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('shifts')" class="w-full min-h-[78px] bg-blue-50 border-2 border-blue-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="calendar-clock" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Shift Plan &amp; Advice</span><span class="block text-xs text-slate-500 mt-1">Rota linked to today’s coaching guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('coach')" class="w-full min-h-[78px] bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-emerald-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="messages-square" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Coach &amp; Check-ins</span><span class="block text-xs text-slate-500 mt-1">Coach messages and weekly check-in</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('reports')" class="w-full min-h-[78px] bg-purple-50 border-2 border-purple-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-purple-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="file-chart-column" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Progress Reports</span><span class="block text-xs text-slate-500 mt-1">Weekly training, nutrition and adherence report</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('membership')" class="w-full min-h-[78px] bg-slate-50 border-2 border-slate-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-700 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="badge-pound-sterling" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Membership</span><span class="block text-xs text-slate-500 mt-1">View your plan and available options</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                     </div>
                 </div>
 
+                <div id="coaching-subpage-header" class="hidden glass-card p-4 rounded-2xl flex items-start gap-3">
+                    <button type="button" onclick="closeCoachingPage()" class="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0" aria-label="Back to Daily Coaching Hub"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                    <div class="min-w-0 pt-0.5"><h2 id="coaching-subpage-title" tabindex="-1" class="text-xl font-black">Coaching</h2><p id="coaching-subpage-description" class="text-xs text-slate-500 mt-1"></p></div>
+                </div>
+
                 <!-- Conversational daily check-in -->
-                <div id="ai-coach-checkin-card" class="glass-card rounded-[2.5rem] p-6 border-2 border-orange-500">
+                <div id="ai-coach-checkin-card" data-coaching-page="daily" class="hidden glass-card rounded-[2.5rem] p-6 border-2 border-orange-500">
                     <div class="flex items-start gap-4 mb-4">
                         <div class="w-14 h-14 rounded-2xl bg-slate-900 border border-orange-500 flex items-center justify-center flex-shrink-0">
                             <i data-lucide="message-circle-heart" class="w-7 h-7 text-orange-400"></i>
@@ -873,7 +887,7 @@
                 </div>
 
                 <!-- AI coaching insights, kept beside every other coaching tool -->
-                <div id="ai-coach-bubble" class="glass-card rounded-[2.5rem] p-6 relative border-2 border-orange-500">
+                <div id="ai-coach-bubble" data-coaching-page="daily" class="hidden glass-card rounded-[2.5rem] p-6 relative border-2 border-orange-500">
                     <div class="flex items-start gap-4">
                         <div class="flex-shrink-0">
                             <div class="w-14 h-14 rounded-full bg-slate-900 border border-orange-500 flex items-center justify-center shadow-lg">
@@ -907,7 +921,7 @@
                     </div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-training-goals-card" data-coaching-page="training" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 class="text-lg font-black">Goal & Weekly Sets</h3>
@@ -919,7 +933,7 @@
                 </div>
 
                 <!-- Human coach connection and messages -->
-                <div class="glass-card p-6 rounded-[2.5rem]">
+                <div id="coaching-human-coach-card" data-coaching-page="coach" class="hidden glass-card p-6 rounded-[2.5rem]">
                     <div class="flex items-center gap-2 mb-4">
                         <i data-lucide="dumbbell" class="w-5 h-5 text-indigo-600"></i>
                         <div>
@@ -932,7 +946,7 @@
                     </div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-readiness-card" data-coaching-page="daily" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 class="text-lg font-black">Today’s Readiness</h3>
@@ -943,7 +957,7 @@
                     <div id="readiness-summary"></div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-weekly-checkin-card" data-coaching-page="coach" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 class="text-lg font-black">Weekly Check-in</h3>
@@ -954,7 +968,7 @@
                     <div id="checkin-summary"></div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-progression-card" data-coaching-page="training" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-black">Smart Progression</h3>
@@ -965,7 +979,12 @@
                     <div id="progression-recommendations" class="space-y-2"></div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-shift-link" data-coaching-page="shifts" class="hidden bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                    <p class="font-black text-sm text-orange-900">Your rota powers today’s advice</p>
+                    <p class="text-xs text-orange-800 mt-1">The Daily AI Coach reads the shift saved for today and adjusts training, recovery and timing guidance around it.</p>
+                </div>
+
+                <div id="coaching-shift-rota-card" data-coaching-page="shifts" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 class="text-lg font-black">Shift Rota</h3>
@@ -976,7 +995,7 @@
                     <div id="rota-summary" class="space-y-2"></div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-report-card" data-coaching-page="reports" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 class="text-lg font-black">Weekly Progress Report</h3>
@@ -987,7 +1006,7 @@
                     <div id="weekly-report-summary"></div>
                 </div>
 
-                <div class="glass-card rounded-[2.5rem] p-6">
+                <div id="coaching-membership-card" data-coaching-page="membership" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-black">Membership</h3>
@@ -7807,6 +7826,7 @@
             if (nextPage === 'coaching') {
                 mountCoachingHubInSettings();
                 if (config.render !== false) renderCoachingHub();
+                openCoachingPage('home', { scroll: false, focus: false, render: false });
             } else if (config.render !== false) {
                 renderSettings();
             }
@@ -7832,6 +7852,57 @@
 
     function openPreferencesAndGoals(pageId) {
         return switchTab('settings', { settingsPage: pageId || 'home' });
+    }
+
+    const COACHING_PAGE_DETAILS = Object.freeze({
+        daily: ['Today’s Coaching', 'Daily conversation, readiness and advice based on today’s shift.'],
+        training: ['Training & Goals', 'Weekly set targets, progression, plateaus and deload guidance.'],
+        shifts: ['Shift Plan & Advice', 'Set the rota that powers today’s shift-aware coaching guidance.'],
+        coach: ['Coach & Check-ins', 'Coach messages, shared plans and your weekly check-in.'],
+        reports: ['Progress Reports', 'Review or download your weekly training and nutrition report.'],
+        membership: ['Membership', 'View your current plan and available membership options.']
+    });
+    let activeCoachingPage = 'home';
+
+    function openCoachingPage(pageId, options) {
+        const config = options || {};
+        const requested = String(pageId || 'home');
+        const nextPage = requested === 'home' || COACHING_PAGE_DETAILS[requested] ? requested : 'home';
+        const isHome = nextPage === 'home';
+        const menu = document.getElementById('coaching-menu');
+        const header = document.getElementById('coaching-subpage-header');
+        const title = document.getElementById('coaching-subpage-title');
+        const description = document.getElementById('coaching-subpage-description');
+        if (!menu || !header) return false;
+
+        if (!isHome && config.render !== false) renderCoachingHub();
+        menu.classList.toggle('hidden', !isHome);
+        header.classList.toggle('hidden', isHome);
+        document.querySelectorAll('#coaching [data-coaching-page]').forEach(panel => {
+            const visible = !isHome && panel.dataset.coachingPage === nextPage;
+            panel.classList.toggle('hidden', !visible);
+            panel.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        });
+        if (!isHome) {
+            const details = COACHING_PAGE_DETAILS[nextPage];
+            if (title) title.textContent = details[0];
+            if (description) description.textContent = details[1];
+        }
+        activeCoachingPage = nextPage;
+        if (config.scroll !== false) window.scrollTo({ top: 0, behavior: 'auto' });
+        if (config.focus !== false) {
+            const target = isHome ? document.getElementById('coaching-menu-title') : title;
+            if (target && target.focus) {
+                try { target.focus({ preventScroll: true }); } catch (error) { target.focus(); }
+            }
+        }
+        scheduleAccessibleDomRefresh();
+        refreshIcons();
+        return true;
+    }
+
+    function closeCoachingPage() {
+        return openCoachingPage('home');
     }
 
     function mountCoachingHubInSettings() {
