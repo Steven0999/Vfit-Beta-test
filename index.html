@@ -11,7 +11,7 @@
 
     <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" type="text/javascript"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" onerror="this.onerror=null;this.src='https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';" type="text/javascript"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.11.0/dist/quagga.min.js" type="text/javascript"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -511,8 +511,9 @@
             border: 1.5px solid #f97316 !important;
         }
 
-        /* Dedicated 1-D food-barcode camera surface. Decode the full video frame;
-           the orange guide is visual only and never crops pixels from the decoder. */
+        /* Dedicated 1-D food-barcode camera surface. Keep Quagga's processing
+           canvas measurable (opacity 0 rather than display:none) so Android frames
+           retain their real dimensions while the full video stays visible. */
         #barcode-reader {
             position: relative;
             isolation: isolate;
@@ -524,7 +525,13 @@
             background: #000;
         }
         #barcode-reader canvas.drawingBuffer {
-            display: none !important;
+            display: block !important;
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            opacity: 0;
+            pointer-events: none;
         }
         #barcode-reader::after {
             content: "";
@@ -2308,17 +2315,26 @@
             <p id="barcode-scan-status" class="text-sm font-black text-indigo-600 mb-1 text-center" role="status" aria-live="polite">
                 Starting back camera…
             </p>
-            <p class="text-xs font-semibold text-slate-500 mb-4 text-center">
-                Put every barcode bar inside the orange box and hold steady. Keep the printed number visible in the camera window.
+            <div id="barcode-detected-wrap" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mb-2 text-center">
+                <p class="text-[10px] font-black uppercase text-emerald-600">Barcode read</p>
+                <p id="barcode-detected-number" class="font-mono text-lg font-black tracking-wider text-emerald-800 break-all"></p>
+            </div>
+            <p class="text-xs font-semibold text-slate-500 mb-3 text-center">
+                Hold the phone sideways if needed. Fill the wide orange box with every bar, keep the printed number visible, and pause briefly for focus.
             </p>
-            <div class="flex justify-center gap-2 mb-4">
-                <button id="barcode-torch-button" type="button" onclick="toggleBarcodeTorch()" disabled class="bg-amber-100 text-amber-800 px-4 py-2 rounded-xl text-sm font-black opacity-50">
+            <div class="grid grid-cols-3 gap-2 mb-4">
+                <button id="barcode-torch-button" type="button" onclick="toggleBarcodeTorch()" disabled class="bg-amber-100 text-amber-800 px-2 py-2 rounded-xl text-xs font-black opacity-50">
                     🔦 Light
                 </button>
-                <button id="barcode-switch-button" type="button" onclick="switchBarcodeScannerEngine()" class="bg-slate-100 text-slate-700 px-4 py-2 rounded-xl text-sm font-black">
-                    Try alternate scanner
+                <button id="barcode-switch-button" type="button" onclick="switchBarcodeScannerEngine()" class="bg-slate-100 text-slate-700 px-2 py-2 rounded-xl text-xs font-black">
+                    Other decoder
                 </button>
+                <label class="bg-indigo-50 text-indigo-700 px-2 py-2 rounded-xl text-xs font-black text-center cursor-pointer">
+                    📷 Photo
+                    <input id="barcode-image-input" type="file" accept="image/*" capture="environment" onchange="scanBarcodeImage(this)" class="hidden">
+                </label>
             </div>
+
             <div class="flex gap-2">
                 <input id="manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Barcode number" placeholder="Or enter barcode manually..." oninput="this.value = normaliseBarcode(this.value)" onkeydown="if (event.key === 'Enter') lookupBarcode()" class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
                 <button id="barcode-search-button" onclick="lookupBarcode()" class="bg-slate-900 text-white px-6 rounded-xl font-bold hover:bg-slate-800">Search</button>
@@ -10844,16 +10860,22 @@
     let barcodeScanMode = 'food'; // 'food' → food popup; 'meal' → add as meal ingredient
     let barcodeScanLocked = false;
     let barcodeLookupInProgress = false;
-    let barcodeScannerEngine = null; // 'quagga' or 'html5'
+    let barcodeScannerEngine = null; // 'native', 'html5' or 'quagga'
     let barcodeScannerSession = 0;
     let barcodeScannerFallbackTimer = null;
-    let barcodeAutoFallbackUsed = false;
+    let barcodeTriedEngines = new Set();
     let barcodeTorchOn = false;
     let quaggaDetectedHandler = null;
     let barcodeCandidateCode = '';
     let barcodeCandidateHits = 0;
     let barcodeCandidateAt = 0;
     let activeBarcodeOnScan = null;
+    let nativeBarcodeStream = null;
+    let nativeBarcodeVideo = null;
+    let nativeBarcodeDetector = null;
+    let nativeBarcodeLoopTimer = null;
+    let nativeBarcodeFrameBusy = false;
+    let barcodeImageDecodeInProgress = false;
 
     const OPEN_FOOD_FACTS_PRODUCT_FIELDS = [
         'code',
@@ -10888,10 +10910,27 @@
      */
     function openFoodFactsBarcodeKey(value) {
         const code = normaliseBarcode(value);
-        const significant = code.replace(/^0+/, '') || '0';
-        if (significant.length <= 7) return significant.padStart(8, '0');
-        if (significant.length >= 9 && significant.length <= 12) return significant.padStart(13, '0');
-        return code;
+        if (!code) return '';
+        // GTIN-8, UPC-A, EAN-13 and GTIN-14 share a canonical 14-digit form.
+        // Keeping it as a padded string preserves leading zeroes and lets cache
+        // entries match whichever equivalent form a scanner or API returns.
+        return code.length <= 14 ? code.padStart(14, '0') : code;
+    }
+
+    function barcodeFoodIdentityKeys(...values) {
+        const keys = new Set();
+        values.forEach(value => {
+            const code = normaliseBarcode(value);
+            if (!code) return;
+            const variants = typeof barcodeLookupCandidates === 'function'
+                ? barcodeLookupCandidates(code)
+                : [code];
+            variants.forEach(variant => {
+                const key = openFoodFactsBarcodeKey(variant);
+                if (key) keys.add(key);
+            });
+        });
+        return keys;
     }
 
     function setBarcodeScanStatus(message, tone) {
@@ -10905,6 +10944,14 @@
             tone === 'warning' ? 'text-amber-600' :
             'text-indigo-600'
         );
+    }
+
+    function setBarcodeDetectedCode(code) {
+        const clean = normaliseBarcode(code);
+        const wrap = document.getElementById('barcode-detected-wrap');
+        const value = document.getElementById('barcode-detected-number');
+        if (value) value.textContent = clean;
+        if (wrap) wrap.classList.toggle('hidden', !clean);
     }
 
     function setBarcodeLookupBusy(busy) {
@@ -10925,18 +10972,18 @@
             Html5QrcodeSupportedFormats.EAN_8,
             Html5QrcodeSupportedFormats.UPC_A,
             Html5QrcodeSupportedFormats.UPC_E,
-            Html5QrcodeSupportedFormats.ITF
-        ];
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.CODE_128
+        ].filter(format => format !== undefined && format !== null);
     }
 
     function createFoodBarcodeScanner() {
         const fullConfig = {
             verbose: false,
-            // This flag must be nested under experimentalFeatures. If the browser
-            // cannot use its native detector, html5-qrcode falls back to ZXing.
-            experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true
-            }
+            // The native BarcodeDetector runs as its own first engine below.
+            // Force this second engine to use html5-qrcode's bundled ZXing decoder,
+            // so a fallback genuinely changes decoding technology.
+            useBarCodeDetectorIfSupported: false
         };
         const formats = getFoodBarcodeFormats();
         if (formats && formats.length) fullConfig.formatsToSupport = formats;
@@ -10982,16 +11029,26 @@
         }
     }
 
+
     function updateBarcodeScannerButton() {
         const button = document.getElementById('barcode-switch-button');
         if (!button) return;
-        button.textContent = barcodeScannerEngine === 'quagga'
-            ? 'Try alternate scanner'
-            : 'Try enhanced scanner';
+        button.textContent = 'Other decoder';
+        const engineNames = {
+            native: 'Android native scanner',
+            html5: 'ZXing scanner',
+            quagga: 'Quagga scanner'
+        };
+        button.title = barcodeScannerEngine
+            ? `Currently using ${engineNames[barcodeScannerEngine] || barcodeScannerEngine}`
+            : 'Try another barcode decoder';
     }
 
     function getActiveBarcodeTrack() {
         try {
+            if (barcodeScannerEngine === 'native' && nativeBarcodeStream) {
+                return nativeBarcodeStream.getVideoTracks()[0] || null;
+            }
             if (
                 barcodeScannerEngine === 'quagga' &&
                 typeof Quagga !== 'undefined' &&
@@ -11020,6 +11077,9 @@
 
             if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
                 advanced.focusMode = 'continuous';
+            }
+            if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes('continuous')) {
+                advanced.exposureMode = 'continuous';
             }
 
             if (Object.keys(advanced).length) {
@@ -11058,9 +11118,151 @@
         }
     }
 
+    async function startNativeBarcodeScanner(onScan, session) {
+        if (
+            typeof BarcodeDetector === 'undefined' ||
+            typeof BarcodeDetector.getSupportedFormats !== 'function' ||
+            !navigator.mediaDevices ||
+            typeof navigator.mediaDevices.getUserMedia !== 'function'
+        ) {
+            throw new Error('native-scanner-unavailable');
+        }
+
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'code_128'];
+        const formats = wanted.filter(format => supported.includes(format));
+        if (!formats.length) throw new Error('native-food-formats-unavailable');
+
+        const target = document.getElementById('barcode-reader');
+        if (!target) throw new Error('scanner-target-missing');
+        target.innerHTML = '';
+        resetBarcodeCandidate();
+
+        let stream = null;
+        let video = null;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    frameRate: { ideal: 30, max: 30 }
+                }
+            });
+            if (session !== barcodeScannerSession) throw new Error('scanner-session-ended');
+
+            video = document.createElement('video');
+            video.autoplay = true;
+            video.muted = true;
+            video.playsInline = true;
+            video.setAttribute('autoplay', '');
+            video.setAttribute('muted', '');
+            video.setAttribute('playsinline', '');
+            video.setAttribute('aria-label', 'Live rear camera barcode scanner');
+            video.srcObject = stream;
+            target.appendChild(video);
+
+            if (video.readyState < 1) {
+                await new Promise((resolve, reject) => {
+                    const timer = setTimeout(resolve, 1800);
+                    video.onloadedmetadata = () => {
+                        clearTimeout(timer);
+                        resolve();
+                    };
+                    video.onerror = event => {
+                        clearTimeout(timer);
+                        reject(event);
+                    };
+                });
+            }
+            await video.play();
+            if (session !== barcodeScannerSession) throw new Error('scanner-session-ended');
+
+            nativeBarcodeStream = stream;
+            nativeBarcodeVideo = video;
+            nativeBarcodeDetector = new BarcodeDetector({ formats });
+            nativeBarcodeFrameBusy = false;
+            barcodeScannerEngine = 'native';
+            updateBarcodeScannerButton();
+            await optimiseBarcodeCamera();
+
+            const scanFrame = async () => {
+                if (
+                    session !== barcodeScannerSession ||
+                    barcodeScannerEngine !== 'native' ||
+                    !nativeBarcodeDetector ||
+                    !nativeBarcodeVideo ||
+                    barcodeScanLocked ||
+                    barcodeLookupInProgress
+                ) return;
+
+                if (!nativeBarcodeFrameBusy && nativeBarcodeVideo.readyState >= 2) {
+                    nativeBarcodeFrameBusy = true;
+                    try {
+                        const matches = await nativeBarcodeDetector.detect(nativeBarcodeVideo);
+                        for (const match of matches || []) {
+                            if (match && match.rawValue) {
+                                handleDecodedBarcode(match.rawValue, onScan, false);
+                                if (barcodeScanLocked) break;
+                            }
+                        }
+                    } catch (error) {
+                        // A frame can fail while the camera is focusing. Keep scanning.
+                    } finally {
+                        nativeBarcodeFrameBusy = false;
+                    }
+                }
+
+                if (
+                    session === barcodeScannerSession &&
+                    barcodeScannerEngine === 'native' &&
+                    !barcodeScanLocked &&
+                    !barcodeLookupInProgress
+                ) {
+                    nativeBarcodeLoopTimer = setTimeout(scanFrame, 100);
+                }
+            };
+            nativeBarcodeLoopTimer = setTimeout(scanFrame, 80);
+        } catch (error) {
+            if (stream) stream.getTracks().forEach(track => track.stop());
+            if (video) {
+                try { video.pause(); } catch (pauseError) {}
+                video.srcObject = null;
+                video.remove();
+            }
+            throw error;
+        }
+    }
+
+
     async function stopActiveBarcodeScanner() {
         clearBarcodeScannerFallback();
-        const hadActiveScanner = Boolean(barcodeScannerEngine);
+        const hadActiveScanner = Boolean(
+            barcodeScannerEngine ||
+            nativeBarcodeStream ||
+            html5QrCode ||
+            quaggaDetectedHandler
+        );
+
+        if (nativeBarcodeLoopTimer) {
+            clearTimeout(nativeBarcodeLoopTimer);
+            nativeBarcodeLoopTimer = null;
+        }
+        nativeBarcodeFrameBusy = false;
+        nativeBarcodeDetector = null;
+        if (nativeBarcodeVideo) {
+            try { nativeBarcodeVideo.pause(); } catch (error) {}
+            nativeBarcodeVideo.srcObject = null;
+            try { nativeBarcodeVideo.remove(); } catch (error) {}
+            nativeBarcodeVideo = null;
+        }
+        if (nativeBarcodeStream) {
+            try {
+                nativeBarcodeStream.getTracks().forEach(track => track.stop());
+            } catch (error) {}
+            nativeBarcodeStream = null;
+        }
 
         if (
             (barcodeScannerEngine === 'quagga' || quaggaDetectedHandler) &&
@@ -11086,6 +11288,7 @@
         barcodeScannerEngine = null;
         barcodeTorchOn = false;
         setBarcodeTorchAvailable(false);
+        updateBarcodeScannerButton();
 
         const reader = document.getElementById('barcode-reader');
         if (reader) reader.innerHTML = '';
@@ -11093,9 +11296,10 @@
         // Some Android cameras need a moment to release before another decoder
         // opens the same rear lens.
         if (hadActiveScanner) {
-            await new Promise(resolve => setTimeout(resolve, 300));
+            await new Promise(resolve => setTimeout(resolve, 250));
         }
     }
+
 
     function handleDecodedBarcode(rawValue, onScan, requireConfirmation) {
         if (barcodeScanLocked || barcodeLookupInProgress) return;
@@ -11110,33 +11314,30 @@
 
         if (requireConfirmation) {
             const now = Date.now();
-            if (code === barcodeCandidateCode && now - barcodeCandidateAt < 1800) {
+            if (code === barcodeCandidateCode && now - barcodeCandidateAt < 2500) {
                 barcodeCandidateHits += 1;
             } else {
                 barcodeCandidateCode = code;
                 barcodeCandidateHits = 1;
             }
             barcodeCandidateAt = now;
-
             if (barcodeCandidateHits < 2) {
                 setBarcodeScanStatus('Reading ' + code + ' — hold steady…');
                 return;
             }
         }
 
+        setBarcodeDetectedCode(code);
         clearBarcodeScannerFallback();
         onScan(code);
     }
 
     async function startQuaggaBarcodeScanner(onScan, session) {
-        if (typeof Quagga === 'undefined') throw new Error('enhanced-scanner-unavailable');
+        if (typeof Quagga === 'undefined') throw new Error('quagga-scanner-unavailable');
         const target = document.getElementById('barcode-reader');
         if (!target) throw new Error('scanner-target-missing');
         target.innerHTML = '';
         resetBarcodeCandidate();
-
-        const cores = Math.max(1, Number(navigator.hardwareConcurrency) || 2);
-        const workerCount = Math.max(1, Math.min(2, cores - 1));
 
         await new Promise((resolve, reject) => {
             Quagga.init({
@@ -11145,26 +11346,29 @@
                     type: 'LiveStream',
                     target,
                     constraints: {
-                        facingMode: 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        aspectRatio: { ideal: 1.777778 }
                     }
                 },
                 locate: true,
-                frequency: 10,
-                numOfWorkers: workerCount,
+                frequency: 12,
+                // A zero-worker fallback avoids Android WebView/Blob-worker failures.
+                numOfWorkers: 0,
                 locator: {
-                    halfSample: true,
-                    patchSize: 'medium'
+                    // Preserve full bar detail instead of halving already-small frames.
+                    halfSample: false,
+                    patchSize: 'large'
                 },
                 decoder: {
-                    // Retail food products overwhelmingly use EAN or UPC. Keeping
-                    // this list narrow makes recognition faster and avoids clashes.
                     readers: [
                         'ean_reader',
                         'ean_8_reader',
                         'upc_reader',
-                        'upc_e_reader'
+                        'upc_e_reader',
+                        'i2of5_reader',
+                        'code_128_reader'
                     ],
                     multiple: false
                 }
@@ -11181,7 +11385,8 @@
 
                 quaggaDetectedHandler = result => {
                     const value = result && result.codeResult && result.codeResult.code;
-                    if (value) handleDecodedBarcode(value, onScan, true);
+                    // Quagga already scores and validates its own decoded result.
+                    if (value) handleDecodedBarcode(value, onScan, false);
                 };
                 Quagga.onDetected(quaggaDetectedHandler);
 
@@ -11198,35 +11403,34 @@
     }
 
     async function startHtml5BarcodeScanner(onScan, session) {
-        if (typeof Html5Qrcode === 'undefined') throw new Error('alternate-scanner-unavailable');
+        if (typeof Html5Qrcode === 'undefined') throw new Error('zxing-scanner-unavailable');
         const target = document.getElementById('barcode-reader');
         if (!target) throw new Error('scanner-target-missing');
         target.innerHTML = '';
 
         const config = {
-            fps: 15,
-            // Do not set qrbox: the complete camera frame is decoded. This avoids
-            // cutting off long EAN/UPC bars on narrow portrait phone screens.
-            disableFlip: false
+            fps: 10,
+            // A wide, shallow region gives the ZXing decoder many more pixels per
+            // EAN/UPC bar than scanning the whole tall portrait frame.
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                const width = Math.max(50, Math.floor(viewfinderWidth * 0.92));
+                const height = Math.max(
+                    50,
+                    Math.floor(Math.min(viewfinderHeight * 0.42, width * 0.38))
+                );
+                return {
+                    width: Math.min(width, Math.max(50, viewfinderWidth - 8)),
+                    height: Math.min(height, Math.max(50, viewfinderHeight - 8))
+                };
+            },
+            // The rear camera is not mirrored; disabling the mirrored retry halves
+            // unnecessary work and improves scan cadence on lower-power phones.
+            disableFlip: true
         };
         const success = decodedText => handleDecodedBarcode(decodedText, onScan, false);
         const failure = () => {};
 
-        const startWith = async camera => {
-            html5QrCode = createFoodBarcodeScanner();
-            await html5QrCode.start(camera, config, success, failure);
-            if (session !== barcodeScannerSession) {
-                try { await html5QrCode.stop(); } catch (error) {}
-                throw new Error('scanner-session-ended');
-            }
-            barcodeScannerEngine = 'html5';
-            updateBarcodeScannerButton();
-            await optimiseBarcodeCamera();
-        };
-
-        try {
-            await startWith({ facingMode: 'environment' });
-        } catch (firstError) {
+        const releaseHtml5Instance = async () => {
             try {
                 if (html5QrCode && html5QrCode.isScanning) await html5QrCode.stop();
             } catch (error) {}
@@ -11235,50 +11439,142 @@
             } catch (error) {}
             html5QrCode = null;
             target.innerHTML = '';
+        };
 
+        const startWith = async camera => {
+            const highResolutionConfig = Object.assign({}, config, {
+                videoConstraints: typeof camera === 'string'
+                    ? {
+                        deviceId: { exact: camera },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                    : {
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+            });
+            html5QrCode = createFoodBarcodeScanner();
+            await html5QrCode.start(camera, highResolutionConfig, success, failure);
+            if (session !== barcodeScannerSession) {
+                await releaseHtml5Instance();
+                throw new Error('scanner-session-ended');
+            }
+            barcodeScannerEngine = 'html5';
+            updateBarcodeScannerButton();
+            await optimiseBarcodeCamera();
+        };
+
+        let firstError = null;
+        try {
             const cameras = await Html5Qrcode.getCameras();
-            if (!cameras || cameras.length === 0) throw firstError;
-            const labelledRear = cameras.filter(camera =>
-                /back|rear|environment/i.test(camera.label || '')
-            );
-            const preferredRear = labelledRear.find(camera =>
-                !/ultra|wide|tele|macro/i.test(camera.label || '')
-            ) || labelledRear[0] || cameras[cameras.length - 1];
-
-            await new Promise(resolve => setTimeout(resolve, 300));
-            await startWith(preferredRear.id);
+            if (cameras && cameras.length) {
+                const labelledRear = cameras.filter(camera =>
+                    /back|rear|environment/i.test(camera.label || '')
+                );
+                const preferredRear = labelledRear.find(camera =>
+                    !/ultra|wide|tele|macro/i.test(camera.label || '')
+                ) || labelledRear[0] || cameras[cameras.length - 1];
+                try {
+                    await startWith(preferredRear.id);
+                    return;
+                } catch (error) {
+                    firstError = error;
+                    await releaseHtml5Instance();
+                }
+            }
+        } catch (error) {
+            firstError = error;
         }
+
+        try {
+            await startWith({ facingMode: { ideal: 'environment' } });
+        } catch (error) {
+            await releaseHtml5Instance();
+            throw error || firstError || new Error('back-camera-unavailable');
+        }
+    }
+
+
+    function getBarcodeEngineOrder() {
+        const engines = [];
+        if (
+            typeof BarcodeDetector !== 'undefined' &&
+            navigator.mediaDevices &&
+            typeof navigator.mediaDevices.getUserMedia === 'function'
+        ) engines.push('native');
+        if (typeof Html5Qrcode !== 'undefined') engines.push('html5');
+        if (typeof Quagga !== 'undefined') engines.push('quagga');
+        return engines;
+    }
+
+    function barcodeEngineReadyMessage(engine) {
+        if (engine === 'native') {
+            return 'Android scanner ready — fill the orange box with the barcode';
+        }
+        if (engine === 'html5') {
+            return 'Wide barcode scanner ready — hold every bar inside the box';
+        }
+        return 'Detail scanner ready — hold still while the camera focuses';
+    }
+
+    async function startBarcodeEngine(engine, onScan, session) {
+        if (engine === 'native') return startNativeBarcodeScanner(onScan, session);
+        if (engine === 'html5') return startHtml5BarcodeScanner(onScan, session);
+        if (engine === 'quagga') return startQuaggaBarcodeScanner(onScan, session);
+        throw new Error('unknown-barcode-engine');
+    }
+
+
+    async function startBestBarcodeScanner(onScan, session, preferredOrder) {
+        const available = getBarcodeEngineOrder();
+        const order = (preferredOrder || available).filter((engine, index, list) =>
+            available.includes(engine) && list.indexOf(engine) === index
+        );
+        let lastError = null;
+
+        for (const engine of order) {
+            barcodeTriedEngines.add(engine);
+            try {
+                await startBarcodeEngine(engine, onScan, session);
+                if (session !== barcodeScannerSession) return null;
+                setBarcodeScanStatus(barcodeEngineReadyMessage(engine));
+                scheduleBarcodeScannerFallback(onScan, session);
+                return engine;
+            } catch (error) {
+                lastError = error;
+                console.warn(`${engine} barcode scanner unavailable:`, error);
+                await stopActiveBarcodeScanner();
+                if (session !== barcodeScannerSession) return null;
+            }
+        }
+        throw lastError || new Error('no-barcode-scanner-loaded');
     }
 
     function scheduleBarcodeScannerFallback(onScan, session) {
         clearBarcodeScannerFallback();
-        if (barcodeScannerEngine !== 'quagga' || barcodeAutoFallbackUsed) return;
+        const engineWhenScheduled = barcodeScannerEngine;
+        const untried = getBarcodeEngineOrder().filter(engine => !barcodeTriedEngines.has(engine));
+        if (!engineWhenScheduled || untried.length === 0) return;
 
+        const delay = engineWhenScheduled === 'native' ? 5000 : 8000;
         barcodeScannerFallbackTimer = setTimeout(async () => {
             if (
                 session !== barcodeScannerSession ||
                 barcodeScanLocked ||
                 barcodeLookupInProgress ||
-                barcodeScannerEngine !== 'quagga'
+                barcodeImageDecodeInProgress ||
+                barcodeScannerEngine !== engineWhenScheduled
             ) return;
 
-            barcodeAutoFallbackUsed = true;
-            setBarcodeScanStatus('Still looking — switching decoder…', 'warning');
-            try {
-                await stopActiveBarcodeScanner();
-                if (session !== barcodeScannerSession) return;
-                activeBarcodeOnScan = onScan;
-                await startHtml5BarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Alternate scanner ready — hold the full barcode steady');
-            } catch (error) {
-                console.warn('Alternate barcode scanner unavailable:', error);
-                setBarcodeScanStatus('Keep trying, or enter the printed number below', 'warning');
-            }
-        }, 12000);
+            setBarcodeScanStatus('Still looking — changing decoder automatically…', 'warning');
+            await switchBarcodeScannerEngine(true);
+        }, delay);
     }
 
-    async function switchBarcodeScannerEngine() {
-        if (barcodeScanLocked || barcodeLookupInProgress) return;
+    async function switchBarcodeScannerEngine(triggeredAutomatically) {
+        if (barcodeScanLocked || barcodeLookupInProgress || barcodeImageDecodeInProgress) return;
         if (!activeBarcodeOnScan) {
             await openBarcodeScanner();
             return;
@@ -11286,47 +11582,157 @@
 
         const session = barcodeScannerSession;
         const onScan = activeBarcodeOnScan;
-        const nextEngine = barcodeScannerEngine === 'quagga' ? 'html5' : 'quagga';
-        barcodeAutoFallbackUsed = true;
-        setBarcodeScanStatus('Switching scanner…');
+        const currentEngine = barcodeScannerEngine;
+        const allEngines = getBarcodeEngineOrder();
+        let nextEngines = allEngines.filter(engine =>
+            engine !== currentEngine && !barcodeTriedEngines.has(engine)
+        );
+
+        // A manual tap can cycle through the decoders again after all have run.
+        if (!triggeredAutomatically && nextEngines.length === 0) {
+            barcodeTriedEngines = new Set(currentEngine ? [currentEngine] : []);
+            nextEngines = allEngines.filter(engine => engine !== currentEngine);
+        }
+        if (nextEngines.length === 0) {
+            setBarcodeScanStatus('Use Photo or enter the printed number below', 'warning');
+            return;
+        }
+
+        setBarcodeScanStatus(triggeredAutomatically ? 'Changing decoder…' : 'Switching scanner…');
+        try {
+            await stopActiveBarcodeScanner();
+            if (session !== barcodeScannerSession) return;
+            activeBarcodeOnScan = onScan;
+            const started = await startBestBarcodeScanner(onScan, session, nextEngines);
+            if (!started) return;
+            setBarcodeScanStatus(barcodeEngineReadyMessage(started));
+        } catch (error) {
+            console.warn('Could not switch barcode scanner:', error);
+            setBarcodeScanStatus('Live scan could not read it — use Photo or enter the number below', 'error');
+        }
+    }
+
+    function decodeBarcodeImageWithQuagga(file) {
+        if (typeof Quagga === 'undefined') return Promise.reject(new Error('quagga-unavailable'));
+        const objectUrl = URL.createObjectURL(file);
+        return new Promise((resolve, reject) => {
+            Quagga.decodeSingle({
+                src: objectUrl,
+                numOfWorkers: 0,
+                locate: true,
+                inputStream: { size: 1600 },
+                locator: { halfSample: false, patchSize: 'large' },
+                decoder: {
+                    readers: [
+                        'ean_reader',
+                        'ean_8_reader',
+                        'upc_reader',
+                        'upc_e_reader',
+                        'i2of5_reader',
+                        'code_128_reader'
+                    ]
+                }
+            }, result => {
+                URL.revokeObjectURL(objectUrl);
+                const code = result && result.codeResult && result.codeResult.code;
+                if (code) resolve(code);
+                else reject(new Error('barcode-not-found-in-image'));
+            });
+        });
+    }
+
+    async function scanBarcodeImage(input) {
+        const file = input && input.files && input.files[0];
+        if (!file || barcodeLookupInProgress || barcodeImageDecodeInProgress) return;
+        const session = barcodeScannerSession;
+        const onScan = activeBarcodeOnScan;
+        input.value = '';
+        if (!onScan) {
+            setBarcodeScanStatus('Open the scanner again, then choose Photo', 'warning');
+            return;
+        }
+
+        barcodeImageDecodeInProgress = true;
+        setBarcodeScanStatus('Reading barcode from photo…');
+        let decoded = '';
+        let lastError = null;
 
         try {
             await stopActiveBarcodeScanner();
             if (session !== barcodeScannerSession) return;
             activeBarcodeOnScan = onScan;
-            if (nextEngine === 'quagga') {
-                await startQuaggaBarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Enhanced scanner ready — hold the full barcode steady');
-            } else {
-                await startHtml5BarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Alternate scanner ready — hold the full barcode steady');
+
+            if (typeof Html5Qrcode !== 'undefined') {
+                try {
+                    html5QrCode = createFoodBarcodeScanner();
+                    decoded = await html5QrCode.scanFile(file, true);
+                } catch (error) {
+                    lastError = error;
+                } finally {
+                    try {
+                        if (html5QrCode) html5QrCode.clear();
+                    } catch (error) {}
+                    html5QrCode = null;
+                }
             }
+
+            if (!decoded && typeof Quagga !== 'undefined') {
+                try {
+                    decoded = await decodeBarcodeImageWithQuagga(file);
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+
+            if (session !== barcodeScannerSession) return;
+            const clean = normaliseBarcode(decoded);
+            if (!isPlausibleFoodBarcode(clean) || !hasValidGtinCheckDigit(clean)) {
+                throw lastError || new Error('barcode-not-found-in-image');
+            }
+
+            setBarcodeDetectedCode(clean);
+            setBarcodeScanStatus('Barcode read: ' + clean + ' — finding product…', 'success');
+            handleDecodedBarcode(clean, onScan, false);
         } catch (error) {
-            console.warn('Could not switch barcode scanner:', error);
-            setBarcodeScanStatus('Scanner could not switch — enter the printed number below', 'error');
+            console.warn('Barcode photo could not be decoded:', error);
+            setBarcodeScanStatus('No barcode found in that photo — retake it closer or enter the number', 'error');
+            barcodeImageDecodeInProgress = false;
+            if (session === barcodeScannerSession && !barcodeScanLocked) {
+                try {
+                    await startBestBarcodeScanner(onScan, session);
+                } catch (restartError) {
+                    console.warn('Could not restart live barcode scanner:', restartError);
+                }
+            }
+            return;
+        } finally {
+            barcodeImageDecodeInProgress = false;
         }
     }
 
+
     function mergeBarcodeFoodsFromCloud(cloudFoods) {
         if (!Array.isArray(cloudFoods) || cloudFoods.length === 0) return;
+        const parsedTime = value => value ? (Date.parse(value) || 0) : 0;
         const combined = [...(Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []), ...cloudFoods]
             .filter(item => item && (item.barcode || item.scannedBarcode))
-            .sort((a, b) => Date.parse(b.cachedAt || 0) - Date.parse(a.cachedAt || 0));
+            .sort((a, b) => parsedTime(b.cachedAt) - parsedTime(a.cachedAt));
         const seen = new Set();
         state.barcodeFoods = combined.filter(item => {
-            const key = openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode);
-            if (!key || seen.has(key)) return false;
-            seen.add(key);
+            const keys = barcodeFoodIdentityKeys(item.barcode, item.scannedBarcode);
+            if (!keys.size || [...keys].some(key => seen.has(key))) return false;
+            keys.forEach(key => seen.add(key));
             return true;
         }).slice(0, 100);
         saveState();
     }
 
     function findCachedBarcodeFood(code) {
-        const key = openFoodFactsBarcodeKey(code);
-        return (Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []).find(item =>
-            openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode) === key
-        ) || null;
+        const wanted = barcodeFoodIdentityKeys(code);
+        return (Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []).find(item => {
+            const itemKeys = barcodeFoodIdentityKeys(item.barcode, item.scannedBarcode);
+            return [...itemKeys].some(key => wanted.has(key));
+        }) || null;
     }
 
     async function cacheBarcodeFood(food) {
@@ -11353,11 +11759,12 @@
             cachedAt: new Date().toISOString()
         };
 
-        const key = openFoodFactsBarcodeKey(clean.barcode);
+        const cleanKeys = barcodeFoodIdentityKeys(clean.barcode, clean.scannedBarcode);
         const existing = Array.isArray(state.barcodeFoods) ? state.barcodeFoods : [];
-        state.barcodeFoods = [clean, ...existing.filter(item =>
-            openFoodFactsBarcodeKey(item.barcode || item.scannedBarcode) !== key
-        )].slice(0, 100);
+        state.barcodeFoods = [clean, ...existing.filter(item => {
+            const itemKeys = barcodeFoodIdentityKeys(item.barcode, item.scannedBarcode);
+            return ![...itemKeys].some(key => cleanKeys.has(key));
+        })].slice(0, 100);
         saveState();
 
         // Keep the user's scanned-food database with their Firebase account as well
@@ -11373,39 +11780,103 @@
         }
     }
 
+
+    function expandUpceToUpca(value) {
+        let code = normaliseBarcode(value);
+        // Some decoders omit the UPC-E number-system digit (normally zero).
+        if (code.length === 7) code = '0' + code;
+        if (code.length !== 8 || !/^[01]/.test(code)) return '';
+
+        const numberSystem = code[0];
+        const body = code.slice(1, 7);
+        const checkDigit = code[7];
+        const last = body[5];
+        let manufacturer = '';
+        let product = '';
+
+        if (last === '0' || last === '1' || last === '2') {
+            manufacturer = body.slice(0, 2) + last + '00';
+            product = '00' + body.slice(2, 5);
+        } else if (last === '3') {
+            manufacturer = body.slice(0, 3) + '00';
+            product = '000' + body.slice(3, 5);
+        } else if (last === '4') {
+            manufacturer = body.slice(0, 4) + '0';
+            product = '0000' + body[4];
+        } else {
+            manufacturer = body.slice(0, 5);
+            product = '0000' + last;
+        }
+        return numberSystem + manufacturer + product + checkDigit;
+    }
+
+    function barcodeLookupCandidates(value) {
+        const code = normaliseBarcode(value);
+        const candidates = [code];
+        if (code.length === 7) candidates.push(code.padStart(8, '0'));
+        if (code.length === 7 || code.length === 8) {
+            candidates.push(expandUpceToUpca(code));
+        }
+        if (code.length === 12) candidates.push('0' + code);
+        if (code.length === 13 && code.startsWith('0')) candidates.push(code.slice(1));
+        if (code.length === 14 && code.startsWith('0')) candidates.push(code.slice(1));
+        candidates.push(openFoodFactsBarcodeKey(code));
+
+        return candidates
+            .map(normaliseBarcode)
+            .filter((candidate, index, list) =>
+                isPlausibleFoodBarcode(candidate) && list.indexOf(candidate) === index
+            );
+    }
+
     async function fetchOpenFoodFactsProduct(code) {
-        const encodedCode = encodeURIComponent(code);
+        const requestedCode = normaliseBarcode(code);
         const fields = encodeURIComponent(OPEN_FOOD_FACTS_PRODUCT_FIELDS);
-        const endpoints = [
-            `https://world.openfoodfacts.org/api/v3/product/${encodedCode}?fields=${fields}&lc=en&cc=gb`,
-            `https://world.openfoodfacts.org/api/v2/product/${encodedCode}.json?fields=${fields}&lc=en&cc=gb`
-        ];
+        const candidates = barcodeLookupCandidates(requestedCode);
         let lastError = null;
+        let receivedValidResponse = false;
 
-        for (let i = 0; i < endpoints.length; i++) {
-            try {
-                const response = await fetchWithTimeout(endpoints[i], 9000);
-                if (response.status === 404) return { found: false, code };
-                if (!response.ok) throw new Error('Open Food Facts HTTP ' + response.status);
+        for (const candidate of candidates) {
+            const encodedCode = encodeURIComponent(candidate);
+            // V2 is Open Food Facts' documented read endpoint. V3 is retained as
+            // an independent compatibility fallback.
+            const endpoints = [
+                `https://world.openfoodfacts.org/api/v2/product/${encodedCode}?fields=${fields}&lc=en&cc=gb`,
+                `https://world.openfoodfacts.org/api/v3/product/${encodedCode}?fields=${fields}&lc=en&cc=gb`
+            ];
 
-                const data = await response.json();
-                if (data && data.product) {
-                    return {
-                        found: true,
-                        code: normaliseBarcode(data.code || data.product.code || code),
-                        product: data.product
-                    };
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetchWithTimeout(endpoint, 10000);
+                    if (response.status === 404) {
+                        receivedValidResponse = true;
+                        continue;
+                    }
+                    if (!response.ok) {
+                        throw new Error('Open Food Facts HTTP ' + response.status);
+                    }
+
+                    receivedValidResponse = true;
+                    const data = await response.json();
+                    if (data && data.product) {
+                        return {
+                            found: true,
+                            requestedCode,
+                            code: normaliseBarcode(data.code || data.product.code || candidate),
+                            product: data.product
+                        };
+                    }
+                    if (data && (data.status === 0 || data.status === 'failure' || data.result?.id === 'product_not_found')) {
+                        continue;
+                    }
+                    lastError = new Error('Open Food Facts returned no product');
+                } catch (error) {
+                    lastError = error;
                 }
-                if (data && (data.status === 0 || data.status === 'failure')) {
-                    return { found: false, code: normaliseBarcode(data.code || code) };
-                }
-                throw new Error('Open Food Facts returned no product');
-            } catch (error) {
-                lastError = error;
-                // v3 is primary; v2 is a compatibility fallback for older browsers/proxies.
-                if (i === endpoints.length - 1) throw lastError;
             }
         }
+
+        if (receivedValidResponse) return { found: false, code: requestedCode };
         throw lastError || new Error('Open Food Facts lookup failed');
     }
 
@@ -11414,16 +11885,22 @@
         openBarcodeScanner();
     }
 
+
     async function openBarcodeScanner() {
         const modal = document.getElementById('barcode-scanner-modal');
         const input = document.getElementById('manual-barcode');
+        const imageInput = document.getElementById('barcode-image-input');
+        if (!modal) return;
         modal.style.display = 'flex';
         if (input) input.value = '';
+        if (imageInput) imageInput.value = '';
+        setBarcodeDetectedCode('');
 
         const session = ++barcodeScannerSession;
         barcodeScanLocked = false;
         barcodeLookupInProgress = false;
-        barcodeAutoFallbackUsed = false;
+        barcodeImageDecodeInProgress = false;
+        barcodeTriedEngines = new Set();
         activeBarcodeOnScan = null;
         resetBarcodeCandidate();
         setBarcodeLookupBusy(false);
@@ -11432,12 +11909,6 @@
 
         await stopActiveBarcodeScanner();
         if (session !== barcodeScannerSession) return;
-
-        if (typeof Quagga === 'undefined' && typeof Html5Qrcode === 'undefined') {
-            setBarcodeScanStatus('Scanner failed to load — enter the number below', 'error');
-            showToast('Scanner failed to load — enter barcode manually', 5000);
-            return;
-        }
 
         const onScan = async decodedText => {
             if (
@@ -11455,6 +11926,7 @@
             barcodeScanLocked = true;
             clearBarcodeScannerFallback();
             if (input) input.value = fullBarcode;
+            setBarcodeDetectedCode(fullBarcode);
             setBarcodeScanStatus('Barcode read: ' + fullBarcode + ' — finding product…', 'success');
             try {
                 if (navigator.vibrate) navigator.vibrate(90);
@@ -11466,38 +11938,31 @@
         };
         activeBarcodeOnScan = onScan;
 
+        if (getBarcodeEngineOrder().length === 0) {
+            setBarcodeScanStatus('Scanner libraries failed to load — enter the printed number', 'error');
+            showToast('Scanner failed to load — enter barcode manually', 5000);
+            return;
+        }
+
         try {
-            if (typeof Quagga !== 'undefined') {
-                await startQuaggaBarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Enhanced scanner ready — hold the full barcode steady');
-                scheduleBarcodeScannerFallback(onScan, session);
-            } else {
-                await startHtml5BarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Scanner ready — hold the full barcode steady');
-            }
-        } catch (firstError) {
-            console.warn('Enhanced barcode scanner unavailable:', firstError);
-            try {
-                await stopActiveBarcodeScanner();
-                if (session !== barcodeScannerSession) return;
-                activeBarcodeOnScan = onScan;
-                await startHtml5BarcodeScanner(onScan, session);
-                setBarcodeScanStatus('Alternate scanner ready — hold the full barcode steady');
-            } catch (error) {
-                console.warn('Barcode camera unavailable:', firstError, error);
-                setBarcodeScanStatus('Camera unavailable — enter the number below', 'error');
-                showToast('Camera unavailable — enter barcode manually', 5000);
-            }
+            await startBestBarcodeScanner(onScan, session);
+        } catch (error) {
+            console.warn('Barcode camera unavailable:', error);
+            setBarcodeScanStatus('Camera unavailable — use Photo or enter the printed number', 'error');
+            showToast('Camera unavailable — use Photo or enter barcode manually', 5000);
         }
     }
 
     async function closeBarcodeScanner() {
         barcodeScannerSession += 1;
         barcodeScanLocked = false;
+        barcodeImageDecodeInProgress = false;
         activeBarcodeOnScan = null;
         setBarcodeLookupBusy(false);
         await stopActiveBarcodeScanner();
-        document.getElementById('barcode-scanner-modal').style.display = 'none';
+        setBarcodeDetectedCode('');
+        const modal = document.getElementById('barcode-scanner-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     async function useResolvedBarcodeFood(food) {
@@ -11516,10 +11981,33 @@
         }
     }
 
+
+    async function restartBarcodeScannerAfterLookup() {
+        const modal = document.getElementById('barcode-scanner-modal');
+        if (
+            !modal ||
+            modal.style.display === 'none' ||
+            barcodeScannerEngine ||
+            !activeBarcodeOnScan ||
+            barcodeLookupInProgress ||
+            barcodeScanLocked
+        ) return;
+
+        const session = barcodeScannerSession;
+        barcodeTriedEngines = new Set();
+        try {
+            await startBestBarcodeScanner(activeBarcodeOnScan, session);
+        } catch (error) {
+            console.warn('Barcode scanner could not restart:', error);
+            setBarcodeScanStatus('Use Photo or enter another barcode number', 'warning');
+        }
+    }
+
     async function lookupBarcode(scannedCode) {
         const barcodeInput = document.getElementById('manual-barcode');
         const code = normaliseBarcode(scannedCode ?? (barcodeInput && barcodeInput.value));
         if (barcodeInput) barcodeInput.value = code;
+        setBarcodeDetectedCode(code);
 
         if (!isPlausibleFoodBarcode(code)) {
             barcodeScanLocked = false;
@@ -11535,12 +12023,14 @@
         setBarcodeScanStatus('Finding ' + code + ' in Open Food Facts…');
 
         const cached = findCachedBarcodeFood(code);
+        let restartAfterFailure = false;
         try {
             const result = await fetchOpenFoodFactsProduct(code);
             if (!result.found || !result.product) {
                 barcodeScanLocked = false;
-                setBarcodeScanStatus('Barcode read, but the product is not in Open Food Facts', 'warning');
-                showToast('Product not found in Open Food Facts');
+                restartAfterFailure = true;
+                setBarcodeScanStatus('Barcode ' + code + ' was read, but it is not in Open Food Facts', 'warning');
+                showToast('Barcode read — product not found in Open Food Facts');
                 return;
             }
 
@@ -11556,12 +12046,14 @@
                 showToast('Loaded saved product — Open Food Facts is unavailable');
             } else {
                 barcodeScanLocked = false;
-                setBarcodeScanStatus('Could not reach Open Food Facts — try again', 'error');
+                restartAfterFailure = true;
+                setBarcodeScanStatus('Barcode read, but Open Food Facts could not be reached — try again', 'error');
                 showToast('Could not reach Open Food Facts');
             }
         } finally {
             barcodeLookupInProgress = false;
             setBarcodeLookupBusy(false);
+            if (restartAfterFailure) await restartBarcodeScannerAfterLookup();
         }
     }
 
