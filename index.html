@@ -2546,7 +2546,7 @@
                 Hold the phone sideways if needed. Fill the wide orange box with every bar, keep the printed number visible, and pause briefly for focus.
             </p>
             <div class="grid grid-cols-3 gap-2 mb-4">
-                <button id="barcode-torch-button" type="button" onclick="toggleBarcodeTorch()" disabled class="bg-amber-100 text-amber-800 px-2 py-2 rounded-xl text-xs font-black opacity-50">
+                <button id="barcode-light-button" type="button" onclick="toggleBarcodeTorch()" disabled class="bg-amber-100 text-amber-800 px-2 py-2 rounded-xl text-xs font-black opacity-50">
                     🔦 Light
                 </button>
                 <button id="barcode-switch-button" type="button" onclick="switchBarcodeScannerEngine()" class="bg-slate-100 text-slate-700 px-2 py-2 rounded-xl text-xs font-black">
@@ -2559,7 +2559,7 @@
             </div>
 
             <div class="flex gap-2">
-                <input id="manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="64" autocomplete="off" aria-label="Barcode number" placeholder="Or enter barcode manually..." oninput="this.value = normaliseBarcode(this.value)" onkeydown="if (event.key === 'Enter') lookupBarcode()" class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
+                <input id="manual-barcode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="64" placeholder="Or enter barcode manually..." autocomplete="off" aria-label="Barcode number" oninput="this.value = normaliseBarcode(this.value)" onkeydown="if (event.key === 'Enter') lookupBarcode()" class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
                 <button id="barcode-search-button" onclick="lookupBarcode()" class="bg-slate-900 text-white px-6 rounded-xl font-bold hover:bg-slate-800">Search</button>
             </div>
         </div>
@@ -12006,7 +12006,12 @@
         };
         const formats = getFoodBarcodeFormats();
         if (formats && formats.length) fullConfig.formatsToSupport = formats;
-        return new Html5Qrcode('barcode-reader', fullConfig);
+        try {
+            return new Html5Qrcode('barcode-reader', fullConfig);
+        } catch (error) {
+            // Constructor compatibility fallback for older Android WebViews.
+            return new Html5Qrcode('barcode-reader');
+        }
     }
 
     function hasValidGtinCheckDigit(code) {
@@ -12038,7 +12043,7 @@
     }
 
     function setBarcodeTorchAvailable(available) {
-        const button = document.getElementById('barcode-torch-button');
+        const button = document.getElementById('barcode-light-button');
         if (!button) return;
         button.disabled = !available;
         button.classList.toggle('opacity-50', !available);
@@ -12129,7 +12134,7 @@
             }
 
             barcodeTorchOn = nextState;
-            const button = document.getElementById('barcode-torch-button');
+            const button = document.getElementById('barcode-light-button');
             if (button) button.textContent = nextState ? '🔦 Light on' : '🔦 Light';
         } catch (error) {
             setBarcodeTorchAvailable(false);
@@ -12429,6 +12434,7 @@
 
         const config = {
             fps: 10,
+            aspectRatio: 1.6,
             // A wide, shallow region gives the ZXing decoder many more pixels per
             // EAN/UPC bar than scanning the whole tall portrait frame.
             qrbox: (viewfinderWidth, viewfinderHeight) => {
