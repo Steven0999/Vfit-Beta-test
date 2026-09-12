@@ -2858,6 +2858,28 @@
                 <p id="meal-total-weight" class="text-[10px] text-slate-400 mt-2"></p>
             </div>
 
+            <!-- Optional destinations are kept inside Create Meal so saved meals are
+                 never added to a plan or Shift Food Ideas without an explicit choice. -->
+            <div class="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 mb-4">
+                <p class="text-[10px] font-black uppercase text-indigo-700 mb-1">Personal plan (optional)</p>
+                <p class="text-xs text-slate-500 mb-3">Add one serving to your diary on a specific day and meal slot.</p>
+                <label class="flex items-start gap-3 cursor-pointer mb-3">
+                    <input id="create-meal-add-to-plan" type="checkbox" class="mt-1 w-4 h-4 accent-indigo-600">
+                    <span class="text-sm font-bold text-slate-700">Add this meal to my personal plan</span>
+                </label>
+                <div class="grid grid-cols-2 gap-2">
+                    <label class="block"><span class="text-[9px] font-black uppercase text-slate-400 block mb-1">Day</span><input id="create-meal-plan-date" type="date" class="w-full bg-white border border-indigo-100 rounded-xl px-3 py-2 text-sm font-bold outline-none"></label>
+                    <label class="block"><span class="text-[9px] font-black uppercase text-slate-400 block mb-1">Time of day</span><select id="create-meal-plan-slot" class="w-full bg-white border border-indigo-100 rounded-xl px-3 py-2 text-sm font-bold outline-none"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snack">Snack</option></select></label>
+                </div>
+            </div>
+
+            <div class="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-4">
+                <label class="flex items-start gap-3 cursor-pointer">
+                    <input id="create-meal-add-to-shift" type="checkbox" class="mt-1 w-4 h-4 accent-orange-600">
+                    <span><span class="text-sm font-bold text-slate-700 block">Also show in Shift Food Ideas</span><span class="text-xs text-slate-500 block mt-1">Only meals explicitly selected here appear in your shift suggestions.</span></span>
+                </label>
+            </div>
+
             <button onclick="saveMeal()" class="w-full bg-emerald-600 text-white p-4 rounded-2xl font-bold hover:bg-emerald-700">Save Meal</button>
         </div>
     </div>
@@ -6645,7 +6667,7 @@
 
         if (sp.goal === 'fat_loss' && sp.useFasting) html += fastingGuidanceHTML(onShift);
 
-        html += shiftFoodIdeasHTML(isNight && onShift);
+        html += shiftFoodIdeasHTML(isNight && onShift, dateKey);
         html += shiftScienceHTML();
 
         html += `
@@ -6901,7 +6923,27 @@
             </details>`;
     }
 
-    function shiftFoodIdeasHTML(emphasiseNight) {
+    function createdShiftFoodIdeasHTML(dateKey) {
+        const customMeals = (state.createdMeals || []).filter(meal => meal && (meal.showInShiftFoodIdeas === true || meal.addToShiftFoodIdeas === true));
+        if (!customMeals.length) return '';
+        const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))
+            ? String(dateKey)
+            : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? String(state.viewDate) : new Date().toISOString().split('T')[0]);
+        const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
+        return `
+                <div class="mt-4 border-t border-orange-100 pt-4" data-created-shift-meals="true">
+                    <div class="flex items-start justify-between gap-3 mb-3"><div><p class="text-[10px] font-black uppercase text-orange-600">My created shift meals</p><p class="text-xs text-slate-400 mt-1">Only meals you selected in Create Meal appear here.</p></div><span class="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">${customMeals.length} saved</span></div>
+                    <div class="space-y-2">
+                        ${customMeals.map(meal => {
+                            const mealType = validSlots.includes(meal.defaultMealType) ? meal.defaultMealType : (validSlots.includes(meal.plannedMealType) ? meal.plannedMealType : 'snack');
+                            const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
+                            return `<div class="bg-orange-50 border border-orange-100 rounded-2xl p-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="font-bold text-sm truncate">${escapeHtml(meal.name || 'Created meal')}</p><p class="text-[11px] text-slate-500 mt-1">${Math.round(Number(meal.calories) || 0)} kcal · ${(Number(meal.protein) || 0).toFixed(1)}g protein · ${mealLabel}</p></div><button onclick="addCreatedMealToDiary('${escapeJsString(meal.id)}', '${targetDate}', '${mealType}')" class="flex-shrink-0 bg-slate-900 text-white px-3 py-2 rounded-xl font-bold text-[11px]">+ Add to diary</button></div></div>`;
+                        }).join('')}
+                    </div>
+                </div>`;
+    }
+
+    function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         return `
             <details class="glass-card p-6 rounded-[2.5rem]">
                 <summary class="text-lg font-black cursor-pointer">Protein-Forward Food Ideas</summary><div class="mt-4">
@@ -6918,6 +6960,7 @@
                     ${foodIdea('🫘 Beans & lentils', 'Fibre + plant protein')}
                     ${foodIdea('🥤 Protein shake', 'Fast backup when busy')}
                 </div>
+                ${createdShiftFoodIdeasHTML(dateKey)}
                 <div class="mt-3 p-3 bg-slate-50 rounded-2xl">
                     <p class="text-xs text-slate-500"><b>Avoid on shift:</b> sugary snacks, pastries, energy drinks and fast food. They spike then crash your blood sugar, leaving you hungrier and more tired — the opposite of what you need at 3am.</p>
                 </div></div>
@@ -13503,15 +13546,24 @@
 
         if (list.length > 0) {
             html += '<h4 class="text-xs font-black text-slate-400 uppercase mb-2 mt-4">My Meals</h4>';
-            html += list.map(m => `
+            html += list.map(m => {
+                const badges = [];
+                if (/^\d{4}-\d{2}-\d{2}$/.test(String(m.plannedDate || ''))) {
+                    const plannedSlot = ['breakfast', 'lunch', 'dinner', 'snack'].includes(m.plannedMealType) ? m.plannedMealType : 'meal';
+                    badges.push(`Plan: ${m.plannedDate} · ${plannedSlot}`);
+                }
+                if (m.showInShiftFoodIdeas === true || m.addToShiftFoodIdeas === true) badges.push('Shift Food Ideas');
+                return `
                 <div class="glass-card p-3 rounded-2xl mb-2 flex items-center gap-3">
-                    <div class="flex-1">
-                        <p class="font-bold text-sm">${escapeHtml(m.name)}</p>
-                        <p class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} kcal</p>
+                    <div class="flex-1 min-w-0">
+                        <p class="font-bold text-sm truncate">${escapeHtml(m.name)}</p>
+                        <p class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} kcal · ${(Number(m.protein) || 0).toFixed(1)}g protein</p>
+                        ${badges.length ? `<div class="flex flex-wrap gap-1 mt-1">${badges.map(badge => `<span class="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">${escapeHtml(badge)}</span>`).join('')}</div>` : ''}
                     </div>
-                    <button onclick="deleteCreatedMeal('${escapeJsString(m.id)}')" class="w-7 h-7 bg-red-50 text-red-500 rounded-lg text-sm" aria-label="Remove ${escapeHtml(m.name || 'meal')}">×</button>
+                    <button onclick="deleteCreatedMeal('${escapeJsString(m.id)}')" class="w-7 h-7 bg-red-50 text-red-500 rounded-lg text-sm flex-shrink-0" aria-label="Remove ${escapeHtml(m.name || 'meal')}">×</button>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
         container.innerHTML = html;
@@ -13538,6 +13590,14 @@
         document.getElementById('meal-search-results').innerHTML = '';
         const search = document.getElementById('meal-ingredient-search');
         if (search) search.value = '';
+        const planDate = document.getElementById('create-meal-plan-date');
+        if (planDate) planDate.value = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : new Date().toISOString().split('T')[0];
+        const planSlot = document.getElementById('create-meal-plan-slot');
+        if (planSlot) planSlot.value = 'lunch';
+        const addToPlan = document.getElementById('create-meal-add-to-plan');
+        if (addToPlan) addToPlan.checked = false;
+        const addToShift = document.getElementById('create-meal-add-to-shift');
+        if (addToShift) addToShift.checked = false;
         renderMealIngredients();  // shows placeholder + hides totals
     }
 
@@ -13681,6 +13741,53 @@
         renderMealIngredients();
     }
 
+    function addCreatedMealToDiary(mealId, dateKey, mealType, options) {
+        const meal = (state.createdMeals || []).find(item => String(item.id) === String(mealId));
+        const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
+        const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))
+            ? String(dateKey)
+            : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? String(state.viewDate) : '');
+        const targetSlot = validSlots.includes(mealType) ? mealType : (validSlots.includes(meal && meal.defaultMealType) ? meal.defaultMealType : 'snack');
+        if (!meal || !targetDate) {
+            showToast('Created meal unavailable');
+            return false;
+        }
+
+        // The chosen plan date becomes the active diary date, so the nutrition
+        // history and the visible diary stay aligned with the serving just added.
+        state.viewDate = targetDate;
+        ['nutrition-date-picker', 'shift-nutrition-date-picker'].forEach(id => {
+            const picker = document.getElementById(id);
+            if (picker) picker.value = targetDate;
+        });
+        const dateWarning = document.getElementById('nutrition-date-warning');
+        if (dateWarning) dateWarning.classList.toggle('hidden', targetDate === new Date().toISOString().split('T')[0]);
+
+        const calories = Number(meal.calories) || 0;
+        const protein = Number(meal.protein) || 0;
+        const carbs = Number(meal.carbs) || 0;
+        const fat = Number(meal.fat) || 0;
+        const fiber = Number(meal.fiber) || 0;
+        const base = { calories, protein, carbs, fat, fiber, sugar: 0, isCustom: true, serving: '1 portion' };
+        const entry = {
+            id: Date.now() + Math.random(), date: targetDate, type: targetSlot, mealType: targetSlot,
+            name: meal.name || 'Created meal', image: null, calories, protein, carbs, fat, fiber, sugar: 0,
+            amount: 1, amountType: 'portion', base, source: 'created-meal', createdMealId: meal.id,
+            createdAt: new Date().toISOString()
+        };
+        if (!Array.isArray(state.dailyMeals)) state.dailyMeals = [];
+        state.dailyMeals.push(entry);
+        saveState();
+        autoSaveNutrition();
+        renderDiary();
+        renderDashboard();
+        if (!(options && options.silent)) {
+            const label = new Date(targetDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+            showToast(`${meal.name || 'Created meal'} added to ${label} · ${targetSlot}`);
+        }
+        return true;
+    }
+
     function saveMeal() {
         const name = document.getElementById('meal-name-input').value.trim();
         if (!name) { showToast('Enter a meal name'); return; }
@@ -13688,18 +13795,39 @@
 
         const totalCal = mealIngredients.reduce((s, i) => s + i.calories, 0);
         const totalProt = mealIngredients.reduce((s, i) => s + i.protein, 0);
+        const addToPlan = !!(document.getElementById('create-meal-add-to-plan') || {}).checked;
+        const addToShiftIdeas = !!(document.getElementById('create-meal-add-to-shift') || {}).checked;
+        const planDate = (document.getElementById('create-meal-plan-date') || {}).value || state.viewDate;
+        const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
+        const planSlot = validSlots.includes((document.getElementById('create-meal-plan-slot') || {}).value)
+            ? document.getElementById('create-meal-plan-slot').value
+            : 'lunch';
+        if (addToPlan && !/^\d{4}-\d{2}-\d{2}$/.test(String(planDate || ''))) {
+            showToast('Choose a valid plan date');
+            return;
+        }
 
-        state.createdMeals.unshift({
-            id: Date.now(),
+        const createdMeal = {
+            id: Date.now() + Math.random(),
             name,
             calories: totalCal,
             protein: totalProt,
-            ingredients: mealIngredients
-        });
-        saveState();
+            ingredients: mealIngredients.map(item => Object.assign({}, item)),
+            defaultMealType: planSlot,
+            plannedDate: addToPlan ? String(planDate) : null,
+            plannedMealType: addToPlan ? planSlot : null,
+            showInShiftFoodIdeas: addToShiftIdeas,
+            createdAt: new Date().toISOString()
+        };
+        if (!Array.isArray(state.createdMeals)) state.createdMeals = [];
+        state.createdMeals.unshift(createdMeal);
+        if (addToPlan) addCreatedMealToDiary(createdMeal.id, planDate, planSlot, { silent: true });
+        else saveState();
         closeCreateMeal();
         renderCreatedMeals();
-        showToast('Meal saved! 🍽️');
+        const planCopy = addToPlan ? ` and added to ${planDate} ${planSlot}` : '';
+        const shiftCopy = addToShiftIdeas ? ' · Shift Food Ideas enabled' : '';
+        showToast(`Meal saved! 🍽️${planCopy}${shiftCopy}`);
     }
 
     // ==========================================================================
