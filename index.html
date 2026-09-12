@@ -6640,6 +6640,7 @@
             ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
             : offDayMealHTML();
 
+        html += shiftMealIdeasHTML(type, dateKey);
         html += shiftTrainingHTML(onShift, isNight, isEarly);
 
         if (sp.goal === 'fat_loss' && sp.useFasting) html += fastingGuidanceHTML(onShift);
@@ -6657,6 +6658,78 @@
 
     function openShiftRotaFromNutrition() {
         if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
+    }
+
+    const SHIFT_MEAL_IDEAS = Object.freeze({
+        night: [
+            { id: 'night-breakfast-oats', mealType: 'breakfast', timing: 'After waking', name: 'Protein overnight oats with berries', calories: 485, protein: 36, carbs: 58, fat: 12, fiber: 9, note: 'Oats, Greek yogurt, whey and berries; prepare it before your sleep window.' },
+            { id: 'night-lunch-chicken-rice', mealType: 'lunch', timing: 'About 2h before shift', name: 'Chicken, brown rice and roasted veg bowl', calories: 610, protein: 48, carbs: 67, fat: 16, fiber: 9, note: 'A filling anchor meal before work so the deep-night hours can stay lighter.' },
+            { id: 'night-dinner-turkey-wrap', mealType: 'dinner', timing: 'Early in the shift', name: 'Turkey, hummus and salad wholegrain wrap', calories: 465, protein: 39, carbs: 48, fat: 13, fiber: 8, note: 'Portable and lighter than a large overnight meal while still providing steady energy.' },
+            { id: 'night-snack-yogurt', mealType: 'snack', timing: 'Mid-shift if hungry', name: 'Greek yogurt, berries and almonds', calories: 275, protein: 24, carbs: 22, fat: 10, fiber: 5, note: 'A protein-forward option for the overnight hunger window without a heavy meal.' }
+        ],
+        early: [
+            { id: 'early-breakfast-wrap', mealType: 'breakfast', timing: 'Before leaving for work', name: 'Egg, turkey and spinach breakfast wrap', calories: 435, protein: 35, carbs: 42, fat: 14, fiber: 6, note: 'Prepare it the night before for a fast breakfast that does not cost sleep.' },
+            { id: 'early-lunch-pasta', mealType: 'lunch', timing: 'Mid-shift break', name: 'Chicken pesto pasta salad', calories: 575, protein: 45, carbs: 62, fat: 16, fiber: 7, note: 'A packed lunch with protein and carbohydrate to carry you through the early finish.' },
+            { id: 'early-dinner-stirfry', mealType: 'dinner', timing: 'Soon after work', name: 'Lean beef vegetable stir-fry with rice', calories: 630, protein: 46, carbs: 70, fat: 18, fiber: 9, note: 'Make the post-shift meal substantial, then keep later evening eating lighter.' },
+            { id: 'early-snack-banana-yogurt', mealType: 'snack', timing: 'Morning break', name: 'High-protein yogurt with banana', calories: 265, protein: 24, carbs: 35, fat: 3, fiber: 4, note: 'Easy to pack and useful when the early breakfast needs a smaller follow-up.' }
+        ],
+        day: [
+            { id: 'day-breakfast-porridge', mealType: 'breakfast', timing: 'Before the shift', name: 'Protein porridge with banana and cinnamon', calories: 450, protein: 33, carbs: 55, fat: 11, fiber: 9, note: 'A balanced start with slow-release carbohydrate and a clear protein serving.' },
+            { id: 'day-lunch-tuna-potato', mealType: 'lunch', timing: 'Main work break', name: 'Tuna jacket potato with mixed salad', calories: 530, protein: 40, carbs: 65, fat: 12, fiber: 10, note: 'A practical main daytime meal that is filling without being difficult to prepare.' },
+            { id: 'day-dinner-chilli', mealType: 'dinner', timing: 'After the shift', name: 'Turkey and bean chilli with rice', calories: 650, protein: 50, carbs: 72, fat: 18, fiber: 13, note: 'Protein, vegetables and high-fibre carbohydrate for recovery after a normal day shift.' },
+            { id: 'day-snack-cottage-cheese', mealType: 'snack', timing: 'Between meals', name: 'Cottage cheese, apple and oatcakes', calories: 285, protein: 25, carbs: 28, fat: 8, fiber: 5, note: 'A portable snack that adds protein without relying on sweets or pastries.' }
+        ],
+        off: [
+            { id: 'off-breakfast-eggs', mealType: 'breakfast', timing: 'Within 1h of waking', name: 'Eggs, avocado and wholegrain toast', calories: 480, protein: 30, carbs: 45, fat: 20, fiber: 10, note: 'A relaxed daytime breakfast that helps re-anchor eating after changing shifts.' },
+            { id: 'off-lunch-quinoa', mealType: 'lunch', timing: 'Around midday', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'A high-protein lunch with plenty of vegetables for recovery and meal prep.' },
+            { id: 'off-dinner-cod', mealType: 'dinner', timing: 'Early evening', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced early dinner that supports recovery without pushing food late at night.' },
+            { id: 'off-snack-smoothie', mealType: 'snack', timing: 'When useful between meals', name: 'Protein berry smoothie with oats', calories: 320, protein: 30, carbs: 36, fat: 6, fiber: 8, note: 'Milk or a fortified alternative, protein, berries and oats blended as one portion.' }
+        ]
+    });
+
+    function shiftMealIdeasHTML(type, dateKey) {
+        const ideas = SHIFT_MEAL_IDEAS[type] || SHIFT_MEAL_IDEAS.off;
+        const categoryIcons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
+        const logged = new Set((state.dailyMeals || []).filter(meal => meal.date === dateKey).map(meal => meal.shiftMealIdeaId));
+        return `
+            <div class="glass-card p-6 rounded-[2.5rem]" data-shift-meal-ideas="${type}">
+                <div class="flex justify-between items-start gap-3 mb-4">
+                    <div><h3 class="text-lg font-black">Meal Ideas for This Shift</h3><p class="text-xs text-slate-400 mt-1">Suggested portions with estimated calories and protein.</p></div>
+                    <button onclick="setNutritionTab('diary')" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button>
+                </div>
+                <div class="space-y-3">${ideas.map((idea, index) => `
+                    <div class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${idea.mealType}" data-shift-meal-id="${idea.id}">
+                        <div class="flex justify-between items-start gap-3"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-orange-500">${categoryIcons[idea.mealType]} ${idea.mealType} · ${idea.timing}</p><h4 class="font-black text-sm mt-1">${escapeHtml(idea.name)}</h4></div><span class="text-[10px] font-black text-slate-400 flex-shrink-0">1 portion</span></div>
+                        <div class="flex gap-2 mt-2"><span class="bg-white px-2 py-1 rounded-lg text-xs font-black">${idea.calories} kcal</span><span class="bg-white px-2 py-1 rounded-lg text-xs font-black text-indigo-600">${idea.protein}g protein</span></div>
+                        <p class="text-xs text-slate-500 mt-2">${escapeHtml(idea.note)}</p>
+                        <button onclick="addShiftMealIdea('${type}', ${index}, '${dateKey}')" class="w-full mt-3 bg-slate-900 text-white p-3 rounded-xl font-bold text-xs active:scale-[0.98]">${logged.has(idea.id) ? '✓ Add Another Portion' : '+ Add to This Day’s Diary'}</button>
+                    </div>`).join('')}</div>
+                <p class="text-[10px] text-slate-400 mt-3">Values are estimates per suggested portion. Once added, tap the meal in your diary to adjust its portion or nutrition.</p>
+            </div>`;
+    }
+
+    function addShiftMealIdea(type, index, dateKey) {
+        const ideas = SHIFT_MEAL_IDEAS[type];
+        const idea = ideas && ideas[Number(index)];
+        const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? String(dateKey) : state.viewDate;
+        if (!idea || !/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || ''))) { showToast('Meal idea unavailable'); return; }
+        const base = { calories: idea.calories, protein: idea.protein, carbs: idea.carbs, fat: idea.fat, fiber: idea.fiber, sugar: 0, isCustom: true, serving: '1 suggested portion' };
+        const entry = {
+            id: Date.now() + Math.random(), date: targetDate, type: idea.mealType, mealType: idea.mealType,
+            name: idea.name, image: null, calories: idea.calories, protein: idea.protein,
+            carbs: idea.carbs, fat: idea.fat, fiber: idea.fiber, sugar: 0,
+            amount: 1, amountType: 'portion', base, source: 'shift-meal-idea',
+            shiftType: type, shiftMealIdeaId: idea.id, createdAt: new Date().toISOString()
+        };
+        if (!Array.isArray(state.dailyMeals)) state.dailyMeals = [];
+        state.dailyMeals.push(entry);
+        saveState();
+        autoSaveNutrition();
+        renderDiary();
+        renderShiftWorker();
+        renderDashboard();
+        const label = new Date(targetDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        showToast(`${idea.name} added to ${label}`);
     }
 
     function mealRow(time, title, desc, tone) {
