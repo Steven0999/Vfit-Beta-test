@@ -22,6 +22,7 @@ function fakeElement() {
   return {
     style: {}, dataset: {}, value: '', checked: false, disabled: false,
     innerHTML: '', innerText: '', textContent: '', id: '', labels: [],
+    parentElement: null, children: [],
     classList: {
       add(...names) { names.forEach(name => classes.add(name)); },
       remove(...names) { names.forEach(name => classes.delete(name)); },
@@ -36,7 +37,23 @@ function fakeElement() {
     getAttribute(name) { return attributes.get(name) || null; },
     hasAttribute(name) { return attributes.has(name); },
     removeAttribute(name) { attributes.delete(name); },
-    appendChild() {}, append() {}, remove() {}, click() {}, focus() {},
+    appendChild(child) {
+      if (!child) return child;
+      if (child.parentElement && Array.isArray(child.parentElement.children)) {
+        child.parentElement.children = child.parentElement.children.filter(item => item !== child);
+      }
+      this.children.push(child);
+      child.parentElement = this;
+      return child;
+    },
+    append(...children) { children.forEach(child => this.appendChild(child)); },
+    remove() {
+      if (this.parentElement && Array.isArray(this.parentElement.children)) {
+        this.parentElement.children = this.parentElement.children.filter(item => item !== this);
+      }
+      this.parentElement = null;
+    },
+    click() {}, focus() {},
     addEventListener() {}, removeEventListener() {}, scrollIntoView() {},
     querySelector() { return null; }, querySelectorAll() { return []; },
     getContext() {
@@ -128,6 +145,17 @@ const expose = `
   escapeJsString,
   safeJsonForInline,
   escapeHtml,
+  localDateKey,
+  offsetLocalDateKey,
+  resetActiveDatesToToday,
+  normaliseBarcode,
+  isPlausibleFoodBarcode,
+  hasValidGtinCheckDigit,
+  barcodeLookupCandidates,
+  shiftMealIdeasFor,
+  mountBarcodeScannerSurface,
+  restoreBarcodeScannerSurface,
+  showMealBarcodeResult,
   calculateReadinessScore,
   aiCoachQuestionnaireSteps,
   buildAICoachCheckInResult,
@@ -150,6 +178,7 @@ const expose = `
   getState: () => state,
   setState: value => { state = value; },
   setUser: value => { currentUser = value; },
+  setBarcodeScannerEmbedded: value => { barcodeScannerEmbedded = !!value; },
   defaultState: () => deepClone(DEFAULT_STATE)
 };`;
 
@@ -163,6 +192,64 @@ const inlineString = app.escapeJsString(`'"<>&\n`);
 assert.ok(!inlineString.includes('<') && !inlineString.includes('>') && !inlineString.includes('"'));
 const inlineJson = app.safeJsonForInline({ name: `'</div><script>bad()</script>` });
 assert.ok(!/[<>&']/.test(inlineJson));
+
+// Barcode handling preserves the complete printed number and builds safe lookup
+// variants without converting it to a JavaScript number.
+assert.equal(app.normaliseBarcode(' 5 000-1126 37922 '), '5000112637922');
+assert.equal(app.isPlausibleFoodBarcode('5000112637922'), true);
+assert.equal(app.isPlausibleFoodBarcode('112233'), false);
+assert.equal(app.hasValidGtinCheckDigit('5000112637922'), true);
+assert.equal(app.hasValidGtinCheckDigit('5000112637923'), false);
+const lookupVariants = Array.from(app.barcodeLookupCandidates('5000112637922'));
+assert.ok(lookupVariants.includes('5000112637922'));
+assert.ok(lookupVariants.includes('05000112637922'));
+
+// Every early, day, night and off-day meal category owns four distinct choices;
+// rotations must never borrow a meal from another shift type.
+for (const type of ['night', 'early', 'day', 'off']) {
+  for (const mealType of ['breakfast', 'lunch', 'dinner', 'snack']) {
+    const ideas = Array.from(app.shiftMealIdeasFor(type, mealType));
+    assert.equal(ideas.length, 4, `${type} ${mealType} needs four choices`);
+    assert.equal(new Set(ideas.map(item => item.id)).size, 4, `${type} ${mealType} ids must be unique`);
+    assert.ok(ideas.every(item => item.id.startsWith(`${type}-`)), `${type} ${mealType} must stay shift-specific`);
+    assert.ok(ideas.every(item => item.calories > 0 && item.protein > 0));
+  }
+}
+
+// Active pages return to the local current day, while an unfinished workout
+// remains attached to the day on which it actually started.
+const datedState = app.defaultState();
+datedState.viewDate = '2026-01-10';
+datedState.metricsDate = '2026-01-10';
+datedState.activeWorkout = { workoutDate: '2026-01-09' };
+datedState.currentPhotos = { front: 'draft', side: null, back: null };
+app.setState(datedState);
+const localToday = app.localDateKey();
+app.resetActiveDatesToToday({ preserveActiveWorkout: true });
+assert.equal(app.getState().viewDate, localToday);
+assert.equal(app.getState().metricsDate, localToday);
+assert.equal(document.getElementById('workout-date-picker').value, '2026-01-09');
+assert.equal(app.getState().currentPhotos.front, null);
+assert.equal(app.offsetLocalDateKey('2026-03-28', 1), '2026-03-29');
+
+// The same scanner surface moves into Create Meal and returns to its normal
+// overlay afterwards, so duplicate camera elements are never created.
+const scannerModal = document.getElementById('barcode-scanner-modal');
+const scannerCard = document.getElementById('barcode-scanner-card');
+const mealScannerSlot = document.getElementById('meal-barcode-inline-slot');
+scannerModal.appendChild(scannerCard);
+app.setBarcodeScannerEmbedded(true);
+assert.equal(app.mountBarcodeScannerSurface(), true);
+assert.equal(scannerCard.parentElement, mealScannerSlot);
+assert.equal(mealScannerSlot.classList.contains('hidden'), false);
+assert.equal(scannerModal.style.display, 'none');
+app.restoreBarcodeScannerSurface();
+assert.equal(scannerCard.parentElement, scannerModal);
+assert.equal(mealScannerSlot.classList.contains('hidden'), true);
+app.showMealBarcodeResult({ name: 'Test product', scannedBarcode: '5000112637922' });
+assert.equal(document.getElementById('meal-barcode-product').textContent, 'Test product');
+assert.equal(document.getElementById('meal-barcode-number').textContent, '5000112637922');
+assert.equal(document.getElementById('meal-barcode-result').classList.contains('hidden'), false);
 
 // Untrusted backups cannot introduce executable/prototype keys or unknown state.
 const malicious = JSON.parse('{"goals":{"calories":2100,"__proto__":{"polluted":true}},"unknownTop":"drop-me"}');

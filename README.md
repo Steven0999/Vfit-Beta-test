@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.5` adds goal-specific weekly-set coaching, a wall-clock workout timer and severe-fatigue deload planning while keeping the restored original barcode scanner and shift-work format.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.6` adds goal-specific weekly-set coaching, a wall-clock workout timer, severe-fatigue deload planning, shift-specific four-meal rotations and a more reliable Android barcode-photo fallback while keeping the restored scanner and shift-work format.
 
 ## What is included
 

@@ -2650,7 +2650,7 @@
 
     <!-- BARCODE SCANNER MODAL -->
     <div id="barcode-scanner-modal" class="modal-overlay">
-        <div class="bg-white w-full max-w-2xl rounded-[40px] p-4 sm:p-8 max-h-[95vh] overflow-y-auto" style="max-width: 42rem;">
+        <div id="barcode-scanner-card" class="bg-white w-full max-w-2xl rounded-[40px] p-4 sm:p-8 max-h-[95vh] overflow-y-auto" style="max-width: 42rem;">
             <div class="flex justify-between items-center mb-4">
                 <h3 id="barcode-scanner-title" class="text-xl font-black">Scan Barcode</h3>
                 <button onclick="closeBarcodeScanner()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
@@ -2673,10 +2673,10 @@
                 <button id="barcode-switch-button" type="button" onclick="switchBarcodeScannerEngine()" class="bg-slate-100 text-slate-700 px-2 py-2 rounded-xl text-xs font-black">
                     Other decoder
                 </button>
-                <label class="bg-indigo-50 text-indigo-700 px-2 py-2 rounded-xl text-xs font-black text-center cursor-pointer">
+                <button type="button" onclick="openBarcodeImagePicker()" class="bg-indigo-50 text-indigo-700 px-2 py-2 rounded-xl text-xs font-black text-center">
                     📷 Photo
-                    <input id="barcode-image-input" type="file" accept="image/*" capture="environment" onchange="scanBarcodeImage(this)" class="hidden">
-                </label>
+                </button>
+                <input id="barcode-image-input" type="file" accept="image/*" capture="environment" onchange="scanBarcodeImage(this)" oncancel="cancelBarcodeImagePicker()" class="hidden">
             </div>
 
             <div class="flex gap-2">
@@ -2849,6 +2849,12 @@
             <div class="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl mb-3">
                 <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
                 <span class="text-[11px] font-bold text-slate-500">Search or scan 🇬🇧 UK food data from Open Food Facts</span>
+            </div>
+            <div id="meal-barcode-inline-slot" class="hidden bg-slate-50 border-2 border-indigo-200 rounded-[28px] mb-4 overflow-hidden"></div>
+            <div id="meal-barcode-result" class="hidden bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 mb-4" role="status" aria-live="polite">
+                <p class="text-[10px] font-black uppercase text-emerald-700">Scanned into this meal</p>
+                <p id="meal-barcode-product" class="font-black text-sm text-emerald-900 mt-1"></p>
+                <p class="text-xs text-emerald-700 mt-1">Barcode <span id="meal-barcode-number" class="font-mono font-black break-all"></span></p>
             </div>
             <div id="meal-search-loading" class="hidden py-6 text-center">
                 <i data-lucide="loader-2" class="animate-spin text-emerald-500 mx-auto w-7 h-7"></i>
@@ -3813,7 +3819,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.5';
+    const VFIT_APP_VERSION = '2.1.0-beta.6';
     const VFIT_STATE_SCHEMA_VERSION = 6;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -6700,31 +6706,114 @@
         if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
     }
 
+    // Each shift has its own four-choice rotation for every meal. Keeping these
+    // lists separate prevents, for example, an early-shift breakfast appearing
+    // in the middle of the night-shift rotation.
     const SHIFT_MEAL_IDEAS = Object.freeze({
-        breakfast: [
-            { id: 'night-breakfast-oats', name: 'Protein overnight oats with berries', calories: 485, protein: 36, carbs: 58, fat: 12, fiber: 9, note: 'Oats, Greek yogurt, whey and berries prepared ahead as one filling portion.' },
-            { id: 'early-breakfast-wrap', name: 'Egg, turkey and spinach breakfast wrap', calories: 435, protein: 35, carbs: 42, fat: 14, fiber: 6, note: 'A portable hot or cold breakfast that can be prepared the night before.' },
-            { id: 'day-breakfast-porridge', name: 'Protein porridge with banana and cinnamon', calories: 450, protein: 33, carbs: 55, fat: 11, fiber: 9, note: 'Slow-release carbohydrate with a clear protein serving for steadier energy.' },
-            { id: 'off-breakfast-eggs', name: 'Eggs, avocado and wholegrain toast', calories: 480, protein: 30, carbs: 45, fat: 20, fiber: 10, note: 'A balanced cooked breakfast with protein, fibre and satisfying fats.' }
-        ],
-        lunch: [
-            { id: 'night-lunch-chicken-rice', name: 'Chicken, brown rice and roasted veg bowl', calories: 610, protein: 48, carbs: 67, fat: 16, fiber: 9, note: 'A filling meal-prep bowl with protein, vegetables and slow-release carbohydrate.' },
-            { id: 'early-lunch-pasta', name: 'Chicken pesto pasta salad', calories: 575, protein: 45, carbs: 62, fat: 16, fiber: 7, note: 'Easy to pack and eat cold when a work break is short or unpredictable.' },
-            { id: 'day-lunch-tuna-potato', name: 'Tuna jacket potato with mixed salad', calories: 530, protein: 40, carbs: 65, fat: 12, fiber: 10, note: 'A practical main meal that is filling without being difficult to prepare.' },
-            { id: 'off-lunch-quinoa', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'High in protein and vegetables, and suitable for preparing several portions.' }
-        ],
-        dinner: [
-            { id: 'night-dinner-turkey-wrap', name: 'Turkey, hummus and salad wholegrain wrap', calories: 465, protein: 39, carbs: 48, fat: 13, fiber: 8, note: 'A lighter, portable dinner when a large meal would feel too heavy.' },
-            { id: 'early-dinner-stirfry', name: 'Lean beef vegetable stir-fry with rice', calories: 630, protein: 46, carbs: 70, fat: 18, fiber: 9, note: 'A substantial recovery meal with lean protein and plenty of vegetables.' },
-            { id: 'day-dinner-chilli', name: 'Turkey and bean chilli with rice', calories: 650, protein: 50, carbs: 72, fat: 18, fiber: 13, note: 'A batch-cook dinner with protein, vegetables and high-fibre carbohydrate.' },
-            { id: 'off-dinner-cod', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced dinner with lean protein, colourful vegetables and carbohydrate.' }
-        ],
-        snack: [
-            { id: 'night-snack-yogurt', name: 'Greek yogurt, berries and almonds', calories: 275, protein: 24, carbs: 22, fat: 10, fiber: 5, note: 'A protein-forward option that is easy to portion and carry to work.' },
-            { id: 'early-snack-banana-yogurt', name: 'High-protein yogurt with banana', calories: 265, protein: 24, carbs: 35, fat: 3, fiber: 4, note: 'Quick carbohydrate and protein for a short break or busy morning.' },
-            { id: 'day-snack-cottage-cheese', name: 'Cottage cheese, apple and oatcakes', calories: 285, protein: 25, carbs: 28, fat: 8, fiber: 5, note: 'A portable snack that adds protein without relying on sweets or pastries.' },
-            { id: 'off-snack-smoothie', name: 'Protein berry smoothie with oats', calories: 320, protein: 30, carbs: 36, fat: 6, fiber: 8, note: 'Milk or a fortified alternative, protein, berries and oats blended together.' }
-        ]
+        night: Object.freeze({
+            breakfast: Object.freeze([
+                { id: 'night-breakfast-oats', name: 'Protein overnight oats with berries', calories: 485, protein: 36, carbs: 58, fat: 12, fiber: 9, note: 'Oats, Greek yogurt, whey and berries prepared ahead as one filling meal after waking.' },
+                { id: 'night-breakfast-yogurt-bowl', name: 'Greek yogurt, banana and granola bowl', calories: 455, protein: 34, carbs: 57, fat: 10, fiber: 7, note: 'A quick no-cook first meal with fruit, wholegrain carbohydrate and a clear protein serving.' },
+                { id: 'night-breakfast-eggs-beans', name: 'Eggs, beans and wholegrain toast', calories: 510, protein: 32, carbs: 58, fat: 17, fiber: 13, note: 'A hot meal after waking that combines protein and high-fibre carbohydrate before the shift.' },
+                { id: 'night-breakfast-smoothie', name: 'Protein berry smoothie with oats', calories: 470, protein: 38, carbs: 55, fat: 11, fiber: 10, note: 'Milk, whey, berries, oats and a small spoon of peanut butter blended for busy nights.' }
+            ]),
+            lunch: Object.freeze([
+                { id: 'night-lunch-chicken-rice', name: 'Chicken, brown rice and roasted veg bowl', calories: 610, protein: 48, carbs: 67, fat: 16, fiber: 9, note: 'A filling pre-shift meal-prep bowl with protein, vegetables and slow-release carbohydrate.' },
+                { id: 'night-lunch-salmon-potato', name: 'Salmon, baby potatoes and green vegetables', calories: 625, protein: 43, carbs: 59, fat: 23, fiber: 10, note: 'A substantial anchor meal around two hours before work, with oily fish and vegetables.' },
+                { id: 'night-lunch-turkey-chilli', name: 'Turkey and bean chilli with rice', calories: 640, protein: 49, carbs: 72, fat: 17, fiber: 14, note: 'A batch-cook option with lean protein and fibre to help control hunger later in the shift.' },
+                { id: 'night-lunch-tofu-noodles', name: 'Tofu and edamame noodle stir-fry', calories: 590, protein: 36, carbs: 68, fat: 20, fiber: 12, note: 'A plant-based pre-shift meal with vegetables, soy protein and moderate carbohydrate.' }
+            ]),
+            dinner: Object.freeze([
+                { id: 'night-dinner-turkey-wrap', name: 'Turkey, hummus and salad wholegrain wrap', calories: 465, protein: 39, carbs: 48, fat: 13, fiber: 8, note: 'A lighter, portable dinner for early in the shift when a large meal would feel too heavy.' },
+                { id: 'night-dinner-tuna-couscous', name: 'Tuna and vegetable couscous pot', calories: 450, protein: 38, carbs: 52, fat: 10, fiber: 8, note: 'Easy to pack and eat cold, with enough protein for a main break without a heavy portion.' },
+                { id: 'night-dinner-chicken-soup', name: 'Chicken and vegetable soup with a wholegrain roll', calories: 430, protein: 36, carbs: 49, fat: 10, fiber: 9, note: 'A warm but lighter early-shift meal that is practical to batch-cook and reheat.' },
+                { id: 'night-dinner-jacket-potato', name: 'Cottage cheese jacket potato with salad', calories: 475, protein: 32, carbs: 66, fat: 9, fiber: 10, note: 'A simple early-shift dinner with a high-protein topping and plenty of fibre.' }
+            ]),
+            snack: Object.freeze([
+                { id: 'night-snack-yogurt', name: 'Greek yogurt, berries and almonds', calories: 275, protein: 24, carbs: 22, fat: 10, fiber: 5, note: 'A protein-forward option that is easy to portion and carry for a mid-shift break.' },
+                { id: 'night-snack-shake-banana', name: 'Protein shake with a banana', calories: 260, protein: 28, carbs: 32, fat: 3, fiber: 4, note: 'A quick backup for unpredictable breaks, combining protein with an easy-to-carry fruit.' },
+                { id: 'night-snack-cottage-oatcakes', name: 'Cottage cheese with oatcakes', calories: 290, protein: 26, carbs: 29, fat: 8, fiber: 5, note: 'A savoury snack with slow-digesting protein that can replace vending-machine food.' },
+                { id: 'night-snack-eggs-fruit', name: 'Two boiled eggs with an apple', calories: 250, protein: 15, carbs: 27, fat: 10, fiber: 5, note: 'Prepared ahead for a smaller deep-night snack when genuinely hungry.' }
+            ])
+        }),
+        early: Object.freeze({
+            breakfast: Object.freeze([
+                { id: 'early-breakfast-wrap', name: 'Egg, turkey and spinach breakfast wrap', calories: 435, protein: 35, carbs: 42, fat: 14, fiber: 6, note: 'A portable hot or cold breakfast that can be prepared the night before.' },
+                { id: 'early-breakfast-porridge', name: 'Protein porridge with banana', calories: 445, protein: 34, carbs: 57, fat: 10, fiber: 9, note: 'Microwave or overnight oats make this practical before an early start.' },
+                { id: 'early-breakfast-yogurt-pot', name: 'Greek yogurt overnight-oats pot', calories: 420, protein: 32, carbs: 52, fat: 9, fiber: 8, note: 'Prepare it before bed so breakfast does not reduce an already-short sleep window.' },
+                { id: 'early-breakfast-sandwich', name: 'Egg and lean ham wholemeal sandwich', calories: 410, protein: 31, carbs: 43, fat: 13, fiber: 7, note: 'A portable breakfast for mornings when there is no time to sit down before leaving.' }
+            ]),
+            lunch: Object.freeze([
+                { id: 'early-lunch-pasta', name: 'Chicken pesto pasta salad', calories: 575, protein: 45, carbs: 62, fat: 16, fiber: 7, note: 'Easy to pack and eat cold when a work break is short or unpredictable.' },
+                { id: 'early-lunch-tuna-rice', name: 'Tuna, sweetcorn and rice pot', calories: 535, protein: 40, carbs: 65, fat: 12, fiber: 7, note: 'A portable balanced lunch that can be batch-prepared for several early shifts.' },
+                { id: 'early-lunch-turkey-wrap', name: 'Turkey salad wrap with fruit', calories: 505, protein: 39, carbs: 59, fat: 12, fiber: 9, note: 'Quick to eat on a short break while still providing protein, carbohydrate and fibre.' },
+                { id: 'early-lunch-chicken-soup', name: 'Chicken and lentil soup with wholegrain bread', calories: 550, protein: 43, carbs: 64, fat: 13, fiber: 14, note: 'A filling reheatable lunch with lean protein and high-fibre pulses.' }
+            ]),
+            dinner: Object.freeze([
+                { id: 'early-dinner-stirfry', name: 'Lean beef vegetable stir-fry with rice', calories: 630, protein: 46, carbs: 70, fat: 18, fiber: 9, note: 'A substantial recovery meal with lean protein and vegetables soon after work.' },
+                { id: 'early-dinner-salmon', name: 'Baked salmon, potatoes and broccoli', calories: 610, protein: 44, carbs: 56, fat: 23, fiber: 10, note: 'A balanced main meal early enough to protect the earlier bedtime needed for the next shift.' },
+                { id: 'early-dinner-fajita', name: 'Chicken fajita rice bowl', calories: 620, protein: 49, carbs: 69, fat: 17, fiber: 11, note: 'Chicken, peppers, beans and rice make a colourful post-shift recovery meal.' },
+                { id: 'early-dinner-turkey-pasta', name: 'Turkey tomato pasta with vegetables', calories: 600, protein: 47, carbs: 72, fat: 13, fiber: 12, note: 'A family-friendly batch meal that gives protein and carbohydrate without a very late dinner.' }
+            ]),
+            snack: Object.freeze([
+                { id: 'early-snack-banana-yogurt', name: 'High-protein yogurt with banana', calories: 265, protein: 24, carbs: 35, fat: 3, fiber: 4, note: 'Quick carbohydrate and protein for a short morning break.' },
+                { id: 'early-snack-eggs-oatcakes', name: 'Boiled eggs with oatcakes', calories: 270, protein: 18, carbs: 23, fat: 12, fiber: 4, note: 'A savoury option that can be packed the previous evening and eaten without reheating.' },
+                { id: 'early-snack-cottage-fruit', name: 'Cottage cheese with berries', calories: 235, protein: 25, carbs: 21, fat: 6, fiber: 5, note: 'A lighter protein-rich snack for the morning or the journey home.' },
+                { id: 'early-snack-shake-apple', name: 'Protein shake with an apple', calories: 250, protein: 27, carbs: 31, fat: 2, fiber: 5, note: 'A fast option to keep in reserve when an early shift delays the planned break.' }
+            ])
+        }),
+        day: Object.freeze({
+            breakfast: Object.freeze([
+                { id: 'day-breakfast-porridge', name: 'Protein porridge with banana and cinnamon', calories: 450, protein: 33, carbs: 55, fat: 11, fiber: 9, note: 'Slow-release carbohydrate with a clear protein serving for steadier energy.' },
+                { id: 'day-breakfast-eggs-toast', name: 'Scrambled eggs, tomatoes and wholegrain toast', calories: 430, protein: 30, carbs: 41, fat: 17, fiber: 8, note: 'A balanced cooked breakfast before the shift with protein, vegetables and wholegrains.' },
+                { id: 'day-breakfast-yogurt-muesli', name: 'Greek yogurt, muesli and berries', calories: 425, protein: 31, carbs: 53, fat: 10, fiber: 9, note: 'A quick no-cook breakfast that is easy to scale around the day’s calorie target.' },
+                { id: 'day-breakfast-bagel', name: 'Egg and smoked salmon wholemeal bagel', calories: 475, protein: 34, carbs: 49, fat: 16, fiber: 7, note: 'A higher-protein portable breakfast for a busy day shift.' }
+            ]),
+            lunch: Object.freeze([
+                { id: 'day-lunch-tuna-potato', name: 'Tuna jacket potato with mixed salad', calories: 530, protein: 40, carbs: 65, fat: 12, fiber: 10, note: 'A practical main meal that is filling without being difficult to prepare.' },
+                { id: 'day-lunch-chicken-quinoa', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'High in protein and vegetables, and suitable for preparing several portions.' },
+                { id: 'day-lunch-burrito-bowl', name: 'Lean beef and bean burrito bowl', calories: 625, protein: 45, carbs: 72, fat: 18, fiber: 15, note: 'A filling work-break meal with lean protein, beans, rice and colourful vegetables.' },
+                { id: 'day-lunch-falafel-chicken', name: 'Chicken and falafel wholegrain pitta', calories: 565, protein: 43, carbs: 61, fat: 17, fiber: 12, note: 'A portable pitta with salad and yogurt dressing for a lunch away from a microwave.' }
+            ]),
+            dinner: Object.freeze([
+                { id: 'day-dinner-chilli', name: 'Turkey and bean chilli with rice', calories: 650, protein: 50, carbs: 72, fat: 18, fiber: 13, note: 'A batch-cook dinner with protein, vegetables and high-fibre carbohydrate.' },
+                { id: 'day-dinner-cod', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced dinner with lean protein, colourful vegetables and carbohydrate.' },
+                { id: 'day-dinner-curry', name: 'Chicken and vegetable curry with basmati rice', calories: 635, protein: 48, carbs: 73, fat: 17, fiber: 11, note: 'A batch-friendly evening meal that can be portioned to the current calorie goal.' },
+                { id: 'day-dinner-bolognese', name: 'Lean beef bolognese with wholewheat pasta', calories: 640, protein: 46, carbs: 76, fat: 17, fiber: 13, note: 'A familiar high-protein dinner with extra vegetables and wholewheat pasta.' }
+            ]),
+            snack: Object.freeze([
+                { id: 'day-snack-cottage-cheese', name: 'Cottage cheese, apple and oatcakes', calories: 285, protein: 25, carbs: 28, fat: 8, fiber: 5, note: 'A portable snack that adds protein without relying on sweets or pastries.' },
+                { id: 'day-snack-yogurt', name: 'High-protein yogurt with berries', calories: 220, protein: 24, carbs: 24, fat: 3, fiber: 5, note: 'A simple chilled snack for the gap between lunch and the end of the shift.' },
+                { id: 'day-snack-hummus', name: 'Hummus, vegetable sticks and turkey slices', calories: 280, protein: 22, carbs: 24, fat: 11, fiber: 7, note: 'A savoury snack with crunch, fibre and a stronger protein contribution.' },
+                { id: 'day-snack-shake', name: 'Protein shake with a small banana', calories: 245, protein: 27, carbs: 30, fat: 2, fiber: 4, note: 'A convenient option for a busy afternoon or before training after work.' }
+            ])
+        }),
+        off: Object.freeze({
+            breakfast: Object.freeze([
+                { id: 'off-breakfast-eggs', name: 'Eggs, avocado and wholegrain toast', calories: 480, protein: 30, carbs: 45, fat: 20, fiber: 10, note: 'A balanced cooked breakfast with protein, fibre and satisfying fats.' },
+                { id: 'off-breakfast-pancakes', name: 'Protein pancakes with yogurt and berries', calories: 465, protein: 37, carbs: 55, fat: 11, fiber: 8, note: 'A slower off-day breakfast that still provides a clear protein serving.' },
+                { id: 'off-breakfast-oats', name: 'Apple-cinnamon protein oats', calories: 445, protein: 33, carbs: 58, fat: 9, fiber: 11, note: 'A high-fibre breakfast to help return meal timing to the daytime.' },
+                { id: 'off-breakfast-shakshuka', name: 'Shakshuka with wholegrain toast', calories: 470, protein: 29, carbs: 50, fat: 18, fiber: 12, note: 'Eggs, tomatoes, peppers and toast make a vegetable-rich off-day meal.' }
+            ]),
+            lunch: Object.freeze([
+                { id: 'off-lunch-quinoa', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'High in protein and vegetables, and suitable for preparing several portions.' },
+                { id: 'off-lunch-omelette', name: 'Chicken and vegetable omelette with potatoes', calories: 570, protein: 45, carbs: 49, fat: 21, fiber: 9, note: 'A substantial daytime meal that works well before an off-day training session.' },
+                { id: 'off-lunch-salmon-pitta', name: 'Salmon and salad wholegrain pitta', calories: 540, protein: 39, carbs: 51, fat: 19, fiber: 9, note: 'A quick lunch with oily fish, salad and a wholegrain carbohydrate source.' },
+                { id: 'off-lunch-lentil-bowl', name: 'Lentil, chicken and roasted vegetable bowl', calories: 585, protein: 46, carbs: 63, fat: 16, fiber: 17, note: 'A high-fibre meal-prep bowl for daytime eating on a rest day.' }
+            ]),
+            dinner: Object.freeze([
+                { id: 'off-dinner-cod', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced dinner with lean protein, colourful vegetables and carbohydrate.' },
+                { id: 'off-dinner-roast-chicken', name: 'Roast chicken, potatoes and vegetables', calories: 640, protein: 52, carbs: 65, fat: 19, fiber: 11, note: 'A balanced family meal that can also provide prepared portions for upcoming shifts.' },
+                { id: 'off-dinner-beef-stew', name: 'Lean beef and vegetable stew', calories: 590, protein: 47, carbs: 58, fat: 18, fiber: 13, note: 'A batch-cook dinner with protein, root vegetables and beans.' },
+                { id: 'off-dinner-tofu-curry', name: 'Tofu and chickpea curry with rice', calories: 620, protein: 32, carbs: 78, fat: 20, fiber: 16, note: 'A plant-based dinner with tofu, pulses and vegetables for protein and fibre.' }
+            ]),
+            snack: Object.freeze([
+                { id: 'off-snack-smoothie', name: 'Protein berry smoothie with oats', calories: 320, protein: 30, carbs: 36, fat: 6, fiber: 8, note: 'Milk or a fortified alternative, protein, berries and oats blended together.' },
+                { id: 'off-snack-yogurt-nuts', name: 'Greek yogurt with fruit and walnuts', calories: 285, protein: 24, carbs: 25, fat: 11, fiber: 5, note: 'A filling snack that combines protein, fruit and a measured portion of nuts.' },
+                { id: 'off-snack-tuna-oatcakes', name: 'Tuna and cucumber oatcakes', calories: 265, protein: 25, carbs: 24, fat: 8, fiber: 5, note: 'A savoury high-protein option for an afternoon break.' },
+                { id: 'off-snack-chocolate-yogurt', name: 'Chocolate protein yogurt pot', calories: 250, protein: 27, carbs: 28, fat: 4, fiber: 4, note: 'Greek yogurt, cocoa, berries and a little granola for a sweeter planned option.' }
+            ])
+        })
     });
     const SHIFT_MEAL_TIMINGS = Object.freeze({
         night: { breakfast: 'After waking', lunch: 'About 2h before shift', dinner: 'Early in the shift', snack: 'Mid-shift if hungry' },
@@ -6734,8 +6823,13 @@
     });
     const SHIFT_MEAL_ROTATION = Object.create(null);
 
+    function shiftMealIdeasFor(type, mealType) {
+        const shiftIdeas = SHIFT_MEAL_IDEAS[type] || SHIFT_MEAL_IDEAS.off;
+        return (shiftIdeas && shiftIdeas[mealType]) || [];
+    }
+
     function shiftMealIdeaCardHTML(type, mealType, dateKey) {
-        const ideas = SHIFT_MEAL_IDEAS[mealType] || [];
+        const ideas = shiftMealIdeasFor(type, mealType);
         if (!ideas.length) return '';
         const key = type + ':' + mealType;
         const index = ((Number(SHIFT_MEAL_ROTATION[key]) || 0) % ideas.length + ideas.length) % ideas.length;
@@ -6754,7 +6848,8 @@
 
     function shiftMealCategoryHTML(type, mealType, dateKey) {
         const icons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
-        return `<div class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="4"><p class="font-black capitalize mb-3">${icons[mealType]} ${mealType}</p><div id="shift-meal-option-${type}-${mealType}">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></div>`;
+        const optionCount = shiftMealIdeasFor(type, mealType).length;
+        return `<details class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><summary class="font-black capitalize cursor-pointer">${icons[mealType]} ${mealType} · ${optionCount} choices</summary><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></details>`;
     }
 
     function shiftMealIdeasHTML(type, dateKey) {
@@ -6768,7 +6863,7 @@
     }
 
     function rotateShiftMealIdea(type, mealType, direction, dateKey) {
-        const ideas = SHIFT_MEAL_IDEAS[mealType] || [];
+        const ideas = shiftMealIdeasFor(type, mealType);
         if (!ideas.length) return;
         const key = type + ':' + mealType;
         SHIFT_MEAL_ROTATION[key] = ((Number(SHIFT_MEAL_ROTATION[key]) || 0) + Number(direction || 0) + ideas.length) % ideas.length;
@@ -6778,7 +6873,7 @@
     }
 
     function addShiftMealIdea(type, mealType, index, dateKey) {
-        const ideas = SHIFT_MEAL_IDEAS[mealType];
+        const ideas = shiftMealIdeasFor(type, mealType);
         const idea = ideas && ideas[Number(index)];
         const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? String(dateKey) : state.viewDate;
         if (!idea || !/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || ''))) { showToast('Meal idea unavailable'); return; }
@@ -12408,6 +12503,7 @@
     // ==========================================================================
 
     let barcodeScanMode = 'food'; // 'food' → food popup; 'meal' → add as meal ingredient
+    let barcodeScannerEmbedded = false;
     let barcodeScanLocked = false;
     let barcodeLookupInProgress = false;
     let barcodeScannerEngine = null; // 'native', 'html5' or 'quagga'
@@ -12426,6 +12522,8 @@
     let nativeBarcodeLoopTimer = null;
     let nativeBarcodeFrameBusy = false;
     let barcodeImageDecodeInProgress = false;
+    let barcodeImagePickerOpen = false;
+    let barcodeImagePickerStopPromise = null;
 
     const OPEN_FOOD_FACTS_PRODUCT_FIELDS = [
         'code',
@@ -13197,12 +13295,55 @@
         });
     }
 
+    function openBarcodeImagePicker() {
+        if (barcodeLookupInProgress || barcodeImageDecodeInProgress || barcodeImagePickerOpen) return;
+        const input = document.getElementById('barcode-image-input');
+        if (!input || !activeBarcodeOnScan) {
+            setBarcodeScanStatus('Open the scanner before choosing a barcode photo', 'warning');
+            return;
+        }
+
+        // Android may background the page while its camera/file picker is open.
+        // Mark that transition first and release the live camera, but keep this
+        // scanner session and callback alive for the selected photo.
+        barcodeImagePickerOpen = true;
+        input.value = '';
+        setBarcodeScanStatus('Opening camera for barcode photo…');
+        barcodeImagePickerStopPromise = stopActiveBarcodeScanner().catch(error => {
+            console.warn('Live scanner could not be released before photo capture:', error);
+        });
+        input.click();
+    }
+
+    async function cancelBarcodeImagePicker() {
+        if (!barcodeImagePickerOpen) return;
+        const session = barcodeScannerSession;
+        barcodeImagePickerOpen = false;
+        const stopPromise = barcodeImagePickerStopPromise;
+        barcodeImagePickerStopPromise = null;
+        if (stopPromise) await stopPromise;
+        if (session !== barcodeScannerSession || barcodeScanLocked || barcodeLookupInProgress) return;
+        setBarcodeScanStatus('Photo cancelled — restarting live scanner…');
+        await restartBarcodeScannerAfterLookup();
+    }
+
     async function scanBarcodeImage(input) {
         const file = input && input.files && input.files[0];
-        if (!file || barcodeLookupInProgress || barcodeImageDecodeInProgress) return;
         const session = barcodeScannerSession;
         const onScan = activeBarcodeOnScan;
-        input.value = '';
+        barcodeImagePickerOpen = false;
+        const stopPromise = barcodeImagePickerStopPromise;
+        barcodeImagePickerStopPromise = null;
+        if (input) input.value = '';
+        if (stopPromise) await stopPromise;
+
+        if (!file) {
+            if (session === barcodeScannerSession && onScan && !barcodeScanLocked && !barcodeLookupInProgress) {
+                await restartBarcodeScannerAfterLookup();
+            }
+            return;
+        }
+        if (barcodeLookupInProgress || barcodeImageDecodeInProgress) return;
         if (!onScan) {
             setBarcodeScanStatus('Open the scanner again, then choose Photo', 'warning');
             return;
@@ -13214,7 +13355,7 @@
         let lastError = null;
 
         try {
-            await stopActiveBarcodeScanner();
+            if (!stopPromise) await stopActiveBarcodeScanner();
             if (session !== barcodeScannerSession) return;
             activeBarcodeOnScan = onScan;
 
@@ -13427,8 +13568,53 @@
         throw lastError || new Error('Open Food Facts lookup failed');
     }
 
+    function mountBarcodeScannerSurface() {
+        const modal = document.getElementById('barcode-scanner-modal');
+        const card = document.getElementById('barcode-scanner-card');
+        const mealSlot = document.getElementById('meal-barcode-inline-slot');
+        if (!modal || !card) return false;
+
+        if (barcodeScannerEmbedded && mealSlot) {
+            modal.style.display = 'none';
+            mealSlot.classList.remove('hidden');
+            if (card.parentElement !== mealSlot) mealSlot.appendChild(card);
+            requestAnimationFrame(() => {
+                try { mealSlot.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (error) {}
+            });
+            return true;
+        }
+
+        if (card.parentElement !== modal) modal.appendChild(card);
+        if (mealSlot) mealSlot.classList.add('hidden');
+        modal.style.display = 'flex';
+        return true;
+    }
+
+    function restoreBarcodeScannerSurface() {
+        const modal = document.getElementById('barcode-scanner-modal');
+        const card = document.getElementById('barcode-scanner-card');
+        const mealSlot = document.getElementById('meal-barcode-inline-slot');
+        if (modal && card && card.parentElement !== modal) modal.appendChild(card);
+        if (modal) modal.style.display = 'none';
+        if (mealSlot) {
+            mealSlot.classList.add('hidden');
+            mealSlot.innerHTML = '';
+        }
+    }
+
+    function showMealBarcodeResult(food) {
+        const result = document.getElementById('meal-barcode-result');
+        const product = document.getElementById('meal-barcode-product');
+        const number = document.getElementById('meal-barcode-number');
+        const code = normaliseBarcode(food && (food.scannedBarcode || food.barcode));
+        if (product) product.textContent = String((food && food.name) || 'Scanned ingredient');
+        if (number) number.textContent = code;
+        if (result) result.classList.remove('hidden');
+    }
+
     function openMealBarcodeScanner() {
         barcodeScanMode = 'meal';
+        barcodeScannerEmbedded = true;
         openBarcodeScanner();
     }
 
@@ -13437,10 +13623,9 @@
         const modal = document.getElementById('barcode-scanner-modal');
         const input = document.getElementById('manual-barcode');
         const imageInput = document.getElementById('barcode-image-input');
-        if (!modal) return;
+        if (!modal || !mountBarcodeScannerSurface()) return;
         const title = document.getElementById('barcode-scanner-title');
         if (title) title.textContent = barcodeScanMode === 'meal' ? 'Scan Ingredient Barcode' : 'Scan Barcode';
-        modal.style.display = 'flex';
         if (input) input.value = '';
         if (imageInput) imageInput.value = '';
         setBarcodeDetectedCode('');
@@ -13449,6 +13634,8 @@
         barcodeScanLocked = false;
         barcodeLookupInProgress = false;
         barcodeImageDecodeInProgress = false;
+        barcodeImagePickerOpen = false;
+        barcodeImagePickerStopPromise = null;
         barcodeTriedEngines = new Set();
         activeBarcodeOnScan = null;
         resetBarcodeCandidate();
@@ -13503,15 +13690,23 @@
     }
 
     async function closeBarcodeScanner() {
+        const wasEmbedded = barcodeScannerEmbedded;
         barcodeScannerSession += 1;
         barcodeScanLocked = false;
         barcodeImageDecodeInProgress = false;
+        barcodeImagePickerOpen = false;
+        barcodeImagePickerStopPromise = null;
         activeBarcodeOnScan = null;
         setBarcodeLookupBusy(false);
         await stopActiveBarcodeScanner();
         setBarcodeDetectedCode('');
-        const modal = document.getElementById('barcode-scanner-modal');
-        if (modal) modal.style.display = 'none';
+        if (wasEmbedded) restoreBarcodeScannerSurface();
+        else {
+            const modal = document.getElementById('barcode-scanner-modal');
+            if (modal) modal.style.display = 'none';
+        }
+        barcodeScannerEmbedded = false;
+        barcodeScanMode = 'food';
     }
 
     async function useResolvedBarcodeFood(food) {
@@ -13520,6 +13715,7 @@
         await closeBarcodeScanner();
 
         if (requestedMode === 'meal') {
+            const previousCount = mealIngredients.length;
             addIngredient({
                 name: food.name || 'Scanned item',
                 cal: food.calories || 0,
@@ -13532,6 +13728,7 @@
                 image: food.image || '',
                 barcode: food.scannedBarcode || food.barcode || ''
             });
+            if (mealIngredients.length > previousCount) showMealBarcodeResult(food);
         } else {
             openFoodPopupModel(food);
         }
@@ -13687,6 +13884,12 @@
         document.getElementById('create-meal-modal').style.display = 'flex';
         mealIngredients = [];
         document.getElementById('meal-name-input').value = '';
+        const barcodeResult = document.getElementById('meal-barcode-result');
+        if (barcodeResult) barcodeResult.classList.add('hidden');
+        const barcodeProduct = document.getElementById('meal-barcode-product');
+        const barcodeNumber = document.getElementById('meal-barcode-number');
+        if (barcodeProduct) barcodeProduct.textContent = '';
+        if (barcodeNumber) barcodeNumber.textContent = '';
         setupMealIngredientSearch();
         clearMealIngredientSearch();
         const planDate = document.getElementById('create-meal-plan-date');
@@ -13701,6 +13904,7 @@
     }
 
     function closeCreateMeal() {
+        if (barcodeScannerEmbedded) closeBarcodeScanner();
         document.getElementById('create-meal-modal').style.display = 'none';
     }
 
@@ -13921,7 +14125,10 @@
         list.innerHTML = mealIngredients.map((ing, i) => `
             <div class="bg-slate-50 p-3 rounded-xl">
                 <div class="flex items-center justify-between mb-2">
-                    <p class="text-sm font-bold flex-1 min-w-0 truncate">${escapeHtml(ing.name)}</p>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-bold truncate">${escapeHtml(ing.name)}</p>
+                        ${ing.barcode ? `<p class="text-[10px] text-emerald-700 mt-0.5">Barcode <span class="font-mono font-black">${escapeHtml(ing.barcode)}</span></p>` : ''}
+                    </div>
                     <button onclick="removeIngredient(${i})" class="w-7 h-7 bg-red-50 text-red-500 rounded-lg text-sm flex-shrink-0 ml-2" aria-label="Remove ${escapeHtml(ing.name || 'ingredient')}">×</button>
                 </div>
                 <div class="flex items-center gap-2">
@@ -14418,22 +14625,34 @@
     // MIDNIGHT AUTO-SAVE WATCHDOG
     // ==========================================================================
 
+    function rollVfitToCurrentDayIfNeeded() {
+        const currentDate = localDateKey();
+        if (!lastCheckDate) {
+            lastCheckDate = currentDate;
+            return false;
+        }
+        if (currentDate === lastCheckDate) return false;
+
+        // Save whichever nutrition date was being edited before moving every
+        // active page to the new device-local day. Historical records and an
+        // unfinished workout's original date remain intact.
+        saveDailyNutrition();
+        lastCheckDate = currentDate;
+        resetActiveDatesToToday({ preserveActiveWorkout: true });
+        saveState();
+        renderDiary();
+        renderShiftWorker();
+        renderDashboard();
+        renderMetricsStatusLines();
+        renderMetricsHistory();
+        return true;
+    }
+
     function setupMidnightCheck() {
         if (midnightCheckInterval) clearInterval(midnightCheckInterval);
-        lastCheckDate = new Date().toDateString();
+        lastCheckDate = localDateKey();
         midnightCheckInterval = setInterval(() => {
-            const currentDate = new Date().toDateString();
-            if (currentDate !== lastCheckDate) {
-                saveDailyNutrition();
-                lastCheckDate = currentDate;
-                resetActiveDatesToToday({ preserveActiveWorkout: true });
-                saveState();
-                renderDiary();
-                renderShiftWorker();
-                renderDashboard();
-                renderMetricsStatusLines();
-                renderMetricsHistory();
-            }
+            rollVfitToCurrentDayIfNeeded();
         }, 60000);
     }
 
@@ -19895,9 +20114,26 @@
                 clearInterval(workoutTimer);
                 workoutTimer = null;
                 const scannerModal = document.getElementById('barcode-scanner-modal');
-                if (scannerModal && scannerModal.style.display === 'flex') closeBarcodeScanner();
+                // A file/camera picker briefly hides the page on Android. Keep
+                // that scanner session alive so its selected photo can be decoded.
+                const scannerIsVisible = barcodeScannerEmbedded || (scannerModal && scannerModal.style.display === 'flex');
+                if (scannerIsVisible && !barcodeImagePickerOpen) {
+                    closeBarcodeScanner();
+                }
             }
             else if (document.visibilityState === 'visible') {
+                if (currentUser) rollVfitToCurrentDayIfNeeded();
+                if (barcodeImagePickerOpen) {
+                    // Older WebViews do not always emit the file-input `cancel`
+                    // event. Detect a return with no selected file and restore the
+                    // live scanner instead of leaving a black camera surface.
+                    setTimeout(() => {
+                        const imageInput = document.getElementById('barcode-image-input');
+                        if (barcodeImagePickerOpen && !(imageInput && imageInput.files && imageInput.files.length)) {
+                            cancelBarcodeImagePicker().catch(error => console.warn('Scanner restart failed:', error));
+                        }
+                    }, 800);
+                }
                 // Resume display updates; the away time is already included by
                 // currentWorkoutElapsed() because workoutStartTime never changed.
                 const activeEl = document.getElementById('workout-active');

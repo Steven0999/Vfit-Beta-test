@@ -43,6 +43,12 @@ assert.ok(html.includes('aspectRatio: 1.6'), 'the original barcode scanner aspec
 assert.ok(html.includes('maxlength="64" placeholder="Or enter barcode manually..."'), 'the original manual barcode entry must be preserved');
 assert.ok(!html.includes('barcode-torch-button'), 'the replacement torch control must not remain');
 assert.ok(!html.includes('scanBarcodePhoto('), 'the replacement photo-scanning path must not remain');
+assert.ok(html.includes('onclick="openBarcodeImagePicker()"'), 'photo barcode capture must release the live Android camera first');
+assert.ok(html.includes('oncancel="cancelBarcodeImagePicker()"'), 'cancelling a barcode photo must restart the live scanner');
+assert.ok(html.includes('const scannerIsVisible = barcodeScannerEmbedded ||') && html.includes('scannerIsVisible && !barcodeImagePickerOpen'), 'Android photo capture must survive the page-hidden transition');
+assert.ok(html.includes('id="meal-barcode-inline-slot"') && html.includes('mealSlot.appendChild(card)'), 'the Create Meal scanner must stay embedded in the meal planner');
+assert.ok(html.includes('id="meal-barcode-number"') && html.includes('showMealBarcodeResult(food)'), 'the full scanned barcode must appear in the meal planner');
+assert.ok(html.includes('ing.barcode') && html.includes('escapeHtml(ing.barcode)'), 'scanned ingredient rows must retain and display their barcode');
 assert.ok(!/localStorage\.setItem\(['"]fittrack_state/.test(html), 'legacy shared state must never be overwritten');
 assert.ok(!/\beval\s*\(/.test(inlineScripts[0]), 'eval is not permitted');
 assert.ok(!/\bnew\s+Function\s*\(/.test(inlineScripts[0]), 'dynamic Function is not permitted');
@@ -136,6 +142,8 @@ assert.ok(html.includes('id="ai-coach-checkin-modal"'), 'conversational AI Coach
 assert.ok(html.includes('role="log" aria-live="polite"'), 'AI Coach conversation must announce new messages accessibly');
 assert.ok(html.includes('id="mg-scope-general"') && html.includes('id="mg-scope-specific"'), 'muscle goals must distinguish full-body and specific-area focus');
 assert.ok(html.includes('12–16 sets per muscle/week') && html.includes('12–20 sets per priority/week'), 'goal-specific weekly set ranges must be visible');
+assert.ok(html.includes('function shiftMealIdeasFor('), 'shift-specific meal rotations must be present');
+assert.ok(html.includes('data-shift-meal-options="${optionCount}"'), 'shift meal categories must expose their real option count');
 assert.ok(html.includes("id: 'deloadWeek'"), 'severe fatigue must reveal a deload-week question');
 assert.ok(html.includes('startedAt: workoutStartTime'), 'active workouts must persist the absolute start timestamp');
 assert.ok(html.includes('return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now())'), 'workout duration must derive from wall-clock time');
