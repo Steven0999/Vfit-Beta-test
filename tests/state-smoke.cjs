@@ -5,8 +5,10 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(new URL('../index.html', `file://${__filename}`), 'utf8');
+const appSource = fs.readFileSync(new URL('../App.js', `file://${__filename}`), 'utf8');
 const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
-assert.equal(inlineScripts.length, 1, 'expected one inline application script');
+assert.equal(inlineScripts.length, 0, 'application logic must live in App.js');
+assert.ok(html.includes('<script src="./App.js"></script>'), 'index.html must load App.js');
 
 const values = new Map();
 const localStorage = {
@@ -190,7 +192,7 @@ const expose = `
 };`;
 
 vm.createContext(sandbox);
-vm.runInContext(inlineScripts[0][1] + expose, sandbox, { filename: 'index-inline.js' });
+vm.runInContext(appSource + expose, sandbox, { filename: 'App.js' });
 const app = sandbox.__vfitTest;
 
 // User/imported strings are safe in HTML and inline-event contexts.

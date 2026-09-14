@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.7` adds a saved dietary coaching questionnaire, shift-specific dietary focus, five compatible recipes per meal for vegan, vegetarian and ketogenic plans, and a larger meal popup with ingredients and step-by-step instructions. The embedded meal-planner barcode scanner and the existing training, diary and coaching features remain in place.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.8` keeps the dietary coaching, shift-aware recipes and embedded meal-planner barcode scanner from beta.7, while splitting the former single-file page into a clear HTML skeleton, stylesheet and application script. Behaviour is unchanged, but the interface and logic are now much easier to inspect and edit.
 
 ## What is included
 
@@ -25,6 +25,16 @@ VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, off
 Push, payments, App Check and server-side deletion are deliberately disabled in `vfit-config.js` until their Firebase and Stripe values are configured. Existing beta features remain available while setup is pending.
 
 The conversational coach uses structured logic on the device and the member’s existing VFIT logs. It does not call a third-party generative-AI service or diagnose health conditions. When cloud health-data sync is enabled, its saved check-ins follow the same account and approved-coach access controls as other VFIT data.
+
+## Project layout
+
+- `index.html` — document skeleton, screens, forms and modal markup.
+- `Styles.css` — all VFIT-specific visual styles previously embedded in the page.
+- `App.js` — application state, coaching, nutrition, scanner, training and Firebase logic.
+- `vfit-config.js` — public runtime feature configuration.
+- `sw.js` — offline shell and runtime caching.
+
+The HTML loads `Styles.css` in the document head and `App.js` at the end of the body, preserving the original load order.
 
 ## Run locally
 
