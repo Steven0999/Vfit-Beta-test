@@ -153,6 +153,12 @@ const expose = `
   hasValidGtinCheckDigit,
   barcodeLookupCandidates,
   shiftMealIdeasFor,
+  personalisedShiftMealIdeas,
+  mealMatchesDietaryRequirements,
+  shiftMealRecipeSteps,
+  dietaryProfile,
+  inferDietaryRequirementsFromText,
+  applyDietaryCoachAnswers,
   mountBarcodeScannerSurface,
   restoreBarcodeScannerSurface,
   showMealBarcodeResult,
@@ -163,6 +169,7 @@ const expose = `
   openAICoachCheckIn,
   answerAICoachCheckIn,
   skipAICoachCheckInNote,
+  skipAICoachCheckInInput,
   sendAICoachCheckInMessage,
   getShiftForDate,
   smartProgressionForExercise,
@@ -204,17 +211,43 @@ const lookupVariants = Array.from(app.barcodeLookupCandidates('5000112637922'));
 assert.ok(lookupVariants.includes('5000112637922'));
 assert.ok(lookupVariants.includes('05000112637922'));
 
-// Every early, day, night and off-day meal category owns four distinct choices;
-// rotations must never borrow a meal from another shift type.
+// The original shift rotations remain intact, while the planner adds a fifth
+// compatible option and swaps to five dedicated recipes for a saved diet.
+const balancedMealState = app.defaultState();
+app.setState(balancedMealState);
 for (const type of ['night', 'early', 'day', 'off']) {
   for (const mealType of ['breakfast', 'lunch', 'dinner', 'snack']) {
     const ideas = Array.from(app.shiftMealIdeasFor(type, mealType));
-    assert.equal(ideas.length, 4, `${type} ${mealType} needs four choices`);
-    assert.equal(new Set(ideas.map(item => item.id)).size, 4, `${type} ${mealType} ids must be unique`);
-    assert.ok(ideas.every(item => item.id.startsWith(`${type}-`)), `${type} ${mealType} must stay shift-specific`);
+    assert.equal(ideas.length, 5, `${type} ${mealType} needs five visible choices`);
+    assert.equal(new Set(ideas.map(item => item.id)).size, 5, `${type} ${mealType} ids must be unique`);
+    assert.ok(ideas.slice(0, 4).every(item => item.id.startsWith(`${type}-`)), `${type} base rotation must stay shift-specific`);
     assert.ok(ideas.every(item => item.calories > 0 && item.protein > 0));
   }
 }
+
+const veganMealState = app.defaultState();
+veganMealState.dietaryProfile.completed = true;
+veganMealState.dietaryProfile.pattern = 'vegan';
+app.setState(veganMealState);
+const standardVeganBreakfasts = Array.from(app.shiftMealIdeasFor('night', 'breakfast'));
+assert.equal(standardVeganBreakfasts.length, 5);
+assert.ok(standardVeganBreakfasts.every(item => item.id.startsWith('vegan-')));
+assert.ok(standardVeganBreakfasts.every(item => Array.isArray(item.ingredients) && item.ingredients.length >= 4));
+assert.ok(app.shiftMealRecipeSteps(standardVeganBreakfasts[0]).length >= 3);
+
+veganMealState.dietaryProfile.approaches = ['calorie_deficit'];
+app.setState(veganMealState);
+const deficitBreakfasts = Array.from(app.shiftMealIdeasFor('night', 'breakfast'));
+assert.ok(deficitBreakfasts.every(item => item.portionAdjusted));
+assert.ok(deficitBreakfasts.every(item => {
+  const standard = standardVeganBreakfasts.find(base => base.id === item.id);
+  return standard && item.calories < standard.calories;
+}));
+assert.equal(app.mealMatchesDietaryRequirements(
+  { name: 'Greek yogurt bowl', allergens: ['dairy'] },
+  { requirements: ['dairy_free'] }
+), false);
+app.setState(app.defaultState());
 
 // Active pages return to the local current day, while an unfinished workout
 // remains attached to the day on which it actually started.
@@ -252,16 +285,21 @@ assert.equal(document.getElementById('meal-barcode-number').textContent, '500011
 assert.equal(document.getElementById('meal-barcode-result').classList.contains('hidden'), false);
 
 // Untrusted backups cannot introduce executable/prototype keys or unknown state.
-const malicious = JSON.parse('{"goals":{"calories":2100,"__proto__":{"polluted":true}},"unknownTop":"drop-me"}');
+const malicious = JSON.parse('{"goals":{"calories":2100,"__proto__":{"polluted":true}},"dietaryProfile":{"pattern":"unsupported","approaches":["calorie_deficit","unsafe"],"requirements":"bad-shape","notes":42},"unknownTop":"drop-me"}');
 const normalized = app.normalizeState(malicious);
 assert.equal(normalized.goals.calories, 2100);
 assert.equal(normalized.unknownTop, undefined);
 assert.equal({}.polluted, undefined);
+assert.equal(normalized.dietaryProfile.pattern, 'balanced');
+assert.deepEqual([...normalized.dietaryProfile.approaches], ['calorie_deficit']);
+assert.deepEqual([...normalized.dietaryProfile.requirements], []);
+assert.equal(normalized.dietaryProfile.notes, '42');
 
 // Newer cloud preferences win while both histories survive and photos stay local.
 const local = app.normalizeState({
   meta: { updatedAt: '2026-01-01T00:00:00.000Z' },
   goals: { calories: 2200 },
+  dietaryProfile: { completed: true, pattern: 'balanced', approaches: [], requirements: [], notes: '' },
   workoutHistory: [{ id: 'local-workout', date: '2026-01-01' }],
   coachConversations: [{ id: 'local-coach-chat', date: '2026-01-01' }],
   metricsHistory: [{ date: '2026-01-01', weight: 100, photos: { front: 'data:image/jpeg;base64,AA==' } }]
@@ -269,6 +307,7 @@ const local = app.normalizeState({
 const remote = {
   meta: { updatedAt: '2026-02-01T00:00:00.000Z' },
   goals: { calories: 2400 },
+  dietaryProfile: { completed: true, pattern: 'vegan', approaches: ['calorie_deficit'], requirements: ['nut_free'], notes: 'No peanuts' },
   workoutHistory: [{ id: 'cloud-workout', date: '2026-02-01' }],
   metricsHistory: [{ date: '2026-01-01', weight: 99 }],
   checkIns: [{ id: 'cloud-checkin', date: '2026-02-01', energy: 4 }],
@@ -277,6 +316,9 @@ const remote = {
 };
 const merged = app.mergeStateSnapshots(local, remote);
 assert.equal(merged.goals.calories, 2400);
+assert.equal(merged.dietaryProfile.pattern, 'vegan');
+assert.deepEqual([...merged.dietaryProfile.approaches], ['calorie_deficit']);
+assert.ok(merged.dietaryProfile.requirements.includes('nut_free'));
 assert.deepEqual([...merged.workoutHistory.map(item => item.id)].sort(), ['cloud-workout', 'local-workout']);
 assert.equal(merged.metricsHistory[0].weight, 99);
 assert.equal(merged.metricsHistory[0].photos.front, 'data:image/jpeg;base64,AA==');
@@ -316,16 +358,44 @@ assert.equal(deloadPlan.endDate, '2026-09-10');
 assert.equal(app.isDeloadPlanActive({ deloadPlan }, '2026-09-07'), true);
 assert.equal(app.isDeloadPlanActive({ deloadPlan }, '2026-09-11'), false);
 
-// The conversational coach is one-question-at-a-time, shift-aware and safety bounded.
-const coachQuestions = app.aiCoachQuestionnaireSteps({});
+// The conversational coach keeps the daily readiness flow concise and prepends
+// dietary-plan questions only until that saved profile has been completed.
+const dailyQuestionState = app.defaultState();
+dailyQuestionState.dietaryProfile.completed = true;
+app.setState(dailyQuestionState);
+const coachQuestions = app.aiCoachQuestionnaireSteps({ __dietarySetup: false });
 assert.equal(coachQuestions.length, 7);
 assert.equal(new Set(coachQuestions.map(step => step.id)).size, 7);
 assert.ok(coachQuestions.every(step => step.question && step.options.length >= 3));
 assert.ok(!coachQuestions.some(step => step.id === 'deloadWeek'));
-const severeFatigueQuestions = app.aiCoachQuestionnaireSteps({ fatigue: '5' });
+const severeFatigueQuestions = app.aiCoachQuestionnaireSteps({ __dietarySetup: false, fatigue: '5' });
 assert.equal(severeFatigueQuestions.length, 8);
-assert.equal(severeFatigueQuestions[4].id, 'deloadWeek');
-assert.equal(severeFatigueQuestions[4].options.length, 2);
+const deloadQuestion = severeFatigueQuestions.find(step => step.id === 'deloadWeek');
+assert.ok(deloadQuestion);
+assert.equal(deloadQuestion.options.length, 2);
+
+const firstDietaryQuestions = app.aiCoachQuestionnaireSteps({ __dietarySetup: true });
+assert.ok(firstDietaryQuestions.some(step => step.id === 'dietRequirementOverview'));
+assert.ok(firstDietaryQuestions.some(step => step.id === 'dietPattern'));
+assert.ok(firstDietaryQuestions.some(step => step.id === 'dietApproach'));
+assert.ok(!firstDietaryQuestions.some(step => step.id === 'dietRequirementDetails'));
+const detailedDietaryQuestions = app.aiCoachQuestionnaireSteps({ __dietarySetup: true, dietRequirementOverview: 'allergy' });
+const dietaryDetailQuestion = detailedDietaryQuestions.find(step => step.id === 'dietRequirementDetails');
+assert.equal(dietaryDetailQuestion.inputType, 'text');
+
+const capturedDietState = app.defaultState();
+app.setState(capturedDietState);
+assert.equal(app.applyDietaryCoachAnswers({
+  dietRequirementOverview: 'allergy',
+  dietRequirementDetails: 'Severe peanut allergy',
+  dietPattern: 'vegan',
+  dietApproach: 'fasting_deficit'
+}), true);
+assert.equal(app.getState().dietaryProfile.pattern, 'vegan');
+assert.deepEqual([...app.getState().dietaryProfile.approaches], ['intermittent_fasting', 'calorie_deficit']);
+assert.equal(app.getState().dietaryProfile.notes, 'Severe peanut allergy');
+assert.ok(app.getState().dietaryProfile.requirements.includes('nut_free'));
+assert.equal(app.getState().dietaryProfile.completed, true);
 
 const readyOffDay = app.buildAICoachCheckInResult({
   mood: 'great', sleepHours: '8.5', energy: '5', fatigue: '1', soreness: '1', stress: '1', wellbeing: 'well'
@@ -353,13 +423,14 @@ assert.match(app.aiCoachFollowUpResponse('I have chest pain', readyOffDay), /eme
 
 // A complete chat flow persists both the conversation and its linked readiness score.
 const chatState = app.defaultState();
+chatState.dietaryProfile.completed = true;
 chatState.shiftProfile.enabled = true;
 chatState.shiftProfile.shiftType = 'nights';
 chatState.shiftProfile.workDays = [new Date().getDay()];
 app.setUser(null);
 app.setState(chatState);
 app.openAICoachCheckIn();
-for (const step of app.aiCoachQuestionnaireSteps()) {
+for (const step of app.aiCoachQuestionnaireSteps({ __dietarySetup: false })) {
   const answer = step.id === 'sleepHours' ? step.options.at(-1) : step.options[0];
   app.answerAICoachCheckIn(step.id, answer.value, answer.label);
 }
@@ -375,13 +446,14 @@ assert.match(completedChatState.coachConversations[0].messages.at(-1).text, /mai
 
 // Severe fatigue inserts a deload choice and activates the seven-day plan only after Yes.
 const severeChatState = app.defaultState();
+severeChatState.dietaryProfile.completed = true;
 app.setState(severeChatState);
 app.openAICoachCheckIn();
 const severeAnswers = {
   mood: 'drained', sleepHours: '4.5', energy: '1', fatigue: '5', deloadWeek: 'yes',
   soreness: '3', stress: '5', wellbeing: 'well'
 };
-for (const step of app.aiCoachQuestionnaireSteps({ fatigue: '5' })) {
+for (const step of app.aiCoachQuestionnaireSteps({ __dietarySetup: false, fatigue: '5' })) {
   const option = step.options.find(item => String(item.value) === severeAnswers[step.id]);
   assert.ok(option, `missing severe-fatigue answer for ${step.id}`);
   app.answerAICoachCheckIn(step.id, option.value, option.label);

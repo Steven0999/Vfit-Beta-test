@@ -1,11 +1,13 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.6` adds goal-specific weekly-set coaching, a wall-clock workout timer, severe-fatigue deload planning, shift-specific four-meal rotations and a more reliable Android barcode-photo fallback while keeping the restored scanner and shift-work format.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.7` adds a saved dietary coaching questionnaire, shift-specific dietary focus, five compatible recipes per meal for vegan, vegetarian and ketogenic plans, and a larger meal popup with ingredients and step-by-step instructions. The embedded meal-planner barcode scanner and the existing training, diary and coaching features remain in place.
 
 ## What is included
 
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
+- First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.
+- Personalised shift-meal focus and compatible recipe filtering, with five choices for every breakfast, lunch, dinner and snack under each specific diet.
 - One Coaching Hub inside Settings for AI insights, the connected human coach, readiness, weekly check-ins, progression, rota and reports.
 - Goal-specific muscle building: 12–16 weekly working sets per muscle for full-body development, or 12–20 for selected priority areas.
 - A workout timer based on the saved session start time, so elapsed duration includes time while the screen is locked, the app is backgrounded or the phone is switched off.
@@ -17,7 +19,8 @@ VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, off
 - Stripe Checkout, Billing Portal and signed-webhook membership updates for Basic, Platinum and 1-to-1 Coaching plans.
 - Email verification, consent records, cloud-sync choice, full data export and confirmed account deletion.
 - Firebase App Check support, UID-provisioned administrators, server-owned memberships and owner-only device tokens.
-- The original rear-camera food barcode scanner and manual barcode lookup through Open Food Facts.
+- A larger shift-meal recipe popup that shows every compatible choice together, estimated nutrition, ingredients, preparation steps and an add-to-diary action.
+- The original rear-camera food barcode scanner and manual barcode lookup through Open Food Facts, embedded inside Create Meal so scan results stay in the Meal Planner.
 
 Push, payments, App Check and server-side deletion are deliberately disabled in `vfit-config.js` until their Firebase and Stripe values are configured. Existing beta features remain available while setup is pending.
 

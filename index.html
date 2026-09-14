@@ -856,6 +856,7 @@
                         <button type="button" onclick="openCoachingPage('daily')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-orange-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="sunrise" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Today’s Coaching</span><span class="block text-xs text-slate-500 mt-1">Daily conversation, readiness and AI advice</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('training')" class="w-full min-h-[78px] bg-indigo-50 border-2 border-indigo-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="dumbbell" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Training &amp; Goals</span><span class="block text-xs text-slate-500 mt-1">Weekly sets, progression and deload guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('shifts')" class="w-full min-h-[78px] bg-blue-50 border-2 border-blue-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="calendar-clock" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Shift Plan &amp; Advice</span><span class="block text-xs text-slate-500 mt-1">Rota linked to today’s coaching guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('diet')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-900 border border-orange-500 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="salad" class="w-5 h-5 text-orange-400"></i></span><span><span class="block font-black text-sm">Dietary Plan &amp; Meals</span><span class="block text-xs text-slate-500 mt-1">Requirements, diet style and shift-specific meals</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('coach')" class="w-full min-h-[78px] bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-emerald-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="messages-square" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Coach &amp; Check-ins</span><span class="block text-xs text-slate-500 mt-1">Coach messages and weekly check-in</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('reports')" class="w-full min-h-[78px] bg-purple-50 border-2 border-purple-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-purple-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="file-chart-column" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Progress Reports</span><span class="block text-xs text-slate-500 mt-1">Weekly training, nutrition and adherence report</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('membership')" class="w-full min-h-[78px] bg-slate-50 border-2 border-slate-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-700 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="badge-pound-sterling" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Membership</span><span class="block text-xs text-slate-500 mt-1">View your plan and available options</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
@@ -982,6 +983,37 @@
                 <div id="coaching-shift-link" data-coaching-page="shifts" class="hidden bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
                     <p class="font-black text-sm text-orange-900">Your rota powers today’s advice</p>
                     <p class="text-xs text-orange-800 mt-1">The Daily AI Coach reads the shift saved for today and adjusts training, recovery and timing guidance around it.</p>
+                </div>
+
+                <div id="coaching-dietary-plan-card" data-coaching-page="diet" class="hidden glass-card rounded-[2.5rem] p-6 border-2 border-orange-200">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                            <p class="text-[10px] font-black uppercase tracking-[0.16em] text-orange-500">Saved to your plan</p>
+                            <h3 class="text-lg font-black mt-1">Dietary Requirements</h3>
+                            <p class="text-xs text-slate-400 mt-1">Tell VFIT what you eat, what you avoid and which approach you follow.</p>
+                        </div>
+                        <i data-lucide="clipboard-list" class="w-6 h-6 text-orange-500 flex-shrink-0"></i>
+                    </div>
+                    <div id="dietary-profile-summary" class="mb-4"></div>
+                    <button onclick="openDietaryProfile()" class="w-full bg-slate-900 border border-orange-500 text-white p-4 rounded-2xl font-black flex items-center justify-center gap-2">
+                        <i data-lucide="list-checks" class="w-5 h-5 text-orange-400"></i>
+                        Set or Update Dietary Plan
+                    </button>
+                </div>
+
+                <div id="coaching-dietary-shift-card" data-coaching-page="diet" class="hidden glass-card rounded-[2.5rem] p-6">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-black">Today’s Dietary Shift Focus</h3>
+                            <p class="text-xs text-slate-400">Meal timing and priorities matched to today’s rota</p>
+                        </div>
+                        <i data-lucide="calendar-clock" class="w-6 h-6 text-indigo-600"></i>
+                    </div>
+                    <div id="dietary-shift-summary"></div>
+                    <button onclick="openDietaryMeals()" class="w-full mt-4 bg-orange-600 text-white p-4 rounded-2xl font-black flex items-center justify-center gap-2">
+                        <i data-lucide="utensils" class="w-5 h-5"></i>
+                        Open Personalised Meal Planner
+                    </button>
                 </div>
 
                 <div id="coaching-shift-rota-card" data-coaching-page="shifts" class="hidden glass-card rounded-[2.5rem] p-6">
@@ -3717,7 +3749,7 @@
                     <label for="ai-coach-checkin-input" class="sr-only">Message AI Coach</label>
                     <textarea id="ai-coach-checkin-input" maxlength="500" rows="2" onkeydown="handleAICoachCheckInKeydown(event)" class="w-full p-3 bg-slate-50 rounded-xl resize-none" placeholder="Type anything else you want the coach to know…"></textarea>
                     <div class="grid grid-cols-3 gap-2 mt-2">
-                        <button id="ai-coach-checkin-skip" onclick="skipAICoachCheckInNote()" class="bg-slate-100 text-slate-600 p-3 rounded-xl font-bold text-xs">Skip</button>
+                        <button id="ai-coach-checkin-skip" onclick="skipAICoachCheckInInput()" class="bg-slate-100 text-slate-600 p-3 rounded-xl font-bold text-xs">Skip</button>
                         <button onclick="sendAICoachCheckInMessage()" class="col-span-2 bg-slate-900 text-white p-3 rounded-xl font-black text-xs flex items-center justify-center gap-2">
                             <i data-lucide="send" class="w-4 h-4"></i> Send
                         </button>
@@ -3787,6 +3819,95 @@
         </div>
     </div>
 
+    <!-- DIETARY PLAN QUESTIONNAIRE -->
+    <div id="dietary-profile-modal" class="modal-overlay" style="z-index:242;" role="dialog" aria-modal="true" aria-labelledby="dietary-profile-title">
+        <div class="bg-white rounded-[2.5rem] p-6 max-h-[94vh] overflow-y-auto" style="width:min(760px,calc(100vw - 1rem));">
+            <div class="flex items-start justify-between gap-3 mb-5">
+                <div>
+                    <p class="text-[10px] font-black uppercase tracking-[0.16em] text-orange-500">Coaching questionnaire</p>
+                    <h3 id="dietary-profile-title" class="text-2xl font-black mt-1">Build Your Dietary Plan</h3>
+                    <p class="text-xs text-slate-400 mt-1">Your answers personalise shift guidance and compatible meal ideas.</p>
+                </div>
+                <button onclick="closeDietaryProfile()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close dietary plan">×</button>
+            </div>
+
+            <form onsubmit="event.preventDefault(); saveDietaryProfile();" class="space-y-5">
+                <fieldset>
+                    <legend class="font-black text-sm mb-2">1. Do you follow a specific diet?</legend>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input type="radio" name="dietary-pattern" value="balanced" class="mr-2 accent-orange-600"> No specific diet / balanced</label>
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input type="radio" name="dietary-pattern" value="vegan" class="mr-2 accent-orange-600"> Vegan</label>
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input type="radio" name="dietary-pattern" value="vegetarian" class="mr-2 accent-orange-600"> Vegetarian</label>
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input type="radio" name="dietary-pattern" value="ketogenic" class="mr-2 accent-orange-600"> Ketogenic</label>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend class="font-black text-sm mb-1">2. Are you using a specific eating approach?</legend>
+                    <p class="text-[11px] text-slate-400 mb-2">Choose either, both, or leave both unticked.</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input id="dietary-approach-fasting" type="checkbox" value="intermittent_fasting" class="mr-2 accent-orange-600"> Intermittent fasting</label>
+                        <label class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"><input id="dietary-approach-deficit" type="checkbox" value="calorie_deficit" class="mr-2 accent-orange-600"> Calorie deficit</label>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend class="font-black text-sm mb-1">3. Any dietary requirements?</legend>
+                    <p class="text-[11px] text-slate-400 mb-2">Select every requirement that applies.</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="dairy_free" class="mr-2 accent-orange-600"> Dairy-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="gluten_free" class="mr-2 accent-orange-600"> Gluten-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="nut_free" class="mr-2 accent-orange-600"> Nut-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="egg_free" class="mr-2 accent-orange-600"> Egg-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="fish_free" class="mr-2 accent-orange-600"> Fish / seafood-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="soy_free" class="mr-2 accent-orange-600"> Soy-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="sesame_free" class="mr-2 accent-orange-600"> Sesame-free</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="halal" class="mr-2 accent-orange-600"> Halal</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="kosher" class="mr-2 accent-orange-600"> Kosher</label>
+                        <label class="p-3 bg-slate-50 rounded-xl text-xs font-bold"><input type="checkbox" name="dietary-requirement" value="other" class="mr-2 accent-orange-600"> Other / medical</label>
+                    </div>
+                </fieldset>
+
+                <label class="block">
+                    <span class="font-black text-sm">4. Exact foods, allergies or instructions VFIT should know</span>
+                    <textarea id="dietary-profile-notes" maxlength="750" rows="4" class="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-xl" placeholder="For example: severe peanut allergy, lactose intolerance, no pork, medication timing…"></textarea>
+                </label>
+
+                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <p class="text-[11px] text-amber-800"><b>Safety:</b> Meal filtering is a planning aid and cannot guarantee allergen-free preparation or certification. Check labels and cross-contamination yourself. Speak to an appropriate clinician before fasting, ketogenic dieting or a major calorie reduction if you have a health condition, take medication, are pregnant, or have a history of disordered eating.</p>
+                </div>
+                <button type="submit" class="w-full bg-slate-900 border border-orange-500 text-white p-4 rounded-2xl font-black">Save Dietary Plan</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- LARGE SHIFT-MEAL RECIPE PICKER -->
+    <div id="shift-meal-detail-modal" class="modal-overlay" style="z-index:244;" role="dialog" aria-modal="true" aria-labelledby="shift-meal-detail-title">
+        <div class="bg-white rounded-[2.5rem] overflow-hidden flex flex-col" style="width:min(980px,calc(100vw - 1rem));height:min(860px,94vh);">
+            <div class="bg-slate-900 border-b border-orange-500 p-5 flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                    <p id="shift-meal-detail-kicker" class="text-[10px] font-black uppercase tracking-[0.16em] text-orange-400">Personalised meal planner</p>
+                    <h3 id="shift-meal-detail-title" class="text-xl font-black text-white truncate">Meal recipe</h3>
+                </div>
+                <button onclick="closeShiftMealDetail()" class="w-10 h-10 bg-white rounded-full text-2xl flex-shrink-0" aria-label="Close meal recipe">×</button>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
+                <div class="mb-5">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <h4 class="font-black">More meals you can make</h4>
+                        <span id="shift-meal-detail-count" class="text-[10px] font-black uppercase text-slate-400"></span>
+                    </div>
+                    <div id="shift-meal-detail-options" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+                </div>
+                <div id="shift-meal-detail-content"></div>
+            </div>
+            <div class="border-t border-slate-200 bg-white p-4 grid grid-cols-3 gap-2">
+                <button onclick="closeShiftMealDetail()" class="bg-slate-100 p-3 rounded-xl font-bold text-xs">Close</button>
+                <button id="shift-meal-detail-add" onclick="addSelectedShiftMealIdea()" class="col-span-2 bg-orange-600 text-white p-3 rounded-xl font-black text-xs">Add Selected Meal to Diary</button>
+            </div>
+        </div>
+    </div>
+
     <!-- PRIVACY CENTRE -->
     <div id="privacy-modal" class="modal-overlay" style="z-index:240;">
         <div class="bg-white rounded-[2.5rem] p-6 max-h-[92vh] overflow-y-auto">
@@ -3819,8 +3940,8 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.6';
-    const VFIT_STATE_SCHEMA_VERSION = 6;
+    const VFIT_APP_VERSION = '2.1.0-beta.7';
+    const VFIT_STATE_SCHEMA_VERSION = 7;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
         functionsRegion: 'europe-west2',
@@ -6686,10 +6807,12 @@
             ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
             : offDayMealHTML();
 
+        html += dietaryShiftFocusHTML(type);
         html += shiftMealIdeasHTML(type, dateKey);
         html += shiftTrainingHTML(onShift, isNight, isEarly);
 
-        if (sp.goal === 'fat_loss' && sp.useFasting) html += fastingGuidanceHTML(onShift);
+        const dietaryApproaches = dietaryProfile().approaches || [];
+        if ((sp.goal === 'fat_loss' && sp.useFasting) || dietaryApproaches.includes('intermittent_fasting')) html += fastingGuidanceHTML(onShift, type);
 
         html += shiftFoodIdeasHTML(isNight && onShift, dateKey);
         html += shiftScienceHTML();
@@ -6706,9 +6829,259 @@
         if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
     }
 
-    // Each shift has its own four-choice rotation for every meal. Keeping these
-    // lists separate prevents, for example, an early-shift breakfast appearing
-    // in the middle of the night-shift rotation.
+
+    const DIETARY_PATTERN_LABELS = Object.freeze({
+        balanced: 'Balanced / no specific diet',
+        vegan: 'Vegan',
+        vegetarian: 'Vegetarian',
+        ketogenic: 'Ketogenic'
+    });
+    const DIETARY_APPROACH_LABELS = Object.freeze({
+        intermittent_fasting: 'Intermittent fasting',
+        calorie_deficit: 'Calorie deficit'
+    });
+    const DIETARY_REQUIREMENT_LABELS = Object.freeze({
+        dairy_free: 'Dairy-free',
+        gluten_free: 'Gluten-free',
+        nut_free: 'Nut-free',
+        egg_free: 'Egg-free',
+        fish_free: 'Fish / seafood-free',
+        soy_free: 'Soy-free',
+        sesame_free: 'Sesame-free',
+        halal: 'Halal',
+        kosher: 'Kosher',
+        religious_cultural: 'Religious / cultural requirement',
+        other: 'Other / allergy detail supplied'
+    });
+
+    function inferDietaryRequirementsFromText(value) {
+        const text = String(value || '').toLowerCase();
+        const inferred = [];
+        if (/\b(dairy|milk|lactose)\b/.test(text)) inferred.push('dairy_free');
+        if (/\b(gluten|coeliac|celiac|wheat)\b/.test(text)) inferred.push('gluten_free');
+        if (/\b(nut|nuts|peanut|almond|walnut|cashew|hazelnut)\b/.test(text)) inferred.push('nut_free');
+        if (/\b(egg|eggs)\b/.test(text)) inferred.push('egg_free');
+        if (/\b(fish|seafood|shellfish|prawn|shrimp)\b/.test(text)) inferred.push('fish_free');
+        if (/\b(soy|soya)\b/.test(text)) inferred.push('soy_free');
+        if (/\b(sesame|tahini)\b/.test(text)) inferred.push('sesame_free');
+        if (/\bhalal\b/.test(text)) inferred.push('halal');
+        if (/\bkosher\b/.test(text)) inferred.push('kosher');
+        return Array.from(new Set(inferred));
+    }
+
+    function dietaryProfile() {
+        if (!isPlainRecord(state.dietaryProfile)) state.dietaryProfile = deepClone(DEFAULT_STATE.dietaryProfile);
+        const profile = state.dietaryProfile;
+        if (!['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(profile.pattern)) profile.pattern = 'balanced';
+        if (!Array.isArray(profile.approaches)) profile.approaches = [];
+        if (!Array.isArray(profile.requirements)) profile.requirements = [];
+        profile.notes = String(profile.notes || '').slice(0, 750);
+        return profile;
+    }
+
+    function dietaryPatternLabel(pattern) {
+        return DIETARY_PATTERN_LABELS[pattern] || DIETARY_PATTERN_LABELS.balanced;
+    }
+
+    function dietaryProfileBadgesHTML(profileInput) {
+        const profile = profileInput || dietaryProfile();
+        const labels = [dietaryPatternLabel(profile.pattern)]
+            .concat((profile.approaches || []).map(value => DIETARY_APPROACH_LABELS[value]).filter(Boolean))
+            .concat((profile.requirements || []).map(value => DIETARY_REQUIREMENT_LABELS[value]).filter(Boolean));
+        return labels.map((label, index) => `<span class="text-[10px] font-black px-2 py-1 rounded-full ${index === 0 ? 'bg-slate-900 text-orange-300' : 'bg-orange-50 text-orange-800 border border-orange-200'}">${escapeHtml(label)}</span>`).join('');
+    }
+
+    function openDietaryProfile() {
+        const profile = dietaryProfile();
+        document.querySelectorAll('input[name="dietary-pattern"]').forEach(input => {
+            input.checked = input.value === profile.pattern;
+        });
+        const fasting = document.getElementById('dietary-approach-fasting');
+        const deficit = document.getElementById('dietary-approach-deficit');
+        if (fasting) fasting.checked = profile.approaches.includes('intermittent_fasting');
+        if (deficit) deficit.checked = profile.approaches.includes('calorie_deficit');
+        document.querySelectorAll('input[name="dietary-requirement"]').forEach(input => {
+            input.checked = profile.requirements.includes(input.value);
+        });
+        const notes = document.getElementById('dietary-profile-notes');
+        if (notes) notes.value = profile.notes;
+        const modal = document.getElementById('dietary-profile-modal');
+        if (modal) modal.style.display = 'flex';
+        refreshIcons();
+    }
+
+    function closeDietaryProfile() {
+        const modal = document.getElementById('dietary-profile-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    function saveDietaryProfile() {
+        const selectedPattern = document.querySelector('input[name="dietary-pattern"]:checked');
+        if (!selectedPattern) {
+            showToast('Choose a diet style, including balanced / no specific diet');
+            return;
+        }
+        const profile = dietaryProfile();
+        profile.pattern = selectedPattern.value;
+        profile.approaches = [
+            document.getElementById('dietary-approach-fasting')?.checked ? 'intermittent_fasting' : '',
+            document.getElementById('dietary-approach-deficit')?.checked ? 'calorie_deficit' : ''
+        ].filter(Boolean);
+        profile.notes = String(document.getElementById('dietary-profile-notes')?.value || '').trim().slice(0, 750);
+        const selectedRequirements = Array.from(document.querySelectorAll('input[name="dietary-requirement"]:checked'))
+            .map(input => input.value)
+            .filter(value => DIETARY_REQUIREMENT_LABELS[value]);
+        profile.requirements = Array.from(new Set(selectedRequirements.concat(inferDietaryRequirementsFromText(profile.notes))));
+        profile.completed = true;
+        profile.source = 'coaching-questionnaire';
+        profile.updatedAt = new Date().toISOString();
+        saveState();
+        closeDietaryProfile();
+        renderCoachingHub();
+        renderShiftWorker();
+        showToast(`${dietaryPatternLabel(profile.pattern)} plan saved · meal choices updated`, 5000);
+    }
+
+    function applyDietaryCoachAnswers(answers) {
+        const values = answers || {};
+        if (!values.dietPattern) return false;
+        const profile = dietaryProfile();
+        profile.pattern = ['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(values.dietPattern)
+            ? values.dietPattern
+            : 'balanced';
+        const approachMap = {
+            none: [],
+            intermittent_fasting: ['intermittent_fasting'],
+            calorie_deficit: ['calorie_deficit'],
+            fasting_deficit: ['intermittent_fasting', 'calorie_deficit']
+        };
+        profile.approaches = approachMap[values.dietApproach] || [];
+        const requirementMap = {
+            none: [],
+            allergy: ['other'],
+            faith: ['religious_cultural'],
+            other: ['other']
+        };
+        profile.notes = String(values.dietRequirementDetails || '').trim().slice(0, 750);
+        profile.requirements = Array.from(new Set(
+            (requirementMap[values.dietRequirementOverview] || []).concat(inferDietaryRequirementsFromText(profile.notes))
+        ));
+        profile.completed = true;
+        profile.source = 'ai-coach-conversation';
+        profile.updatedAt = new Date().toISOString();
+        return true;
+    }
+
+    function dietaryShiftFocusLines(type, profileInput) {
+        const profile = profileInput || dietaryProfile();
+        const shiftLines = {
+            night: 'Anchor the largest meal after waking or before the shift, then use lighter planned food through the biological night.',
+            early: 'Prepare breakfast and the first break meal the evening before so food planning does not reduce sleep.',
+            day: 'Pack the main work-break meal and keep a planned option ready for the pre- or post-shift training window.',
+            off: 'Return meals to daytime hours and batch-prepare food for the next run of shifts.'
+        };
+        const patternLines = {
+            balanced: 'Build each main meal around a clear protein source, vegetables or fruit, and a portion of carbohydrate that fits the day.',
+            vegan: 'Use a substantial plant-protein anchor at each meal—such as tofu, tempeh, seitan, beans, lentils or a fortified protein product.',
+            vegetarian: 'Rotate eggs, dairy or fortified alternatives, tofu, beans and lentils so each meal has a deliberate protein source.',
+            ketogenic: 'Prioritise protein, non-starchy vegetables and measured fats; hydration and electrolyte needs deserve extra attention during long shifts.'
+        };
+        const lines = [
+            shiftLines[type] || shiftLines.off,
+            patternLines[profile.pattern] || patternLines.balanced
+        ];
+        if ((profile.approaches || []).includes('calorie_deficit')) {
+            lines.push('Suggested portions are reduced by about 15% in the planner; keep protein and vegetables in place rather than skipping both.');
+        }
+        if ((profile.approaches || []).includes('intermittent_fasting')) {
+            lines.push(type === 'night'
+                ? 'Do not force a fasting window through a safety-critical night shift. Place the eating window after waking and stop if alertness, wellbeing or performance suffers.'
+                : 'Keep the eating window consistent with this shift and do not let fasting displace hydration, recovery or adequate protein.');
+        }
+        if ((profile.requirements || []).length || profile.notes) {
+            lines.push('VFIT hides obvious matches for selected exclusions, but you must still check labels, certification and cross-contamination.');
+        }
+        return lines;
+    }
+
+    function dietaryShiftCoachAdvice(type) {
+        const profile = dietaryProfile();
+        if (!profile.completed) return 'Complete Dietary Plan & Meals in the Coaching Hub so food advice can reflect your requirements.';
+        return `Dietary focus: ${dietaryShiftFocusLines(type, profile).join(' ')}`;
+    }
+
+    function dietaryShiftFocusHTML(type) {
+        const profile = dietaryProfile();
+        if (!profile.completed) {
+            return `<div class="bg-orange-50 border-2 border-orange-200 rounded-[2rem] p-5">
+                <p class="text-[10px] font-black uppercase text-orange-600">Dietary plan needed</p>
+                <h3 class="font-black text-lg mt-1">Personalise these shift meals</h3>
+                <p class="text-xs text-orange-900 mt-2">Answer the Coaching Hub dietary questions to set vegan, vegetarian, ketogenic, fasting, calorie-deficit and dietary-requirement preferences.</p>
+                <button onclick="openDietaryProfile()" class="w-full mt-3 bg-slate-900 text-white p-3 rounded-xl font-black text-xs">Answer Dietary Questions</button>
+            </div>`;
+        }
+        const lines = dietaryShiftFocusLines(type, profile);
+        return `<details open class="bg-slate-900 border border-orange-500 text-white rounded-[2rem] p-5">
+            <summary class="font-black cursor-pointer">Your Personalised Dietary Focus</summary>
+            <div class="mt-3">
+                <div class="flex flex-wrap gap-1.5 mb-3">${dietaryProfileBadgesHTML(profile)}</div>
+                <ul class="space-y-2">${lines.map(line => `<li class="flex items-start gap-2 text-xs text-slate-200"><span class="text-orange-400 font-black">•</span><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
+                ${profile.notes ? `<div class="mt-3 bg-white/10 border border-white/10 p-3 rounded-xl"><p class="text-[10px] font-black uppercase text-orange-300">Your instructions</p><p class="text-xs text-slate-200 mt-1">${escapeHtml(profile.notes)}</p></div>` : ''}
+                <button onclick="openDietaryProfile()" class="mt-3 text-xs font-black text-orange-300 underline">Update dietary plan</button>
+            </div>
+        </details>`;
+    }
+
+    function renderDietaryProfileSummary() {
+        const box = document.getElementById('dietary-profile-summary');
+        if (!box) return;
+        const profile = dietaryProfile();
+        if (!profile.completed) {
+            box.innerHTML = `<div class="bg-orange-50 border border-orange-200 p-4 rounded-2xl">
+                <p class="font-black text-sm text-orange-900">Questions not completed yet</p>
+                <p class="text-xs text-orange-800 mt-1">The AI Coach will ask on your next conversation, or you can fill them in now.</p>
+            </div>`;
+            return;
+        }
+        const requirementText = (profile.requirements || []).length
+            ? profile.requirements.map(value => DIETARY_REQUIREMENT_LABELS[value] || value).join(' · ')
+            : 'No selected exclusions';
+        box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
+            <div class="flex flex-wrap gap-1.5 mb-3">${dietaryProfileBadgesHTML(profile)}</div>
+            <p class="text-xs text-slate-500"><b>Requirements:</b> ${escapeHtml(requirementText)}</p>
+            ${profile.notes ? `<p class="text-xs text-slate-500 mt-2"><b>Your instructions:</b> ${escapeHtml(profile.notes)}</p>` : ''}
+            <p class="text-[10px] text-slate-400 mt-3">Last updated ${profile.updatedAt ? escapeHtml(new Date(profile.updatedAt).toLocaleDateString('en-GB')) : 'today'}.</p>
+        </div>`;
+    }
+
+    function renderDietaryShiftSummary() {
+        const box = document.getElementById('dietary-shift-summary');
+        if (!box) return;
+        const shift = getShiftForDate(localDateKey());
+        const profile = dietaryProfile();
+        const label = aiCoachShiftLabel(shift);
+        const lines = dietaryShiftFocusLines(shift.type, profile);
+        box.innerHTML = `<div class="bg-slate-50 border border-slate-200 p-4 rounded-2xl">
+            <p class="text-[10px] font-black uppercase text-orange-600">${escapeHtml(label)}</p>
+            <p class="font-black text-sm mt-1">${profile.completed ? escapeHtml(dietaryPatternLabel(profile.pattern)) : 'Complete your dietary questions'}</p>
+            <p class="text-xs text-slate-500 mt-2">${escapeHtml(lines[0])}</p>
+            ${profile.completed ? `<p class="text-xs text-slate-500 mt-2">${escapeHtml(lines.slice(1).join(' '))}</p>` : ''}
+        </div>`;
+    }
+
+    function openDietaryMeals() {
+        switchTab('nutrition');
+        setNutritionTab('shift');
+        setTimeout(() => {
+            const target = document.querySelector('[data-shift-meal-ideas]');
+            if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 80);
+    }
+
+
+    // Each shift keeps its original four-choice balanced rotation. The dietary
+    // layer below adds another compatible option or swaps in a five-recipe
+    // vegan, vegetarian or ketogenic library without mixing shift base lists.
     const SHIFT_MEAL_IDEAS = Object.freeze({
         night: Object.freeze({
             breakfast: Object.freeze([
@@ -6815,6 +7188,172 @@
             ])
         })
     });
+
+    function dietaryMeal(id, name, calories, protein, carbs, fat, fiber, note, ingredients, kind, allergens) {
+        return Object.freeze({
+            id, name, calories, protein, carbs, fat, fiber, note,
+            ingredients: String(ingredients || '').split('|').filter(Boolean),
+            kind: kind || 'bowl',
+            allergens: String(allergens || '').split('|').filter(Boolean)
+        });
+    }
+
+    const DIETARY_MEAL_IDEAS = Object.freeze({
+        vegan: Object.freeze({
+            breakfast: Object.freeze([
+                dietaryMeal('vegan-breakfast-overnight-oats', 'Vegan protein overnight oats with berries', 455, 32, 59, 10, 12, 'Prepare before sleep for a ready-to-eat first meal after waking.', '60g rolled oats|250ml fortified soy milk|30g pea protein|100g mixed berries|10g chia seeds', 'overnight', 'soy|gluten'),
+                dietaryMeal('vegan-breakfast-tofu-wrap', 'Tofu scramble and spinach breakfast wrap', 440, 31, 43, 16, 9, 'Portable plant protein for an early start or the first meal after waking.', '180g firm tofu|1 wholegrain wrap|2 handfuls spinach|1 chopped tomato|Turmeric, pepper and 1 tsp oil', 'wrap', 'soy|gluten'),
+                dietaryMeal('vegan-breakfast-berry-smoothie', 'Berry, banana and pea-protein smoothie', 420, 34, 55, 8, 10, 'A fast option when appetite is low after waking; blend immediately before drinking.', '300ml fortified soy milk|30g pea protein|1 small banana|120g frozen berries|30g rolled oats', 'blend', 'soy|gluten'),
+                dietaryMeal('vegan-breakfast-chia-pot', 'Chocolate chia and soy-protein pot', 405, 31, 35, 17, 14, 'A chilled make-ahead breakfast with fibre and a deliberate protein serving.', '250ml fortified soy milk|30g chia seeds|25g chocolate plant protein|100g strawberries|1 tsp cocoa', 'overnight', 'soy'),
+                dietaryMeal('vegan-breakfast-quinoa-porridge', 'Apple-cinnamon quinoa protein porridge', 450, 30, 61, 10, 11, 'Warm or reheat after waking and portion into a lidded pot for work.', '180g cooked quinoa|250ml fortified soy milk|25g pea protein|1 small apple|Cinnamon', 'simmer', 'soy')
+            ]),
+            lunch: Object.freeze([
+                dietaryMeal('vegan-lunch-tofu-rice', 'Ginger tofu and brown-rice vegetable bowl', 555, 34, 68, 17, 13, 'A batch-cook work meal with soy protein, vegetables and steady carbohydrate.', '180g firm tofu|160g cooked brown rice|200g mixed vegetables|1 tbsp reduced-salt soy sauce|Ginger and 1 tsp oil', 'stirfry', 'soy'),
+                dietaryMeal('vegan-lunch-lentil-quinoa', 'Lentil and quinoa rainbow salad', 520, 28, 70, 14, 18, 'Eat cold on a short break; add the dressing only when serving.', '180g cooked lentils|140g cooked quinoa|200g cucumber, tomato and peppers|40g spinach|Lemon and 1 tbsp olive oil', 'bowl', ''),
+                dietaryMeal('vegan-lunch-chickpea-pasta', 'Chickpea pasta with peas and tomato pesto', 545, 32, 67, 16, 17, 'High-protein pasta that reheats well or works as a cold lunch pot.', '85g dry chickpea pasta|100g peas|150g cherry tomatoes|25g dairy-free pesto|Rocket leaves', 'simmer', 'nuts'),
+                dietaryMeal('vegan-lunch-seitan-fajita', 'Seitan fajita wholegrain wrap', 525, 39, 57, 14, 11, 'A portable lunch for unpredictable breaks with vegetables and plant protein.', '160g seitan strips|1 large wholegrain wrap|150g peppers and onion|60g black beans|Salsa and lime', 'wrap', 'gluten'),
+                dietaryMeal('vegan-lunch-tempeh-noodles', 'Tempeh and edamame noodle box', 570, 38, 64, 18, 15, 'Prepare two portions at once and chill promptly for the next shift.', '150g tempeh|140g cooked wholewheat noodles|80g edamame|180g stir-fry vegetables|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy|gluten')
+            ]),
+            dinner: Object.freeze([
+                dietaryMeal('vegan-dinner-tofu-curry', 'Tofu and chickpea vegetable curry with rice', 590, 34, 75, 18, 17, 'A reliable batch dinner that can become tomorrow’s packed shift meal.', '170g firm tofu|100g cooked chickpeas|150g cooked basmati rice|220g mixed vegetables|120ml light coconut milk and curry spices', 'simmer', 'soy'),
+                dietaryMeal('vegan-dinner-lentil-chilli', 'Three-bean lentil chilli with brown rice', 575, 31, 84, 12, 23, 'Batch-cook, cool quickly and freeze individual portions for busy weeks.', '220g mixed cooked beans and lentils|150g cooked brown rice|200g chopped tomatoes|150g peppers and onion|Chilli, cumin and paprika', 'simmer', ''),
+                dietaryMeal('vegan-dinner-seitan-stirfry', 'Seitan vegetable stir-fry with noodles', 560, 42, 62, 15, 12, 'A high-protein plant-based recovery meal ready in around 20 minutes.', '170g seitan strips|140g cooked wholewheat noodles|250g stir-fry vegetables|1 tbsp reduced-salt soy sauce|Garlic, ginger and 1 tsp oil', 'stirfry', 'soy|gluten'),
+                dietaryMeal('vegan-dinner-chickpea-tagine', 'Chickpea and apricot tagine with quinoa', 565, 27, 83, 15, 20, 'A fibre-rich evening meal; keep dried fruit measured for predictable nutrition.', '220g cooked chickpeas|150g cooked quinoa|200g tomatoes and vegetables|25g dried apricots|Cumin, cinnamon and 1 tsp oil', 'simmer', ''),
+                dietaryMeal('vegan-dinner-bean-traybake', 'Black-bean sweet-potato traybake', 540, 26, 78, 15, 20, 'Roast extra portions on an off day and reheat until piping hot.', '220g black beans|250g sweet potato cubes|200g peppers and courgette|60g avocado|Paprika, lime and 1 tsp oil', 'bake', '')
+            ]),
+            snack: Object.freeze([
+                dietaryMeal('vegan-snack-soy-yogurt', 'High-protein soy yogurt with berries', 235, 22, 24, 7, 7, 'A chilled, portioned snack for the middle of a shift.', '250g high-protein soy yogurt|100g berries|10g pumpkin seeds', 'snack', 'soy'),
+                dietaryMeal('vegan-snack-edamame', 'Edamame, cucumber and chilli-lime pot', 245, 21, 22, 9, 11, 'A savoury plant-protein snack that can be eaten cold.', '180g cooked edamame|100g cucumber|Lime juice|Chilli flakes and a pinch of salt', 'snack', 'soy'),
+                dietaryMeal('vegan-snack-hummus', 'Hummus, vegetable sticks and seed crackers', 270, 12, 31, 12, 10, 'Pre-portion the hummus so a quick break still fits the plan.', '70g hummus|200g carrot, cucumber and pepper sticks|25g seed crackers', 'snack', 'sesame'),
+                dietaryMeal('vegan-snack-protein-shake', 'Pea-protein shake with a small banana', 250, 28, 32, 3, 5, 'Keep a measured dry serving at work for a reliable backup.', '30g pea protein|300ml water or fortified plant milk|1 small banana|Ice and cinnamon', 'blend', ''),
+                dietaryMeal('vegan-snack-roasted-chickpeas', 'Roasted chickpeas with an apple', 260, 13, 42, 6, 11, 'Crunchy, portable and easy to batch-portion for several shifts.', '120g cooked chickpeas|1 small apple|Paprika and garlic powder|1 tsp olive oil', 'bake', '')
+            ])
+        }),
+        vegetarian: Object.freeze({
+            breakfast: Object.freeze([
+                dietaryMeal('vegetarian-breakfast-porridge', 'Protein porridge with banana and cinnamon', 440, 34, 56, 10, 9, 'A repeatable hot breakfast before a day or early shift.', '60g rolled oats|250ml semi-skimmed milk|30g whey or vegetarian protein|1 small banana|Cinnamon', 'simmer', 'dairy|gluten'),
+                dietaryMeal('vegetarian-breakfast-egg-wrap', 'Egg, spinach and bean breakfast wrap', 445, 30, 45, 17, 10, 'Cook ahead, chill promptly and reheat for a fast shift breakfast.', '2 eggs|1 wholegrain wrap|80g black beans|2 handfuls spinach|Salsa', 'wrap', 'egg|gluten'),
+                dietaryMeal('vegetarian-breakfast-yogurt', 'Greek yogurt, muesli and berry bowl', 425, 32, 52, 10, 9, 'No-cook and easy to portion the night before.', '250g Greek yogurt|45g no-added-sugar muesli|120g berries|10g mixed seeds', 'snack', 'dairy|gluten'),
+                dietaryMeal('vegetarian-breakfast-cottage-toast', 'Cottage cheese, tomato and wholegrain toast', 410, 32, 43, 12, 8, 'A savoury breakfast with little preparation and a clear protein anchor.', '220g cottage cheese|2 slices wholegrain toast|150g tomatoes|Black pepper and herbs', 'snack', 'dairy|gluten'),
+                dietaryMeal('vegetarian-breakfast-pancakes', 'Oat protein pancakes with yogurt and berries', 465, 37, 54, 12, 9, 'Cook a batch on an off day and reheat individual portions.', '60g oats|2 eggs|25g whey or vegetarian protein|100g Greek yogurt|100g berries', 'skillet', 'dairy|egg|gluten')
+            ]),
+            lunch: Object.freeze([
+                dietaryMeal('vegetarian-lunch-halloumi', 'Halloumi and quinoa rainbow salad', 555, 31, 52, 25, 12, 'Pack the dressing separately to keep the vegetables crisp.', '100g halloumi|150g cooked quinoa|220g salad vegetables|50g chickpeas|Lemon and herbs', 'bowl', 'dairy'),
+                dietaryMeal('vegetarian-lunch-egg-lentil', 'Egg and lentil potato salad', 520, 29, 58, 19, 15, 'A filling cold lunch that can be prepared for two shifts.', '2 boiled eggs|180g cooked lentils|200g baby potatoes|150g green vegetables|Mustard-yogurt dressing', 'bowl', 'egg|dairy'),
+                dietaryMeal('vegetarian-lunch-mozzarella-pasta', 'Mozzarella, bean and tomato pasta pot', 545, 33, 67, 17, 15, 'Works warm or cold and travels well in a sealed container.', '75g dry wholewheat pasta|100g reduced-fat mozzarella|100g cannellini beans|180g tomatoes and spinach|Basil', 'simmer', 'dairy|gluten'),
+                dietaryMeal('vegetarian-lunch-tofu-burrito', 'Tofu and black-bean burrito bowl', 560, 34, 70, 17, 17, 'Batch the rice, tofu and beans, then add fresh salsa at serving.', '160g firm tofu|130g cooked brown rice|100g black beans|180g peppers and corn|Salsa and lime', 'bowl', 'soy'),
+                dietaryMeal('vegetarian-lunch-cottage-potato', 'Cottage cheese jacket potato with salad', 475, 32, 66, 9, 10, 'A simple microwave-friendly work lunch with a high-protein topping.', '1 medium baked potato|220g cottage cheese|200g mixed salad|Chives and black pepper', 'bake', 'dairy')
+            ]),
+            dinner: Object.freeze([
+                dietaryMeal('vegetarian-dinner-lentil-bolognese', 'Lentil bolognese with wholewheat pasta', 585, 32, 82, 13, 21, 'Make several portions and freeze the sauce separately.', '200g cooked lentils|75g dry wholewheat pasta|220g chopped tomatoes and vegetables|15g vegetarian hard cheese|Italian herbs', 'simmer', 'dairy|gluten'),
+                dietaryMeal('vegetarian-dinner-paneer-curry', 'Paneer and vegetable curry with basmati rice', 620, 34, 66, 24, 12, 'A substantial post-shift meal; measure the paneer and oil.', '140g reduced-fat paneer|150g cooked basmati rice|250g mixed vegetables|150g tomato curry sauce|Curry spices', 'simmer', 'dairy'),
+                dietaryMeal('vegetarian-dinner-bean-chilli', 'Bean chilli with rice and Greek yogurt', 570, 30, 82, 12, 22, 'A high-fibre batch meal for off days and work containers.', '240g mixed beans|140g cooked brown rice|220g tomatoes, peppers and onion|80g Greek yogurt|Chilli and cumin', 'simmer', 'dairy'),
+                dietaryMeal('vegetarian-dinner-tofu-noodles', 'Tofu and edamame vegetable noodles', 565, 37, 63, 18, 15, 'Fast enough for after work and suitable for next-day leftovers.', '170g firm tofu|140g cooked wholewheat noodles|80g edamame|220g stir-fry vegetables|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy|gluten'),
+                dietaryMeal('vegetarian-dinner-omelette', 'Mushroom omelette with roast potatoes and greens', 550, 35, 48, 23, 11, 'A balanced off-day or post-early-shift dinner.', '3 eggs|150g mushrooms and spinach|35g reduced-fat cheese|220g potatoes|180g green vegetables', 'skillet', 'egg|dairy')
+            ]),
+            snack: Object.freeze([
+                dietaryMeal('vegetarian-snack-yogurt', 'Greek yogurt with berries and pumpkin seeds', 250, 24, 24, 8, 6, 'Portion into a chilled pot before the shift.', '250g Greek yogurt|100g berries|10g pumpkin seeds', 'snack', 'dairy'),
+                dietaryMeal('vegetarian-snack-cottage', 'Cottage cheese with pineapple', 240, 26, 25, 5, 3, 'A quick high-protein chilled snack.', '220g cottage cheese|120g pineapple pieces|Cinnamon', 'snack', 'dairy'),
+                dietaryMeal('vegetarian-snack-eggs', 'Boiled eggs, tomatoes and oatcakes', 275, 19, 23, 12, 5, 'Prepare the eggs ahead and keep chilled until the break.', '2 boiled eggs|3 oatcakes|120g cherry tomatoes|Black pepper', 'snack', 'egg|gluten'),
+                dietaryMeal('vegetarian-snack-shake', 'Protein shake with a small banana', 250, 28, 31, 3, 4, 'A measured backup when a work break changes unexpectedly.', '30g whey or vegetarian protein|300ml water or milk|1 small banana|Ice', 'blend', 'dairy'),
+                dietaryMeal('vegetarian-snack-hummus', 'Hummus, vegetable sticks and mini pitta', 280, 12, 38, 10, 9, 'A portable savoury option; portion the hummus rather than eating from the tub.', '70g hummus|180g vegetable sticks|1 mini wholemeal pitta', 'snack', 'sesame|gluten')
+            ])
+        }),
+        ketogenic: Object.freeze({
+            breakfast: Object.freeze([
+                dietaryMeal('keto-breakfast-eggs-avocado', 'Eggs, avocado and spinach skillet', 455, 29, 12, 34, 9, 'A low-carbohydrate first meal with vegetables and a measured fat serving.', '3 eggs|100g avocado|100g spinach and tomatoes|1 tsp olive oil|Pepper and herbs', 'skillet', 'egg'),
+                dietaryMeal('keto-breakfast-yogurt-chia', 'Greek yogurt, chia and berry bowl', 395, 31, 18, 23, 10, 'Use unsweetened yogurt and keep the berry portion measured.', '250g unsweetened Greek yogurt|25g chia seeds|70g berries|10g pumpkin seeds', 'snack', 'dairy'),
+                dietaryMeal('keto-breakfast-tofu', 'Tofu, mushroom and spinach scramble', 410, 34, 14, 27, 8, 'A dairy- and egg-free lower-carbohydrate breakfast option.', '220g firm tofu|150g mushrooms|100g spinach|60g avocado|Turmeric and 1 tsp olive oil', 'skillet', 'soy'),
+                dietaryMeal('keto-breakfast-salmon', 'Smoked salmon, eggs and cucumber plate', 430, 36, 8, 28, 4, 'No-cook apart from the eggs and practical after a night shift.', '100g smoked salmon|2 boiled eggs|150g cucumber and tomatoes|60g avocado|Lemon and pepper', 'snack', 'fish|egg'),
+                dietaryMeal('keto-breakfast-cottage-walnut', 'Cottage cheese, walnuts and berries', 400, 33, 17, 24, 6, 'A chilled breakfast with a measured nut serving.', '250g full-fat cottage cheese|20g walnuts|70g berries|10g chia seeds', 'snack', 'dairy|nuts')
+            ]),
+            lunch: Object.freeze([
+                dietaryMeal('keto-lunch-chicken-salad', 'Chicken, avocado and crunchy salad bowl', 515, 48, 15, 31, 10, 'Pack dressing separately and chill promptly.', '170g cooked chicken breast|100g avocado|250g mixed salad vegetables|20g seeds|Lemon and 1 tbsp olive oil', 'bowl', ''),
+                dietaryMeal('keto-lunch-tuna-avocado', 'Tuna and avocado lettuce cups', 465, 42, 12, 28, 8, 'A cold work lunch that does not need a microwave.', '150g drained tuna|90g avocado|6 large lettuce leaves|150g cucumber and tomato|Lemon-yogurt or olive-oil dressing', 'wrap', 'fish'),
+                dietaryMeal('keto-lunch-tofu-cauliflower', 'Tofu and cauliflower-rice bowl', 470, 34, 21, 28, 12, 'Cook ahead and reheat until piping hot.', '200g firm tofu|250g cauliflower rice|220g green vegetables|20g pumpkin seeds|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy'),
+                dietaryMeal('keto-lunch-beef-courgetti', 'Lean beef and courgetti tomato bowl', 500, 45, 20, 28, 9, 'Keep courgetti separate until reheating so it stays firm.', '170g lean beef mince|250g courgetti|180g tomato and mushrooms|15g vegetarian hard cheese|Italian herbs', 'skillet', 'dairy'),
+                dietaryMeal('keto-lunch-halloumi-egg', 'Halloumi, egg and green salad', 520, 35, 13, 37, 8, 'A vegetarian lower-carbohydrate lunch with measured cheese.', '100g halloumi|2 boiled eggs|250g leafy salad and cucumber|80g avocado|Lemon dressing', 'bowl', 'dairy|egg')
+            ]),
+            dinner: Object.freeze([
+                dietaryMeal('keto-dinner-salmon', 'Baked salmon with broccoli and herb butter', 555, 44, 16, 36, 9, 'A simple tray meal for after work or an off day.', '180g salmon fillet|250g broccoli and courgette|100g cauliflower mash|10g herb butter|Lemon and pepper', 'bake', 'fish|dairy'),
+                dietaryMeal('keto-dinner-chicken-curry', 'Chicken and cauliflower coconut curry', 540, 47, 20, 31, 10, 'Batch-cook the curry and add fresh greens when reheating.', '180g chicken breast|250g cauliflower and green vegetables|150ml light coconut milk|150g cauliflower rice|Curry spices', 'simmer', ''),
+                dietaryMeal('keto-dinner-beef-skillet', 'Beef, mushroom and green-bean skillet', 535, 46, 18, 32, 9, 'A one-pan meal that is quick enough for a post-shift dinner.', '180g lean beef strips|180g mushrooms|180g green beans|80g cauliflower rice|Garlic and 1 tbsp olive oil', 'skillet', ''),
+                dietaryMeal('keto-dinner-tofu-coconut', 'Tofu coconut curry with greens', 520, 33, 23, 34, 12, 'A plant-based lower-carbohydrate dinner; measure coconut milk.', '220g firm tofu|250g broccoli, spinach and courgette|150ml light coconut milk|150g cauliflower rice|Curry spices', 'simmer', 'soy'),
+                dietaryMeal('keto-dinner-turkey-courgetti', 'Turkey courgetti bolognese', 485, 48, 19, 25, 9, 'Batch the sauce and add courgetti only for the final few minutes.', '180g lean turkey mince|300g courgetti|200g tomato, celery and mushrooms|15g hard cheese|Italian herbs', 'simmer', 'dairy')
+            ]),
+            snack: Object.freeze([
+                dietaryMeal('keto-snack-eggs', 'Boiled eggs with cucumber and tomatoes', 245, 18, 9, 16, 3, 'Prepare and chill the eggs before the shift.', '2 boiled eggs|150g cucumber and tomatoes|Pepper and herbs', 'snack', 'egg'),
+                dietaryMeal('keto-snack-yogurt', 'Unsweetened Greek yogurt with chia', 260, 24, 12, 13, 8, 'A portioned chilled snack with no added sugar.', '220g unsweetened Greek yogurt|20g chia seeds|50g berries', 'snack', 'dairy'),
+                dietaryMeal('keto-snack-tuna-boats', 'Tuna cucumber boats', 235, 31, 7, 10, 3, 'Mix just before the shift and keep chilled.', '120g drained tuna|1 large cucumber|40g Greek yogurt or mayonnaise|Lemon and pepper', 'snack', 'fish|dairy'),
+                dietaryMeal('keto-snack-edamame', 'Edamame with chilli and lime', 230, 20, 18, 9, 9, 'A plant-based savoury snack that works cold.', '170g cooked edamame|Lime juice|Chilli flakes and a pinch of salt', 'snack', 'soy'),
+                dietaryMeal('keto-snack-cheese-olives', 'Cheese, olives and pepper strips', 280, 19, 9, 20, 4, 'Pre-portion rather than grazing from the pack.', '70g reduced-fat cheese|40g olives|150g pepper strips', 'snack', 'dairy')
+            ])
+        })
+    });
+
+    function dietaryMealAllergens(idea) {
+        const allergens = new Set(Array.isArray(idea && idea.allergens) ? idea.allergens : []);
+        const text = `${idea && idea.name || ''} ${idea && idea.note || ''} ${(idea && idea.ingredients || []).join(' ')}`.toLowerCase();
+        if (/\b(yogurts?|yoghurts?|cheeses?|milk|whey|paneer|halloumi|butter|mozzarella|pesto)\b/.test(text)) allergens.add('dairy');
+        if (/\b(oats?|oatcakes?|bread|toast|wraps?|pittas?|pastas?|noodles?|couscous|bagels?|muesli|granola|seitan|wheat|rolls?|pancakes?)\b/.test(text)) allergens.add('gluten');
+        if (/\b(nuts?|almonds?|walnuts?|peanuts?|cashews?|hazelnuts?|pesto)\b/.test(text)) allergens.add('nuts');
+        if (/\b(eggs?|omelettes?|shakshuka)\b/.test(text)) allergens.add('egg');
+        if (/\b(fish|salmon|tuna|cod|seafood|shellfish|prawn|shrimp)\b/.test(text)) allergens.add('fish');
+        if (/\b(soy|soya|tofu|tempeh|edamame)\b/.test(text)) allergens.add('soy');
+        if (/\b(sesame|tahini|hummus)\b/.test(text)) allergens.add('sesame');
+        return Array.from(allergens);
+    }
+
+    function mealMatchesDietaryRequirements(idea, profileInput) {
+        const profile = profileInput || dietaryProfile();
+        const allergens = dietaryMealAllergens(idea);
+        const exclusions = {
+            dairy_free: 'dairy',
+            gluten_free: 'gluten',
+            nut_free: 'nuts',
+            egg_free: 'egg',
+            fish_free: 'fish',
+            soy_free: 'soy',
+            sesame_free: 'sesame'
+        };
+        return !(profile.requirements || []).some(requirement =>
+            exclusions[requirement] && allergens.includes(exclusions[requirement])
+        );
+    }
+
+    function calorieDeficitPortion(idea) {
+        const factor = 0.85;
+        return Object.assign({}, idea, {
+            calories: Math.round(idea.calories * factor),
+            protein: Math.round(idea.protein * factor),
+            carbs: Math.round(idea.carbs * factor),
+            fat: Math.round(idea.fat * factor),
+            fiber: Math.round(idea.fiber * factor),
+            originalCalories: idea.calories,
+            portionAdjusted: true,
+            note: `${idea.note} Calorie-deficit view uses about 85% of the standard suggested portion.`
+        });
+    }
+
+    function personalisedShiftMealIdeas(type, mealType) {
+        const profile = dietaryProfile();
+        const shiftIdeas = SHIFT_MEAL_IDEAS[type] || SHIFT_MEAL_IDEAS.off;
+        const baseIdeas = (shiftIdeas && shiftIdeas[mealType]) || [];
+        let ideas;
+        if (profile.completed && profile.pattern !== 'balanced') {
+            ideas = ((DIETARY_MEAL_IDEAS[profile.pattern] || {})[mealType] || []).slice();
+        } else {
+            const extra = (DIETARY_MEAL_IDEAS.vegan[mealType] || [])[0];
+            ideas = baseIdeas.concat(extra ? [extra] : []);
+        }
+        ideas = ideas.filter(idea => mealMatchesDietaryRequirements(idea, profile));
+        if ((profile.approaches || []).includes('calorie_deficit')) {
+            ideas = ideas.map(calorieDeficitPortion).sort((a, b) => a.calories - b.calories);
+        }
+        return ideas;
+    }
+
+
     const SHIFT_MEAL_TIMINGS = Object.freeze({
         night: { breakfast: 'After waking', lunch: 'About 2h before shift', dinner: 'Early in the shift', snack: 'Mid-shift if hungry' },
         early: { breakfast: 'Before leaving for work', lunch: 'Mid-shift break', dinner: 'Soon after work', snack: 'Morning break' },
@@ -6824,43 +7363,266 @@
     const SHIFT_MEAL_ROTATION = Object.create(null);
 
     function shiftMealIdeasFor(type, mealType) {
-        const shiftIdeas = SHIFT_MEAL_IDEAS[type] || SHIFT_MEAL_IDEAS.off;
-        return (shiftIdeas && shiftIdeas[mealType]) || [];
+        return personalisedShiftMealIdeas(type, mealType);
+    }
+
+
+    function shiftMealTimingLabel(type, mealType) {
+        const base = (SHIFT_MEAL_TIMINGS[type] || SHIFT_MEAL_TIMINGS.off)[mealType] || '';
+        const approaches = dietaryProfile().approaches || [];
+        if (!approaches.includes('intermittent_fasting')) return base;
+        return type === 'night' ? `${base} · alertness first` : `${base} · inside your eating window`;
+    }
+
+    function shiftMealIdeaPattern(idea) {
+        const id = String(idea && idea.id || '');
+        if (id.startsWith('vegan-')) return 'Vegan';
+        if (id.startsWith('vegetarian-')) return 'Vegetarian';
+        if (id.startsWith('keto-')) return 'Ketogenic';
+        return 'Balanced';
+    }
+
+    function shiftMealIdeaBadgesHTML(idea) {
+        const badges = [shiftMealIdeaPattern(idea)];
+        if (idea && idea.portionAdjusted) badges.push('Calorie-deficit portion');
+        return badges.map(label => `<span class="text-[9px] font-black uppercase bg-orange-50 text-orange-800 border border-orange-200 px-2 py-1 rounded-full">${escapeHtml(label)}</span>`).join('');
     }
 
     function shiftMealIdeaCardHTML(type, mealType, dateKey) {
         const ideas = shiftMealIdeasFor(type, mealType);
-        if (!ideas.length) return '';
+        if (!ideas.length) {
+            return `<div class="bg-amber-50 border border-amber-200 p-4 rounded-xl">
+                <p class="font-black text-sm text-amber-900">No automatic matches for these requirements</p>
+                <p class="text-xs text-amber-800 mt-1">Update the dietary plan or use a meal you know is safe. VFIT will not bypass a selected exclusion.</p>
+                <button onclick="openDietaryProfile()" class="mt-3 text-xs font-black text-amber-900 underline">Review dietary requirements</button>
+            </div>`;
+        }
         const key = type + ':' + mealType;
         const index = ((Number(SHIFT_MEAL_ROTATION[key]) || 0) % ideas.length + ideas.length) % ideas.length;
         const idea = ideas[index];
-        const timing = (SHIFT_MEAL_TIMINGS[type] || SHIFT_MEAL_TIMINGS.off)[mealType];
+        const timing = shiftMealTimingLabel(type, mealType);
         const loggedCount = (state.dailyMeals || []).filter(meal => meal.date === dateKey && meal.shiftMealIdeaId === idea.id).length;
         return `
             <div data-shift-meal-id="${idea.id}" data-shift-meal-option="${index + 1}">
                 <div class="flex items-center justify-between gap-2 mb-3"><button onclick="rotateShiftMealIdea('${type}', '${mealType}', -1, '${dateKey}')" class="w-9 h-9 rounded-xl bg-white font-black" aria-label="Previous ${mealType} idea">‹</button><span class="text-[10px] font-black uppercase text-slate-400">Choice ${index + 1} of ${ideas.length}</span><button onclick="rotateShiftMealIdea('${type}', '${mealType}', 1, '${dateKey}')" class="w-9 h-9 rounded-xl bg-white font-black" aria-label="Next ${mealType} idea">›</button></div>
                 <p class="text-[10px] font-black uppercase text-orange-500">${escapeHtml(timing)}</p><h4 class="font-black text-sm mt-1">${escapeHtml(idea.name)}</h4>
+                <div class="flex flex-wrap gap-1.5 mt-2">${shiftMealIdeaBadgesHTML(idea)}</div>
                 <div class="flex gap-2 mt-2"><span class="bg-white px-2 py-1 rounded-lg text-xs font-black">${idea.calories} kcal</span><span class="bg-white px-2 py-1 rounded-lg text-xs font-black text-indigo-600">${idea.protein}g protein</span></div>
                 <p class="text-xs text-slate-500 mt-2">${escapeHtml(idea.note)}</p>
-                <button onclick="addShiftMealIdea('${type}', '${mealType}', ${index}, '${dateKey}')" class="w-full mt-3 bg-slate-900 text-white p-3 rounded-xl font-bold text-xs active:scale-[0.98]">${loggedCount ? `✓ Added ${loggedCount} · Add Again` : '+ Add to This Day’s Diary'}</button>
+                <button onclick="openShiftMealDetail('${type}', '${mealType}', ${index}, '${dateKey}')" class="w-full mt-3 bg-orange-600 text-white p-3 rounded-xl font-black text-xs active:scale-[0.98] flex items-center justify-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> View Recipe &amp; More Meals</button>
+                <button onclick="addShiftMealIdea('${type}', '${mealType}', ${index}, '${dateKey}')" class="w-full mt-2 bg-slate-900 text-white p-3 rounded-xl font-bold text-xs active:scale-[0.98]">${loggedCount ? `✓ Added ${loggedCount} · Add Again` : '+ Add to This Day’s Diary'}</button>
             </div>`;
     }
 
     function shiftMealCategoryHTML(type, mealType, dateKey) {
         const icons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
         const optionCount = shiftMealIdeasFor(type, mealType).length;
-        return `<details class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><summary class="font-black capitalize cursor-pointer">${icons[mealType]} ${mealType} · ${optionCount} choices</summary><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></details>`;
+        return `<details class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><summary class="font-black capitalize cursor-pointer">${icons[mealType]} ${mealType} · ${optionCount} compatible choice${optionCount === 1 ? '' : 's'}</summary><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></details>`;
     }
 
     function shiftMealIdeasHTML(type, dateKey) {
+        const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+        const total = mealTypes.reduce((sum, mealType) => sum + shiftMealIdeasFor(type, mealType).length, 0);
+        const profile = dietaryProfile();
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]" data-shift-meal-ideas="${type}">
-                <summary class="text-lg font-black cursor-pointer">Meal Ideas — 4 Choices Per Meal</summary>
-                <div class="mt-4"><div class="flex justify-between items-start gap-3 mb-4"><p class="text-xs text-slate-400">Rotate between four breakfasts, lunches, dinners and snacks. Every choice includes estimated calories and protein.</p><button onclick="setNutritionTab('diary')" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button></div>
-                <div class="space-y-3">${['breakfast', 'lunch', 'dinner', 'snack'].map(mealType => shiftMealCategoryHTML(type, mealType, dateKey)).join('')}</div>
-                <p class="text-[10px] text-slate-400 mt-3">Values are estimates per suggested portion. Once added, tap the meal in your diary to adjust its portion or nutrition.</p></div>
+            <details class="glass-card p-6 rounded-[2.5rem]" data-shift-meal-ideas="${type}" open>
+                <summary class="text-lg font-black cursor-pointer">Personalised Meal Planner · ${total} Recipes</summary>
+                <div class="mt-4"><div class="flex justify-between items-start gap-3 mb-4"><div><p class="text-xs text-slate-500">Choices reflect ${escapeHtml(dietaryPatternLabel(profile.pattern).toLowerCase())}${profile.requirements.length ? ' and selected exclusions' : ''}. Open any recipe to see every compatible meal, ingredients and step-by-step instructions.</p><div class="flex flex-wrap gap-1.5 mt-2">${profile.completed ? dietaryProfileBadgesHTML(profile) : '<span class="text-[10px] font-black text-orange-700">Complete Dietary Plan in Coaching for personalisation</span>'}</div></div><button onclick="setNutritionTab('diary')" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button></div>
+                <div class="space-y-3">${mealTypes.map(mealType => shiftMealCategoryHTML(type, mealType, dateKey)).join('')}</div>
+                <p class="text-[10px] text-slate-400 mt-3">Nutrition values are estimates per suggested portion. Check labels, allergens, certification and cooking temperatures yourself.</p></div>
             </details>`;
     }
+
+    function inferredShiftMealIngredients(idea) {
+        const name = String(idea && idea.name || '').toLowerCase();
+        if (name.includes('smoothie') || name.includes('shake')) {
+            return ['30g protein powder suitable for your diet', '250–300ml milk, fortified alternative or water', 'The fruit or flavouring named in the recipe', 'Ice, if wanted'];
+        }
+        if (name.includes('oat') || name.includes('porridge') || name.includes('muesli') || name.includes('granola')) {
+            return ['60g oats, muesli or granola as named', '250ml milk or a suitable fortified alternative', '25–30g protein powder or an equivalent protein serving', '100g fruit named in the recipe', 'Cinnamon or seeds, if suitable'];
+        }
+        if (name.includes('yogurt') || name.includes('yoghurt') || name.includes('cottage cheese')) {
+            return ['220–250g yogurt or cottage cheese named in the recipe', '100g fruit or vegetables named in the recipe', 'A measured 10–20g topping, if included', 'Seasoning to taste'];
+        }
+        if (name.includes('wrap') || name.includes('pitta') || name.includes('sandwich') || name.includes('bagel')) {
+            return ['1 wholegrain wrap, pitta, sandwich or bagel as named', '150g cooked protein filling or the equivalent shown', '2 handfuls salad or cooked vegetables', '1 tbsp suitable sauce or dressing'];
+        }
+        const proteinOptions = [
+            ['chicken', '160–180g cooked chicken'],
+            ['turkey', '160–180g cooked turkey'],
+            ['beef', '160–180g lean beef'],
+            ['salmon', '170–180g salmon'],
+            ['tuna', '140–150g drained tuna'],
+            ['cod', '180g cod'],
+            ['tofu', '180–220g firm tofu'],
+            ['lentil', '180–220g cooked lentils'],
+            ['bean', '180–220g cooked beans'],
+            ['chickpea', '180–220g cooked chickpeas'],
+            ['egg', '2–3 eggs']
+        ];
+        const carbohydrateOptions = [
+            ['rice', '140–160g cooked rice'],
+            ['quinoa', '140–160g cooked quinoa'],
+            ['pasta', '70–80g dry pasta'],
+            ['noodle', '140–160g cooked noodles'],
+            ['potato', '220–250g potato or sweet potato'],
+            ['couscous', '150g cooked couscous']
+        ];
+        const protein = (proteinOptions.find(([token]) => name.includes(token)) || [null, '150–200g of the protein named in the recipe'])[1];
+        const carbohydrate = (carbohydrateOptions.find(([token]) => name.includes(token)) || [null, 'A portion of the grain, potato or pulse named in the recipe'])[1];
+        return [protein, carbohydrate, '200–250g vegetables named in the recipe', '1 tsp oil plus herbs or spices'];
+    }
+
+    function shiftMealRecipeKind(idea) {
+        if (idea && idea.kind) return idea.kind;
+        const name = String(idea && idea.name || '').toLowerCase();
+        if (name.includes('overnight')) return 'overnight';
+        if (name.includes('smoothie') || name.includes('shake')) return 'blend';
+        if (name.includes('wrap') || name.includes('pitta') || name.includes('sandwich') || name.includes('bagel')) return 'wrap';
+        if (name.includes('baked') || name.includes('roast') || name.includes('traybake') || name.includes('jacket')) return 'bake';
+        if (name.includes('stir-fry') || name.includes('noodle')) return 'stirfry';
+        if (name.includes('curry') || name.includes('chilli') || name.includes('soup') || name.includes('stew') || name.includes('bolognese')) return 'simmer';
+        if (name.includes('egg') || name.includes('omelette') || name.includes('shakshuka') || name.includes('pancake')) return 'skillet';
+        if (name.includes('yogurt') || name.includes('cottage cheese') || name.includes('oatcake')) return 'snack';
+        return 'bowl';
+    }
+
+    function shiftMealRecipeSteps(idea) {
+        const kind = shiftMealRecipeKind(idea);
+        const steps = {
+            overnight: ['Add the measured ingredients to a lidded container and stir thoroughly.', 'Cover and refrigerate for at least four hours or overnight.', 'Stir again, add the fresh topping and keep chilled until eaten.'],
+            blend: ['Measure every ingredient so the logged portion stays accurate.', 'Blend until smooth, adding a little more liquid only if needed.', 'Drink straight away or keep chilled in a sealed bottle for the shift.'],
+            wrap: ['Cook or warm the protein filling and vegetables; meat must be cooked through.', 'Warm the wrap or bread, then layer in the filling, salad and measured sauce.', 'Fold firmly, chill promptly if packing, and reheat only when suitable.'],
+            bake: ['Heat the oven to 200°C / 180°C fan and prepare the ingredients in even pieces.', 'Season, add the measured oil and bake until vegetables are tender and the protein is safely cooked through.', 'Portion with the remaining sides; cool leftovers quickly before refrigerating.'],
+            stirfry: ['Prepare every ingredient before heating the pan.', 'Cook the protein safely, add vegetables, then the cooked grain or noodles and measured sauce.', 'Stir-fry until piping hot and divide into the suggested portion.'],
+            simmer: ['Prepare the protein, vegetables and measured carbohydrate.', 'Cook aromatics and protein, add the sauce or stock, then simmer until everything is safely cooked and tender.', 'Add the cooked grain or side, portion, and cool any shift-prep servings quickly.'],
+            skillet: ['Prepare and measure the ingredients before heating a non-stick pan.', 'Cook the vegetables and protein until safely cooked through, using only the measured oil.', 'Serve immediately with the named sides and season to taste.'],
+            snack: ['Measure the listed ingredients into one suggested portion.', 'Combine or assemble them in a clean, sealed container.', 'Keep chilled when required and check the product labels before eating.'],
+            bowl: ['Cook the protein and grain or potato according to pack guidance; cook animal proteins thoroughly.', 'Prepare the vegetables and measured dressing or seasoning.', 'Assemble one portion, or cool components quickly and store separately for the shift.']
+        };
+        return steps[kind] || steps.bowl;
+    }
+
+    function openShiftMealDetail(type, mealType, index, dateKey) {
+        const ideas = shiftMealIdeasFor(type, mealType);
+        if (!ideas.length) {
+            showToast('No compatible meal ideas for these requirements');
+            return;
+        }
+        shiftMealDetailSelection = {
+            type,
+            mealType,
+            index: Math.max(0, Math.min(ideas.length - 1, Number(index) || 0)),
+            dateKey: /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? String(dateKey) : state.viewDate
+        };
+        const modal = document.getElementById('shift-meal-detail-modal');
+        if (modal) modal.style.display = 'flex';
+        renderShiftMealDetail();
+        refreshIcons();
+    }
+
+    function closeShiftMealDetail() {
+        const modal = document.getElementById('shift-meal-detail-modal');
+        if (modal) modal.style.display = 'none';
+        shiftMealDetailSelection = null;
+    }
+
+    function selectShiftMealDetail(index) {
+        if (!shiftMealDetailSelection) return;
+        const ideas = shiftMealIdeasFor(shiftMealDetailSelection.type, shiftMealDetailSelection.mealType);
+        shiftMealDetailSelection.index = Math.max(0, Math.min(ideas.length - 1, Number(index) || 0));
+        renderShiftMealDetail();
+    }
+
+    function renderShiftMealDetail() {
+        if (!shiftMealDetailSelection) return;
+        const selection = shiftMealDetailSelection;
+        const ideas = shiftMealIdeasFor(selection.type, selection.mealType);
+        if (!ideas.length) {
+            closeShiftMealDetail();
+            showToast('No compatible recipes remain after that dietary change');
+            return;
+        }
+        selection.index = Math.max(0, Math.min(ideas.length - 1, selection.index));
+        const idea = ideas[selection.index];
+        const ingredients = Array.isArray(idea.ingredients) && idea.ingredients.length
+            ? idea.ingredients
+            : inferredShiftMealIngredients(idea);
+        const steps = shiftMealRecipeSteps(idea);
+        const profile = dietaryProfile();
+        const title = document.getElementById('shift-meal-detail-title');
+        const kicker = document.getElementById('shift-meal-detail-kicker');
+        const count = document.getElementById('shift-meal-detail-count');
+        const options = document.getElementById('shift-meal-detail-options');
+        const content = document.getElementById('shift-meal-detail-content');
+        const addButton = document.getElementById('shift-meal-detail-add');
+        if (!title || !options || !content) return;
+
+        title.textContent = idea.name;
+        if (kicker) kicker.textContent = `${aiCoachShiftLabel(getShiftForDate(selection.dateKey))} · ${selection.mealType}`;
+        if (count) count.textContent = `${ideas.length} compatible choice${ideas.length === 1 ? '' : 's'}`;
+        options.innerHTML = ideas.map((option, index) => {
+            const active = index === selection.index;
+            return `<button onclick="selectShiftMealDetail(${index})" class="text-left p-3 rounded-xl border-2 ${active ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white'}">
+                <span class="block text-[9px] font-black uppercase ${active ? 'text-orange-600' : 'text-slate-400'}">Choice ${index + 1}</span>
+                <span class="block font-black text-xs mt-1">${escapeHtml(option.name)}</span>
+                <span class="block text-[10px] text-slate-500 mt-1">${option.calories} kcal · ${option.protein}g protein</span>
+            </button>`;
+        }).join('');
+
+        const dateLabel = new Date(selection.dateKey + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+        const requirementLabels = (profile.requirements || []).map(value => DIETARY_REQUIREMENT_LABELS[value] || value);
+        const allergenLabels = dietaryMealAllergens(idea);
+        const loggedCount = (state.dailyMeals || []).filter(meal => meal.date === selection.dateKey && meal.shiftMealIdeaId === idea.id).length;
+        content.innerHTML = `
+            <article class="border-2 border-slate-200 rounded-[2rem] p-4 sm:p-6">
+                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div>
+                        <p class="text-[10px] font-black uppercase text-orange-600">${escapeHtml(shiftMealTimingLabel(selection.type, selection.mealType))} · ${escapeHtml(dateLabel)}</p>
+                        <h4 class="text-2xl font-black mt-1">${escapeHtml(idea.name)}</h4>
+                        <div class="flex flex-wrap gap-1.5 mt-2">${shiftMealIdeaBadgesHTML(idea)}</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 flex-shrink-0">
+                        <span class="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-black text-center">${idea.calories} kcal</span>
+                        <span class="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl text-xs font-black text-center">${idea.protein}g protein</span>
+                    </div>
+                </div>
+                <p class="text-sm text-slate-600 mt-4">${escapeHtml(idea.note)}</p>
+
+                <div class="grid grid-cols-4 gap-2 mt-4">
+                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Carbs</p><p class="font-black text-sm">${idea.carbs}g</p></div>
+                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Fat</p><p class="font-black text-sm">${idea.fat}g</p></div>
+                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Fibre</p><p class="font-black text-sm">${idea.fiber}g</p></div>
+                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Serving</p><p class="font-black text-sm">${idea.portionAdjusted ? '85%' : '1×'}</p></div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
+                    <section>
+                        <h5 class="font-black flex items-center gap-2"><i data-lucide="shopping-basket" class="w-4 h-4 text-orange-600"></i> Ingredients</h5>
+                        <ul class="mt-3 space-y-2">${ingredients.map(item => `<li class="flex items-start gap-2 text-sm text-slate-600"><span class="text-orange-500 font-black">•</span><span>${escapeHtml(item)}</span></li>`).join('')}</ul>
+                    </section>
+                    <section>
+                        <h5 class="font-black flex items-center gap-2"><i data-lucide="list-ordered" class="w-4 h-4 text-orange-600"></i> Instructions</h5>
+                        <ol class="mt-3 space-y-3">${steps.map((step, index) => `<li class="flex items-start gap-3 text-sm text-slate-600"><span class="w-6 h-6 bg-slate-900 text-orange-300 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0">${index + 1}</span><span>${escapeHtml(step)}</span></li>`).join('')}</ol>
+                    </section>
+                </div>
+
+                <div class="mt-6 bg-amber-50 border border-amber-200 p-4 rounded-xl">
+                    <p class="font-black text-xs text-amber-900">Dietary and food-safety check</p>
+                    <p class="text-[11px] text-amber-800 mt-1">${requirementLabels.length ? `Your saved requirements: ${escapeHtml(requirementLabels.join(' · '))}. ` : ''}${profile.notes ? `Your note: ${escapeHtml(profile.notes)}. ` : ''}Possible recipe flags: ${escapeHtml(allergenLabels.length ? allergenLabels.join(', ') : 'none inferred from the title')}. Always check every label, substitute only with products safe for you, prevent cross-contamination and verify halal/kosher certification where required.</p>
+                </div>
+            </article>`;
+        if (addButton) addButton.textContent = loggedCount ? `✓ Added ${loggedCount} · Add Again` : `Add ${idea.name} to Diary`;
+        refreshIcons();
+    }
+
+    function addSelectedShiftMealIdea() {
+        if (!shiftMealDetailSelection) return;
+        const selection = Object.assign({}, shiftMealDetailSelection);
+        addShiftMealIdea(selection.type, selection.mealType, selection.index, selection.dateKey);
+        renderShiftMealDetail();
+    }
+
 
     function rotateShiftMealIdea(type, mealType, direction, dateKey) {
         const ideas = shiftMealIdeasFor(type, mealType);
@@ -7020,21 +7782,20 @@
             </div>`;
     }
 
-    function fastingGuidanceHTML(onShift) {
-        return `
-            <details class="glass-card p-6 rounded-[2.5rem] border-2 border-dashed border-indigo-200">
-                <summary class="text-lg font-black cursor-pointer">Optional: Intermittent Fasting</summary><div class="mt-4">
-                <p class="text-xs text-slate-400 mb-4">You've turned this on for fat loss. In a 2025 trial with night-shift workers, a 5:2-style approach produced similar weight loss to normal calorie restriction — so it's an option, not a must.</p>
-                <div class="p-3 bg-rose-50 border border-rose-200 rounded-2xl mb-3">
-                    <p class="text-sm font-bold text-rose-700">⚠️ Never fast during a night shift</p>
-                    <p class="text-xs text-rose-600 mt-1">Fasting while awake and working overnight worsens fatigue and concentration — a safety risk. Put fasting days on rest days or day-off periods only.</p>
-                </div>
-                ${onShift
-                    ? mealRow('Today', 'Not a fasting day', 'You\'re on shift — eat normally per the plan above. Save any fasting for a rest day.', 'light')
-                    : mealRow('Today (rest day)', 'Optional fasting day', 'If you choose to fast today: keep it to the lighter "5:2" style (~500–600 kcal), stay hydrated, and stop if you feel unwell. Protein + veg + plenty of water.', 'main')}
-                <p class="text-[11px] text-slate-400 mt-2">Fasting isn't safe for everyone. If you have any doubt, don't fast — and check with your GP.</p></div>
-            </details>`;
-    }
+function fastingGuidanceHTML(onShift, shiftType) {
+    const isNight = onShift && shiftType === 'night';
+    return `
+        <details class="glass-card p-6 rounded-[2.5rem] border-2 border-dashed border-indigo-200">
+            <summary class="text-lg font-black cursor-pointer">Intermittent-Fasting Shift Guidance</summary><div class="mt-4">
+            <p class="text-xs text-slate-500 mb-4">Your saved plan uses intermittent fasting. VFIT changes the emphasis by shift instead of applying one rigid clock window every day.</p>
+            ${isNight
+                ? `<div class="p-3 bg-amber-50 border border-amber-200 rounded-2xl mb-3"><p class="text-sm font-bold text-amber-900">Night shift: alertness and safety come first</p><p class="text-xs text-amber-800 mt-1">Do not force a fast through work if it causes dizziness, poor concentration, unusual fatigue or impaired performance. A practical option is to anchor the eating window after waking and through the early part of the shift.</p></div>`
+                : onShift
+                    ? mealRow('This shift', 'Keep the window practical', 'Place the eating window around the main work break and the training or recovery meal. Do not sacrifice fluids or adequate protein to hit a clock target.', 'light')
+                    : mealRow('Off day', 'Return the window to daytime', 'Use a consistent daytime window if it feels sustainable, while still meeting protein, energy, fibre and hydration needs.', 'main')}
+            <p class="text-[11px] text-slate-400 mt-2">Fasting is not suitable for everyone. Get appropriate clinical advice first if you have diabetes or another health condition, take medication affected by food timing, are pregnant, or have a history of disordered eating. Stop if you feel unwell.</p></div>
+        </details>`;
+}
 
     function createdShiftFoodIdeasHTML(dateKey) {
         const customMeals = (state.createdMeals || []).filter(meal => meal && (meal.showInShiftFoodIdeas === true || meal.addToShiftFoodIdeas === true));
@@ -7056,29 +7817,69 @@
                 </div>`;
     }
 
-    function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
-        return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Protein-Forward Food Ideas</summary><div class="mt-4">
-                <p class="text-xs text-slate-400 mb-4">${emphasiseNight
-                    ? 'On nights, protein is your best friend — it keeps you full, steadies blood sugar, and avoids the crash-and-crave cycle that sugary snacks cause. Prep these ahead so 3am-you has good options.'
-                    : 'Protein at each meal supports muscle and keeps you full. Batch-prep on days off.'}</p>
-                <div class="grid grid-cols-2 gap-2">
-                    ${foodIdea('🥚 Boiled eggs', 'Prep a dozen; grab 2–3')}
-                    ${foodIdea('🍗 Grilled chicken', 'Batch-cook, portion out')}
-                    ${foodIdea('🥛 Greek yogurt', 'High protein, low effort')}
-                    ${foodIdea('🧀 Cottage cheese', 'Slow-release protein, great pre-sleep')}
-                    ${foodIdea('🥜 Nuts & seeds', 'Protein + good fats (watch portions)')}
-                    ${foodIdea('🐟 Tinned tuna/salmon', 'On oatcakes or wholegrain')}
-                    ${foodIdea('🫘 Beans & lentils', 'Fibre + plant protein')}
-                    ${foodIdea('🥤 Protein shake', 'Fast backup when busy')}
-                </div>
-                ${createdShiftFoodIdeasHTML(dateKey)}
-                <div class="mt-3 p-3 bg-slate-50 rounded-2xl">
-                    <p class="text-xs text-slate-500"><b>Avoid on shift:</b> sugary snacks, pastries, energy drinks and fast food. They spike then crash your blood sugar, leaving you hungrier and more tired — the opposite of what you need at 3am.</p>
-                </div></div>
-            </details>`;
-    }
+function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
+    const profile = dietaryProfile();
+    const lists = {
+        vegan: [
+            ['🫘 Beans & lentils', 'Batch-cook for bowls, soups and chilli', ''],
+            ['🌱 Tofu', 'Bake or stir-fry several portions', 'soy'],
+            ['🌿 Tempeh', 'High-protein option for wraps and noodles', 'soy'],
+            ['🥗 Edamame', 'Portable savoury protein snack', 'soy'],
+            ['🥤 Pea or soy protein', 'Measured backup for short breaks', 'soy'],
+            ['🌾 Seitan', 'Protein-rich if gluten suits your requirements', 'gluten'],
+            ['🥣 Fortified soy yogurt', 'No-cook breakfast or snack', 'soy'],
+            ['🧆 Chickpeas & hummus', 'Fibre plus plant protein', 'sesame']
+        ],
+        vegetarian: [
+            ['🥚 Eggs', 'Boil ahead or use in quick meals', 'egg'],
+            ['🥛 Greek yogurt', 'High protein and low effort', 'dairy'],
+            ['🧀 Cottage cheese', 'Chilled snack or potato topping', 'dairy'],
+            ['🌱 Tofu & tempeh', 'Plant-protein rotation for meal prep', 'soy'],
+            ['🫘 Beans & lentils', 'Fibre plus plant protein', ''],
+            ['🥤 Protein shake', 'Fast measured backup when busy', 'dairy'],
+            ['🧀 Reduced-fat cheese', 'Measure portions for predictable calories', 'dairy'],
+            ['🥗 Edamame', 'Portable savoury protein snack', 'soy']
+        ],
+        ketogenic: [
+            ['🍗 Chicken or turkey', 'Batch-cook plain portions for salads', ''],
+            ['🐟 Salmon or tuna', 'Protein and fats; keep chilled', 'fish'],
+            ['🥚 Eggs', 'Portable and easy to prepare ahead', 'egg'],
+            ['🌱 Tofu', 'Lower-carbohydrate plant protein', 'soy'],
+            ['🥛 Unsweetened Greek yogurt', 'Check carbohydrate on the label', 'dairy'],
+            ['🧀 Cottage cheese', 'Measure portions and check the label', 'dairy'],
+            ['🥗 Edamame', 'Fibre-rich plant option', 'soy'],
+            ['🌰 Seeds', 'Measure portions; check allergy needs', 'nuts']
+        ],
+        balanced: [
+            ['🥚 Boiled eggs', 'Prep ahead; grab 2–3', 'egg'],
+            ['🍗 Grilled chicken', 'Batch-cook and portion out', ''],
+            ['🥛 Greek yogurt', 'High protein and low effort', 'dairy'],
+            ['🧀 Cottage cheese', 'Slow-release protein option', 'dairy'],
+            ['🥜 Nuts & seeds', 'Measure portions carefully', 'nuts'],
+            ['🐟 Tinned tuna or salmon', 'On oatcakes or wholegrain bread', 'fish|gluten'],
+            ['🫘 Beans & lentils', 'Fibre plus plant protein', ''],
+            ['🥤 Protein shake', 'Fast backup when busy', 'dairy']
+        ]
+    };
+    const candidates = lists[profile.pattern] || lists.balanced;
+    const ideas = candidates.filter(([name, note, allergens]) =>
+        mealMatchesDietaryRequirements({ name, note, allergens: String(allergens || '').split('|').filter(Boolean) }, profile)
+    );
+    return `
+        <details class="glass-card p-6 rounded-[2.5rem]">
+            <summary class="text-lg font-black cursor-pointer">${escapeHtml(dietaryPatternLabel(profile.pattern))} Protein Ideas</summary><div class="mt-4">
+            <p class="text-xs text-slate-400 mb-4">${emphasiseNight
+                ? 'Prepare protein-forward choices before a night shift so your deepest-night break does not depend on vending-machine food.'
+                : 'A deliberate protein source at each main meal supports recovery and helps make the plan more filling.'}</p>
+            <div class="grid grid-cols-2 gap-2">
+                ${ideas.map(([name, note]) => foodIdea(name, note)).join('') || '<p class="col-span-2 text-xs text-amber-700 bg-amber-50 p-3 rounded-xl">No generic ideas match every selected exclusion. Use a product or recipe you have personally verified as safe.</p>'}
+            </div>
+            ${createdShiftFoodIdeasHTML(dateKey)}
+            <div class="mt-3 p-3 bg-slate-50 rounded-2xl">
+                <p class="text-xs text-slate-500"><b>Shift prep:</b> portion food before work, carry fluids and keep a verified backup meal available. Check every product against your saved requirements.</p>
+            </div></div>
+        </details>`;
+}
 
     function foodIdea(name, note) {
         return `
@@ -7498,6 +8299,16 @@
         userGoals: [],
         // Diet goal for calorie targeting: 'lose' | 'maintain' | 'gain'
         dietGoal: { mode: '', rate: 1, rateUnit: 'lbs', gainRate: 250 },
+        // Saved coaching answers used to personalise shift nutrition and meal ideas.
+        dietaryProfile: {
+            completed: false,
+            pattern: 'balanced',       // 'balanced' | 'vegan' | 'vegetarian' | 'ketogenic'
+            approaches: [],            // 'intermittent_fasting' and/or 'calorie_deficit'
+            requirements: [],          // dietary exclusions or certification needs
+            notes: '',
+            source: null,
+            updatedAt: null
+        },
         cardioLogs: [],
         hydrationLogs: {},
         aiCoachEnabled: true,
@@ -7614,6 +8425,7 @@
     let currentAmountType = 'portion';
     let searchResults = [];
     let mealIngredients = [];
+    let shiftMealDetailSelection = null;
     let html5QrCode = null;
     let metricsChart = null;
     let currentPhotoType = null;
@@ -7672,6 +8484,17 @@
         });
         normalized.goals = Object.assign({}, DEFAULT_STATE.goals, isPlainRecord(raw.goals) ? raw.goals : {});
         normalized.dietGoal = Object.assign({}, DEFAULT_STATE.dietGoal, isPlainRecord(raw.dietGoal) ? raw.dietGoal : {});
+        normalized.dietaryProfile = Object.assign({}, DEFAULT_STATE.dietaryProfile, isPlainRecord(raw.dietaryProfile) ? raw.dietaryProfile : {});
+        normalized.dietaryProfile.pattern = ['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(normalized.dietaryProfile.pattern)
+            ? normalized.dietaryProfile.pattern
+            : 'balanced';
+        normalized.dietaryProfile.approaches = Array.isArray(normalized.dietaryProfile.approaches)
+            ? normalized.dietaryProfile.approaches.filter(value => ['intermittent_fasting', 'calorie_deficit'].includes(value))
+            : [];
+        normalized.dietaryProfile.requirements = Array.isArray(normalized.dietaryProfile.requirements)
+            ? normalized.dietaryProfile.requirements.filter(value => typeof value === 'string').slice(0, 16)
+            : [];
+        normalized.dietaryProfile.notes = String(normalized.dietaryProfile.notes || '').slice(0, 750);
         normalized.userProfile = Object.assign({}, DEFAULT_STATE.userProfile, isPlainRecord(raw.userProfile) ? raw.userProfile : {});
         normalized.shiftProfile = Object.assign({}, DEFAULT_STATE.shiftProfile, isPlainRecord(raw.shiftProfile) ? raw.shiftProfile : {});
         normalized.shiftProfile.rota = isPlainRecord(raw.shiftProfile && raw.shiftProfile.rota)
@@ -8131,6 +8954,7 @@
         daily: ['Today’s Coaching', 'Daily conversation, readiness and advice based on today’s shift.'],
         training: ['Training & Goals', 'Weekly set targets, progression, plateaus and deload guidance.'],
         shifts: ['Shift Plan & Advice', 'Set the rota that powers today’s shift-aware coaching guidance.'],
+        diet: ['Dietary Plan & Meals', 'Dietary requirements, eating approach and meals adapted to your shift.'],
         coach: ['Coach & Check-ins', 'Coach messages, shared plans and your weekly check-in.'],
         reports: ['Progress Reports', 'Review or download your weekly training and nutrition report.'],
         membership: ['Membership', 'View your current plan and available membership options.']
@@ -17310,86 +18134,131 @@
     let aiCoachCheckInSession = null;
     let aiCoachPromptedSessionKey = '';
 
-    function aiCoachQuestionnaireSteps(answers) {
-        const steps = [
-            {
-                id: 'mood',
-                question: 'First, how are you feeling overall today?',
-                options: [
-                    { value: 'great', label: 'Great', hint: 'Positive and ready' },
-                    { value: 'okay', label: 'Okay', hint: 'Somewhere in the middle' },
-                    { value: 'drained', label: 'Drained', hint: 'Running on empty' }
-                ]
-            },
-            {
-                id: 'sleepHours',
-                question: 'Roughly how much sleep did you get in your main sleep period?',
-                options: [
-                    { value: '4.5', label: 'Under 5h', hint: 'Very short' },
-                    { value: '5.5', label: '5–6h', hint: 'Short' },
-                    { value: '6.5', label: '6–7h', hint: 'Nearly there' },
-                    { value: '7.5', label: '7–8h', hint: 'Solid' },
-                    { value: '8.5', label: '8h+', hint: 'Well rested' }
-                ]
-            },
-            {
-                id: 'energy',
-                question: 'How is your energy right now?',
-                options: [
-                    { value: '5', label: 'High', hint: 'Plenty in the tank' },
-                    { value: '3', label: 'Steady', hint: 'Enough for normal tasks' },
-                    { value: '1', label: 'Low', hint: 'Everything feels harder' }
-                ]
-            },
-            {
-                id: 'fatigue',
-                question: 'How much whole-body fatigue are you carrying?',
-                options: [
-                    { value: '1', label: 'Fresh', hint: 'Recovered' },
-                    { value: '3', label: 'Moderate', hint: 'Noticeable but manageable' },
-                    { value: '5', label: 'Heavy', hint: 'Very fatigued' }
-                ]
-            },
-            {
-                id: 'deloadWeek',
-                question: 'You are showing signs of severe fatigue. Would you like the next seven days to be a deload week?',
-                options: [
-                    { value: 'yes', label: 'Yes, deload', hint: 'Reduce weekly sets by about 40–50% and avoid failure' },
-                    { value: 'no', label: 'Not right now', hint: 'Keep today recovery-focused and reconsider if fatigue continues' }
-                ]
-            },
-            {
-                id: 'soreness',
-                question: 'What is your muscle or joint soreness like?',
-                options: [
-                    { value: '1', label: 'None', hint: 'Moving normally' },
-                    { value: '3', label: 'Manageable', hint: 'Normal training soreness' },
-                    { value: '5', label: 'Severe or sharp', hint: 'Movement is affected' }
-                ]
-            },
-            {
-                id: 'stress',
-                question: 'How high is your stress today?',
-                options: [
-                    { value: '1', label: 'Low', hint: 'Calm' },
-                    { value: '3', label: 'Moderate', hint: 'Manageable' },
-                    { value: '5', label: 'High', hint: 'Under pressure' }
-                ]
-            },
-            {
-                id: 'wellbeing',
-                question: 'Last health check: which best describes you today?',
-                options: [
-                    { value: 'well', label: 'I feel well', hint: 'No unusual symptoms' },
-                    { value: 'niggle', label: 'Minor niggle', hint: 'Something needs care' },
-                    { value: 'unwell', label: 'Unwell / unusual pain', hint: 'Training may not be appropriate' }
-                ]
-            }
-        ];
-        return Number(answers && answers.fatigue) >= 5
-            ? steps
-            : steps.filter(step => step.id !== 'deloadWeek');
-    }
+function aiCoachQuestionnaireSteps(answers) {
+    const values = answers || {};
+    const includeDietarySetup = Object.prototype.hasOwnProperty.call(values, '__dietarySetup')
+        ? values.__dietarySetup === true
+        : !dietaryProfile().completed;
+    const dietarySteps = includeDietarySetup ? [
+        {
+            id: 'dietRequirementOverview',
+            question: 'Before today’s readiness check, do you have dietary requirements that must be included in your plan?',
+            options: [
+                { value: 'none', label: 'No requirements', hint: 'Nothing specific to avoid' },
+                { value: 'allergy', label: 'Allergy / intolerance', hint: 'I need to name exact foods' },
+                { value: 'faith', label: 'Religious / cultural', hint: 'For example halal or kosher' },
+                { value: 'other', label: 'Other or medical', hint: 'Another requirement applies' }
+            ]
+        },
+        {
+            id: 'dietRequirementDetails',
+            question: 'Please type the exact foods, allergies, certification needs or other dietary instructions the plan must respect.',
+            inputType: 'text',
+            optional: true,
+            placeholder: 'For example: severe peanut allergy, lactose intolerance, halal only…'
+        },
+        {
+            id: 'dietPattern',
+            question: 'Do you follow a specific diet?',
+            options: [
+                { value: 'balanced', label: 'No specific diet', hint: 'Balanced meal suggestions' },
+                { value: 'vegan', label: 'Vegan', hint: 'Plant-based meals only' },
+                { value: 'vegetarian', label: 'Vegetarian', hint: 'No meat or fish' },
+                { value: 'ketogenic', label: 'Ketogenic', hint: 'Lower-carbohydrate meal library' }
+            ]
+        },
+        {
+            id: 'dietApproach',
+            question: 'Is there an eating approach you want included as well?',
+            options: [
+                { value: 'none', label: 'Neither', hint: 'No fasting or deficit focus' },
+                { value: 'intermittent_fasting', label: 'Intermittent fasting', hint: 'Timing changes with the shift' },
+                { value: 'calorie_deficit', label: 'Calorie deficit', hint: 'Smaller planned portions' },
+                { value: 'fasting_deficit', label: 'Both', hint: 'Fasting and calorie-deficit focus' }
+            ]
+        }
+    ].filter(step => step.id !== 'dietRequirementDetails' || (values.dietRequirementOverview && values.dietRequirementOverview !== 'none')) : [];
+
+    const dailySteps = [
+        {
+            id: 'mood',
+            question: 'Now, how are you feeling overall today?',
+            options: [
+                { value: 'great', label: 'Great', hint: 'Positive and ready' },
+                { value: 'okay', label: 'Okay', hint: 'Somewhere in the middle' },
+                { value: 'drained', label: 'Drained', hint: 'Running on empty' }
+            ]
+        },
+        {
+            id: 'sleepHours',
+            question: 'Roughly how much sleep did you get in your main sleep period?',
+            options: [
+                { value: '4.5', label: 'Under 5h', hint: 'Very short' },
+                { value: '5.5', label: '5–6h', hint: 'Short' },
+                { value: '6.5', label: '6–7h', hint: 'Nearly there' },
+                { value: '7.5', label: '7–8h', hint: 'Solid' },
+                { value: '8.5', label: '8h+', hint: 'Well rested' }
+            ]
+        },
+        {
+            id: 'energy',
+            question: 'How is your energy right now?',
+            options: [
+                { value: '5', label: 'High', hint: 'Plenty in the tank' },
+                { value: '3', label: 'Steady', hint: 'Enough for normal tasks' },
+                { value: '1', label: 'Low', hint: 'Everything feels harder' }
+            ]
+        },
+        {
+            id: 'fatigue',
+            question: 'How much whole-body fatigue are you carrying?',
+            options: [
+                { value: '1', label: 'Fresh', hint: 'Recovered' },
+                { value: '3', label: 'Moderate', hint: 'Noticeable but manageable' },
+                { value: '5', label: 'Heavy', hint: 'Very fatigued' }
+            ]
+        },
+        {
+            id: 'deloadWeek',
+            question: 'You are showing signs of severe fatigue. Would you like the next seven days to be a deload week?',
+            options: [
+                { value: 'yes', label: 'Yes, deload', hint: 'Reduce weekly sets by about 40–50% and avoid failure' },
+                { value: 'no', label: 'Not right now', hint: 'Keep today recovery-focused and reconsider if fatigue continues' }
+            ]
+        },
+        {
+            id: 'soreness',
+            question: 'What is your muscle or joint soreness like?',
+            options: [
+                { value: '1', label: 'None', hint: 'Moving normally' },
+                { value: '3', label: 'Manageable', hint: 'Normal training soreness' },
+                { value: '5', label: 'Severe or sharp', hint: 'Movement is affected' }
+            ]
+        },
+        {
+            id: 'stress',
+            question: 'How high is your stress today?',
+            options: [
+                { value: '1', label: 'Low', hint: 'Calm' },
+                { value: '3', label: 'Moderate', hint: 'Manageable' },
+                { value: '5', label: 'High', hint: 'Under pressure' }
+            ]
+        },
+        {
+            id: 'wellbeing',
+            question: 'Last health check: which best describes you today?',
+            options: [
+                { value: 'well', label: 'I feel well', hint: 'No unusual symptoms' },
+                { value: 'niggle', label: 'Minor niggle', hint: 'Something needs care' },
+                { value: 'unwell', label: 'Unwell / unusual pain', hint: 'Training may not be appropriate' }
+            ]
+        }
+    ];
+    const steps = dietarySteps.concat(dailySteps);
+    return Number(values.fatigue) >= 5
+        ? steps
+        : steps.filter(step => step.id !== 'deloadWeek');
+}
 
     function aiCoachShiftLabel(shift) {
         const type = shift && shift.type ? shift.type : 'off';
@@ -17413,28 +18282,29 @@
         return concern.some(term => text.includes(term)) ? 'concern' : '';
     }
 
-    function aiCoachShiftAdvice(shift, label) {
-        const type = shift && shift.type ? shift.type : 'off';
-        const adjusted = label !== 'Ready';
-        if (type === 'night') {
-            return adjusted
-                ? 'For this night shift, protect your main sleep first. If you train, keep it short and place it after waking and before the shift—not at the exhausted end of it.'
-                : 'For this night shift, your best training window is after your main sleep and before the shift. Keep food, fluids and the session planned before work starts.';
-        }
-        if (type === 'early') {
-            return adjusted
-                ? 'For this early shift, avoid forcing a hard pre-shift session. Choose a shorter session after work only if energy improves; otherwise make today recovery-focused.'
-                : 'For this early shift, train after work if your energy stays steady, or use a short pre-shift session only when it does not cut into sleep.';
-        }
-        if (type === 'day') {
-            return adjusted
-                ? 'Around this day shift, use the easiest realistic training window and shorten the session. Consistency matters more than completing every planned set.'
-                : 'Around this day shift, use whichever pre- or post-shift window you can repeat consistently and keep the session plan ready in advance.';
-        }
-        return adjusted
+function aiCoachShiftAdvice(shift, label) {
+    const type = shift && shift.type ? shift.type : 'off';
+    const adjusted = label !== 'Ready';
+    let advice;
+    if (type === 'night') {
+        advice = adjusted
+            ? 'For this night shift, protect your main sleep first. If you train, keep it short and place it after waking and before the shift—not at the exhausted end of it.'
+            : 'For this night shift, your best training window is after your main sleep and before the shift. Keep food, fluids and the session planned before work starts.';
+    } else if (type === 'early') {
+        advice = adjusted
+            ? 'For this early shift, avoid forcing a hard pre-shift session. Choose a shorter session after work only if energy improves; otherwise make today recovery-focused.'
+            : 'For this early shift, train after work if your energy stays steady, or use a short pre-shift session only when it does not cut into sleep.';
+    } else if (type === 'day') {
+        advice = adjusted
+            ? 'Around this day shift, use the easiest realistic training window and shorten the session. Consistency matters more than completing every planned set.'
+            : 'Around this day shift, use whichever pre- or post-shift window you can repeat consistently and keep the session plan ready in advance.';
+    } else {
+        advice = adjusted
             ? 'Because this is an off day, use the extra flexibility for recovery or a shorter session when energy is best.'
             : 'Because this is an off day, place the session at your best-energy time and leave enough room for meals and recovery.';
     }
+    return `${advice} ${dietaryShiftCoachAdvice(type)}`.trim();
+}
 
     function buildAICoachCheckInResult(answers, shift, note) {
         const values = answers || {};
@@ -17506,6 +18376,14 @@
     }
 
     function aiCoachAnswerAcknowledgement(stepId, value) {
+        if (stepId === 'dietRequirementOverview' && value === 'none') return 'Understood. I’ll still let you update this later if anything changes.';
+        if (stepId === 'dietRequirementOverview' && value !== 'none') return 'Thanks. I’ll ask for the exact detail so it can be saved with your plan.';
+        if (stepId === 'dietRequirementDetails') return 'I’ve noted that for the dietary plan. Please still check every label and preparation method yourself.';
+        if (stepId === 'dietPattern') return `${dietaryPatternLabel(value)} will be the meal-planner starting point.`;
+        if (stepId === 'dietApproach' && value === 'intermittent_fasting') return 'I’ll adapt the fasting focus to the shift rather than using one rigid clock window.';
+        if (stepId === 'dietApproach' && value === 'calorie_deficit') return 'I’ll show a smaller suggested portion while keeping protein and vegetables visible.';
+        if (stepId === 'dietApproach' && value === 'fasting_deficit') return 'I’ll combine the smaller-portion and shift-aware timing guidance.';
+        if (stepId === 'dietApproach') return 'Understood. I won’t add a fasting or calorie-deficit focus.';
         if (stepId === 'mood' && value === 'great') return 'Good to hear. Let’s see whether recovery matches that feeling.';
         if (stepId === 'mood' && value === 'drained') return 'Thanks for being honest. We’ll keep today realistic.';
         if (stepId === 'sleepHours' && Number(value) < 6) return 'That is a short sleep window, so I’ll factor it into today’s load.';
@@ -17524,39 +18402,41 @@
         aiCoachCheckInSession.messages = aiCoachCheckInSession.messages.slice(-40);
     }
 
-    function openAICoachCheckIn() {
-        const modal = document.getElementById('ai-coach-checkin-modal');
-        if (!modal) return;
-        const date = localDateKey();
-        const sessionKey = `${currentUser && currentUser.uid ? currentUser.uid : 'guest'}:${date}`;
-        aiCoachPromptedSessionKey = sessionKey;
-        if (!aiCoachCheckInSession || aiCoachCheckInSession.date !== date || aiCoachCheckInSession.finished) {
-            const shift = getShiftForDate(date);
-            const firstName = String((firebaseUserData && firebaseUserData.name) || (currentUser && currentUser.displayName) || '').trim().split(/\s+/)[0];
-            aiCoachCheckInSession = {
-                id: 'coach_checkin_' + Date.now(),
-                date,
-                shift,
-                stepIndex: 0,
-                answers: {},
-                note: '',
-                messages: [],
-                awaitingNote: false,
-                finished: false,
-                result: null
-            };
-            appendAICoachCheckInMessage('coach', `${firstName ? 'Hi ' + firstName + '. ' : 'Hi. '}I have today as ${aiCoachShiftLabel(shift).toLowerCase()}. I’ll ask a few quick questions, one at a time, then adjust the training guidance around your shift.`);
-            appendAICoachCheckInMessage('coach', aiCoachQuestionnaireSteps()[0].question);
-        }
-        modal.style.display = 'flex';
-        renderAICoachCheckInConversation();
-        refreshIcons();
+function openAICoachCheckIn() {
+    const modal = document.getElementById('ai-coach-checkin-modal');
+    if (!modal) return;
+    const date = localDateKey();
+    const sessionKey = `${currentUser && currentUser.uid ? currentUser.uid : 'guest'}:${date}`;
+    aiCoachPromptedSessionKey = sessionKey;
+    if (!aiCoachCheckInSession || aiCoachCheckInSession.date !== date || aiCoachCheckInSession.finished) {
+        const shift = getShiftForDate(date);
+        const firstName = String((firebaseUserData && firebaseUserData.name) || (currentUser && currentUser.displayName) || '').trim().split(/\s+/)[0];
+        const needsDietarySetup = !dietaryProfile().completed;
+        aiCoachCheckInSession = {
+            id: 'coach_checkin_' + Date.now(),
+            date,
+            shift,
+            stepIndex: 0,
+            answers: { __dietarySetup: needsDietarySetup },
+            note: '',
+            messages: [],
+            awaitingNote: false,
+            finished: false,
+            result: null
+        };
+        appendAICoachCheckInMessage('coach', `${firstName ? 'Hi ' + firstName + '. ' : 'Hi. '}I have today as ${aiCoachShiftLabel(shift).toLowerCase()}. ${needsDietarySetup ? 'I’ll first ask about dietary requirements and the eating approach to include in your plan, then ' : ''}I’ll check readiness and adjust today’s guidance around your shift.`);
+        appendAICoachCheckInMessage('coach', aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers)[0].question);
     }
+    modal.style.display = 'flex';
+    renderAICoachCheckInConversation();
+    refreshIcons();
+}
 
     function closeAICoachCheckIn() {
         const modal = document.getElementById('ai-coach-checkin-modal');
         if (modal) modal.style.display = 'none';
     }
+
 
     function renderAICoachCheckInConversation() {
         if (!aiCoachCheckInSession) return;
@@ -17579,11 +18459,23 @@
         const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
         if (!aiCoachCheckInSession.awaitingNote && !aiCoachCheckInSession.finished) {
             const step = steps[aiCoachCheckInSession.stepIndex];
-            options.innerHTML = step.options.map(option => `<button onclick="answerAICoachCheckIn('${escapeJsString(step.id)}','${escapeJsString(option.value)}','${escapeJsString(option.label)}')" class="text-left bg-slate-900 border border-orange-500 p-3 rounded-xl">
-                <span class="block font-black text-sm">${escapeHtml(option.label)}</span>
-                <span class="block text-[10px] text-slate-400 mt-0.5">${escapeHtml(option.hint)}</span>
-            </button>`).join('');
-            inputRow.classList.add('hidden');
+            if (!step) {
+                aiCoachCheckInSession.awaitingNote = true;
+                renderAICoachCheckInConversation();
+                return;
+            }
+            if (step.inputType === 'text') {
+                options.innerHTML = '';
+                inputRow.classList.remove('hidden');
+                input.placeholder = step.placeholder || 'Type your answer…';
+                if (skip) { skip.style.display = ''; skip.textContent = step.optional ? 'Add later' : 'Skip'; }
+            } else {
+                options.innerHTML = step.options.map(option => `<button onclick="answerAICoachCheckIn('${escapeJsString(step.id)}','${escapeJsString(option.value)}','${escapeJsString(option.label)}')" class="text-left bg-slate-900 border border-orange-500 p-3 rounded-xl">
+                    <span class="block font-black text-sm">${escapeHtml(option.label)}</span>
+                    <span class="block text-[10px] text-slate-400 mt-0.5">${escapeHtml(option.hint)}</span>
+                </button>`).join('');
+                inputRow.classList.add('hidden');
+            }
         } else if (aiCoachCheckInSession.awaitingNote) {
             options.innerHTML = '';
             inputRow.classList.remove('hidden');
@@ -17592,6 +18484,7 @@
         } else {
             options.innerHTML = `
                 <button onclick="openTrainingFromCoachCheckIn()" class="bg-slate-900 border border-orange-500 p-3 rounded-xl font-bold text-xs">Open Training</button>
+                <button onclick="closeAICoachCheckIn(); openDietaryProfile();" class="bg-slate-900 border border-orange-500 p-3 rounded-xl font-bold text-xs">Dietary Plan</button>
                 <button onclick="openWeeklyCheckInFromCoach()" class="bg-slate-900 border border-orange-500 p-3 rounded-xl font-bold text-xs">Weekly Check-in</button>
                 <button onclick="closeAICoachCheckIn()" class="bg-slate-100 p-3 rounded-xl font-bold text-xs">Done</button>`;
             inputRow.classList.remove('hidden');
@@ -17600,21 +18493,14 @@
         }
         setTimeout(() => {
             messages.scrollTop = messages.scrollHeight;
-            if (aiCoachCheckInSession && aiCoachCheckInSession.awaitingNote) input.focus();
+            const currentStep = steps[aiCoachCheckInSession.stepIndex];
+            if (aiCoachCheckInSession && (aiCoachCheckInSession.awaitingNote || (currentStep && currentStep.inputType === 'text'))) input.focus();
         }, 0);
         refreshIcons();
     }
 
-    function answerAICoachCheckIn(stepId, value, label) {
-        if (!aiCoachCheckInSession || aiCoachCheckInSession.finished || aiCoachCheckInSession.awaitingNote) return;
-        const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
-        const step = steps[aiCoachCheckInSession.stepIndex];
-        if (!step || step.id !== stepId) return;
-        const selected = step.options.find(option => String(option.value) === String(value));
-        if (!selected) return;
-        aiCoachCheckInSession.answers[step.id] = selected.value;
-        appendAICoachCheckInMessage('user', label || selected.label);
-        appendAICoachCheckInMessage('coach', aiCoachAnswerAcknowledgement(step.id, selected.value));
+    function advanceAICoachQuestionnaire() {
+        if (!aiCoachCheckInSession) return;
         aiCoachCheckInSession.stepIndex += 1;
         const nextSteps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
         if (aiCoachCheckInSession.stepIndex < nextSteps.length) {
@@ -17626,6 +18512,20 @@
         renderAICoachCheckInConversation();
     }
 
+    function answerAICoachCheckIn(stepId, value, label) {
+        if (!aiCoachCheckInSession || aiCoachCheckInSession.finished || aiCoachCheckInSession.awaitingNote) return;
+        const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
+        const step = steps[aiCoachCheckInSession.stepIndex];
+        if (!step || step.id !== stepId || !Array.isArray(step.options)) return;
+        const selected = step.options.find(option => String(option.value) === String(value));
+        if (!selected) return;
+        aiCoachCheckInSession.answers[step.id] = selected.value;
+        appendAICoachCheckInMessage('user', label || selected.label);
+        appendAICoachCheckInMessage('coach', aiCoachAnswerAcknowledgement(step.id, selected.value));
+        advanceAICoachQuestionnaire();
+    }
+
+
     function handleAICoachCheckInKeydown(event) {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -17633,12 +18533,25 @@
         }
     }
 
+
     function sendAICoachCheckInMessage() {
         if (!aiCoachCheckInSession) return;
         const input = document.getElementById('ai-coach-checkin-input');
         const text = String(input && input.value || '').trim().slice(0, 500);
         if (!text) return;
         input.value = '';
+
+        if (!aiCoachCheckInSession.awaitingNote && !aiCoachCheckInSession.finished) {
+            const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
+            const step = steps[aiCoachCheckInSession.stepIndex];
+            if (!step || step.inputType !== 'text') return;
+            aiCoachCheckInSession.answers[step.id] = text;
+            appendAICoachCheckInMessage('user', text);
+            appendAICoachCheckInMessage('coach', aiCoachAnswerAcknowledgement(step.id, text));
+            advanceAICoachQuestionnaire();
+            return;
+        }
+
         appendAICoachCheckInMessage('user', text);
         if (aiCoachCheckInSession.awaitingNote) {
             aiCoachCheckInSession.note = text;
@@ -17652,21 +18565,41 @@
         }
     }
 
+    function skipAICoachCheckInInput() {
+        if (!aiCoachCheckInSession) return;
+        if (!aiCoachCheckInSession.awaitingNote && !aiCoachCheckInSession.finished) {
+            const steps = aiCoachQuestionnaireSteps(aiCoachCheckInSession.answers);
+            const step = steps[aiCoachCheckInSession.stepIndex];
+            if (step && step.inputType === 'text') {
+                aiCoachCheckInSession.answers[step.id] = '';
+                appendAICoachCheckInMessage('user', 'I’ll add those details later.');
+                appendAICoachCheckInMessage('coach', 'No problem. You can add exact requirements in Dietary Plan & Meals after this check-in.');
+                advanceAICoachQuestionnaire();
+            }
+            return;
+        }
+        skipAICoachCheckInNote();
+    }
+
     function skipAICoachCheckInNote() {
         if (!aiCoachCheckInSession || !aiCoachCheckInSession.awaitingNote) return;
         appendAICoachCheckInMessage('user', 'Nothing else today.');
         finishAICoachCheckIn();
     }
 
+
     function finishAICoachCheckIn() {
         if (!aiCoachCheckInSession || aiCoachCheckInSession.finished) return;
         const session = aiCoachCheckInSession;
         session.awaitingNote = false;
+        const dietaryCaptured = applyDietaryCoachAnswers(session.answers);
         session.result = buildAICoachCheckInResult(session.answers, session.shift, session.note);
+        session.result.dietaryProfile = deepClone(dietaryProfile());
         session.finished = true;
         appendAICoachCheckInMessage('coach', `Thanks—that gives me a useful picture. Your training readiness is ${session.result.score}/100: ${session.result.label}.`);
         appendAICoachCheckInMessage('coach', session.result.action);
         appendAICoachCheckInMessage('coach', session.result.shiftAdvice);
+        if (dietaryCaptured) appendAICoachCheckInMessage('coach', 'I’ve saved those dietary answers into your plan. Open Dietary Plan & Meals any time to add or change exact exclusions.');
         if (session.result.safetyNotice) appendAICoachCheckInMessage('coach', session.result.safetyNotice);
         session.result.deloadActivated = false;
         if (session.result.deloadAccepted && !session.result.safetyLevel) {
@@ -17679,7 +18612,7 @@
         } else if (session.result.severeFatigue) {
             appendAICoachCheckInMessage('coach', 'You chose not to start a deload. Keep today recovery-focused and reconsider if severe fatigue continues or performance falls.');
         }
-        appendAICoachCheckInMessage('coach', 'You can ask me a follow-up below, open today’s training, or finish here.');
+        appendAICoachCheckInMessage('coach', 'You can ask a follow-up, review the saved Dietary Plan, open today’s training, or finish here.');
 
         const readiness = session.result.readinessValues;
         if (!isPlainRecord(state.readinessLogs)) state.readinessLogs = {};
@@ -17712,6 +18645,9 @@
         saveState();
         renderAICoachCheckInSummary();
         renderReadinessSummary();
+        renderDietaryProfileSummary();
+        renderDietaryShiftSummary();
+        renderShiftWorker();
         renderAICoach();
         renderAICoachCheckInConversation();
         showToast(`AI Coach check-in saved · ${session.result.label} ${session.result.score}/100`, 5000);
@@ -17742,7 +18678,9 @@
         if (/\b(sleep|tired|fatigue|deload)/.test(query)) return current.severeFatigue
             ? 'You reported severe fatigue. Protect the next main sleep window and use the deload option if you want seven days of reduced volume and easier training.'
             : 'Protect the next main sleep window first. Keep training away from the most exhausted end of a shift and reduce volume when fatigue stays high.';
-        if (/\b(food|meal|eat|nutrition|protein|water|hydr)/.test(query)) return 'For a shift day, plan a repeatable protein-rich meal, fibre-rich food and fluids before work so the hardest hours do not rely on chance.';
+        if (/\b(food|meal|eat|nutrition|protein|water|hydr|diet|fast|vegan|vegetarian|keto|calorie)/.test(query)) {
+            return `${dietaryShiftCoachAdvice(getShiftForDate(localDateKey()).type)} Open Dietary Plan & Meals to review compatible recipes, ingredients and instructions.`;
+        }
         return `For today, the clearest next step is: ${current.action || 'keep the plan realistic and respond to how you feel.'} ${current.shiftAdvice || ''}`.trim();
     }
 
@@ -17768,7 +18706,7 @@
         if (!latest) {
             box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
                 <div class="flex items-center justify-between gap-3"><p class="font-bold text-sm">Today · ${escapeHtml(aiCoachShiftLabel(shift))}</p><span class="text-[9px] font-black uppercase text-orange-400">Not checked in</span></div>
-                <p class="text-xs text-slate-400 mt-2">Answer a few quick prompts to get a shift-aware train, adjust or recover recommendation.</p>
+                <p class="text-xs text-slate-400 mt-2">${dietaryProfile().completed ? 'Answer a few quick prompts to get a shift-aware train, adjust or recover recommendation.' : 'Your first conversation will also ask about dietary requirements and the diet or eating approach to include in your plan.'}</p>
             </div>`;
             return;
         }
@@ -18044,6 +18982,8 @@
         renderCheckInSummary();
         renderProgressionRecommendations();
         renderRotaSummary();
+        renderDietaryProfileSummary();
+        renderDietaryShiftSummary();
         renderWeeklyReportSummary();
         renderMembership();
         renderMemberCoachSection();

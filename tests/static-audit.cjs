@@ -104,6 +104,13 @@ assert.ok(!/allow\s+(?:read|write|read,\s*write)\s*:\s*if\s+true/.test(firestore
 for (const feature of [
   'function calculateReadinessScore(',
   'function aiCoachQuestionnaireSteps(',
+  'function dietaryProfile(',
+  'function saveDietaryProfile(',
+  'function applyDietaryCoachAnswers(',
+  'function personalisedShiftMealIdeas(',
+  'function openShiftMealDetail(',
+  'function renderShiftMealDetail(',
+  'function shiftMealRecipeSteps(',
   'function buildAICoachCheckInResult(',
   'function openAICoachCheckIn(',
   'function renderAICoachCheckInSummary(',
@@ -131,7 +138,7 @@ assert.ok(dashboardStart >= 0 && coachingStart > dashboardStart && profileStart 
 const dashboardMarkup = html.slice(dashboardStart, coachingStart);
 const coachingMarkup = html.slice(coachingStart, profileStart);
 assert.ok(!dashboardMarkup.includes('id="ai-coach-bubble"'), 'AI Coach insights must not remain split across the Dashboard');
-for (const coachingId of ['ai-coach-checkin-summary', 'ai-coach-bubble', 'member-coach-section', 'readiness-summary', 'checkin-summary']) {
+for (const coachingId of ['ai-coach-checkin-summary', 'ai-coach-bubble', 'member-coach-section', 'readiness-summary', 'checkin-summary', 'dietary-profile-summary', 'dietary-shift-summary']) {
   assert.ok(coachingMarkup.includes(`id="${coachingId}"`), `${coachingId} must live in the Coaching Hub`);
 }
 assert.ok(html.includes('id="coaching-settings-slot"'), 'Settings must provide the Coaching Hub mount point');
@@ -140,10 +147,22 @@ assert.ok(html.includes("tabId === 'coaching' ? 'settings' : tabId"), 'legacy Co
 assert.ok(html.includes('onclick="openCoachingHub(); toggleSidebar();"'), 'the Coaching Hub menu item must route into Settings');
 assert.ok(html.includes('id="ai-coach-checkin-modal"'), 'conversational AI Coach modal must be present');
 assert.ok(html.includes('role="log" aria-live="polite"'), 'AI Coach conversation must announce new messages accessibly');
+assert.ok(html.includes('id="dietary-profile-modal"') && html.includes('Build Your Dietary Plan'), 'Coaching must contain the dietary questionnaire');
+for (const dietaryChoice of ['Vegan', 'Vegetarian', 'Ketogenic', 'Intermittent fasting', 'Calorie deficit']) {
+  assert.ok(html.includes(dietaryChoice), `dietary questionnaire is missing: ${dietaryChoice}`);
+}
+assert.ok(html.includes("id: 'dietRequirementOverview'") && html.includes("id: 'dietRequirementDetails'"), 'AI Coach must collect dietary requirements');
+assert.ok(html.includes('id="shift-meal-detail-modal"'), 'the larger shift-meal recipe popup must be present');
+assert.ok(html.includes('More meals you can make'), 'recipe popup must show the compatible meal library');
+assert.ok(html.includes('Ingredients') && html.includes('Instructions'), 'recipe popup must show ingredients and instructions');
+assert.ok((html.match(/dietaryMeal\('/g) || []).length >= 60, 'specific diets need at least 60 meal definitions');
+assert.ok(html.includes('Meal filtering is a planning aid and cannot guarantee allergen-free preparation'), 'dietary questionnaire needs an allergen safety boundary');
 assert.ok(html.includes('id="mg-scope-general"') && html.includes('id="mg-scope-specific"'), 'muscle goals must distinguish full-body and specific-area focus');
 assert.ok(html.includes('12–16 sets per muscle/week') && html.includes('12–20 sets per priority/week'), 'goal-specific weekly set ranges must be visible');
 assert.ok(html.includes('function shiftMealIdeasFor('), 'shift-specific meal rotations must be present');
 assert.ok(html.includes('data-shift-meal-options="${optionCount}"'), 'shift meal categories must expose their real option count');
+assert.ok(html.includes('function dietaryShiftCoachAdvice(') && html.includes('function dietaryShiftFocusHTML('), 'shift focus must use the saved dietary plan');
+assert.ok(html.includes('View Recipe &amp; More Meals'), 'meal cards must open the larger recipe popup');
 assert.ok(html.includes("id: 'deloadWeek'"), 'severe fatigue must reveal a deload-week question');
 assert.ok(html.includes('startedAt: workoutStartTime'), 'active workouts must persist the absolute start timestamp');
 assert.ok(html.includes('return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now())'), 'workout duration must derive from wall-clock time');
