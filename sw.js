@@ -3,7 +3,7 @@ importScripts(
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js'
 );
 
-const CACHE_VERSION = 'vfit-2.1.0-beta.8';
+const CACHE_VERSION = 'vfit-2.1.0-beta.9';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -11,6 +11,18 @@ const APP_SHELL = [
   './',
   './index.html',
   './Styles.css',
+  './core/state.js',
+  './training/training.js',
+  './nutrition/meal-planner.js',
+  './nutrition/scanner.js',
+  './ui/navigation.js',
+  './coaching/coaching.js',
+  './firebase/firebase-sync.js',
+  './nutrition/meal-safety.js',
+  './nutrition/weekly-planner.js',
+  './metrics/photo-storage.js',
+  './feedback/beta-feedback.js',
+  './coaching/plan-builder.js',
   './App.js',
   './manifest.webmanifest',
   './vfit-config.js',

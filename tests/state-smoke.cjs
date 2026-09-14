@@ -5,10 +5,28 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(new URL('../index.html', `file://${__filename}`), 'utf8');
-const appSource = fs.readFileSync(new URL('../App.js', `file://${__filename}`), 'utf8');
+const moduleFiles = [
+  'core/state.js',
+  'training/training.js',
+  'nutrition/meal-planner.js',
+  'nutrition/scanner.js',
+  'ui/navigation.js',
+  'coaching/coaching.js',
+  'firebase/firebase-sync.js',
+  'nutrition/meal-safety.js',
+  'nutrition/weekly-planner.js',
+  'metrics/photo-storage.js',
+  'feedback/beta-feedback.js',
+  'coaching/plan-builder.js',
+  'App.js'
+];
+const appSource = moduleFiles
+  .map(file => fs.readFileSync(new URL('../' + file, `file://${__filename}`), 'utf8'))
+  .join('\n');
 const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
-assert.equal(inlineScripts.length, 0, 'application logic must live in App.js');
-assert.ok(html.includes('<script src="./App.js"></script>'), 'index.html must load App.js');
+assert.equal(inlineScripts.length, 0, 'application logic must live in external JavaScript modules');
+moduleFiles.forEach(file => assert.ok(html.includes(`<script src="./${file}"></script>`), `index.html must load ${file}`));
+assert.equal(moduleFiles[moduleFiles.length - 1], 'App.js', 'the App.js startup entry point must load last');
 
 const values = new Map();
 const localStorage = {
@@ -118,7 +136,7 @@ firestore.FieldValue = {
 
 const sandbox = {
   console, document, localStorage,
-  navigator: { onLine: true, standalone: false, storage: {} },
+  navigator: { onLine: true, standalone: false, storage: {}, userAgent: 'VFIT smoke test' },
   location: { href: 'https://example.test/', hash: '', protocol: 'https:' },
   history: { pushState() {}, replaceState() {}, back() {} },
   firebase: { initializeApp() {}, auth, firestore },
@@ -154,10 +172,13 @@ const expose = `
   isPlausibleFoodBarcode,
   hasValidGtinCheckDigit,
   barcodeLookupCandidates,
+  isValidPhotoData,
   shiftMealIdeasFor,
   personalisedShiftMealIdeas,
   mealMatchesDietaryRequirements,
   shiftMealRecipeSteps,
+  structuredMealSafety,
+  curatedMealSafetyCoverage,
   dietaryProfile,
   inferDietaryRequirementsFromText,
   applyDietaryCoachAnswers,
@@ -180,6 +201,14 @@ const expose = `
   activeMuscleGainVolumePlan,
   weeklySetTargetForMuscle,
   elapsedWorkoutSeconds,
+  plannerWeekStart,
+  plannerWeekDates,
+  plannerShiftType,
+  plannerMealSelection,
+  coachPlanDocumentId,
+  coachPlanMealIdeas,
+  progressPhotoReference,
+  progressPhotoIdFromReference,
   buildDeloadPlan,
   isDeloadPlanActive,
   saveState,
@@ -188,11 +217,12 @@ const expose = `
   setState: value => { state = value; },
   setUser: value => { currentUser = value; },
   setBarcodeScannerEmbedded: value => { barcodeScannerEmbedded = !!value; },
+  setBarcodeScanMode: value => { barcodeScanMode = value; },
   defaultState: () => deepClone(DEFAULT_STATE)
 };`;
 
 vm.createContext(sandbox);
-vm.runInContext(appSource + expose, sandbox, { filename: 'App.js' });
+vm.runInContext(appSource + expose, sandbox, { filename: 'VFIT modules' });
 const app = sandbox.__vfitTest;
 
 // User/imported strings are safe in HTML and inline-event contexts.
@@ -249,6 +279,46 @@ assert.equal(app.mealMatchesDietaryRequirements(
   { name: 'Greek yogurt bowl', allergens: ['dairy'] },
   { requirements: ['dairy_free'] }
 ), false);
+
+// Every built-in recipe has a structured safety record rather than relying on
+// runtime name matching. Records also provide substitutions where relevant.
+const safetyCoverage = app.curatedMealSafetyCoverage();
+assert.equal(safetyCoverage.recipes, 124);
+assert.equal(safetyCoverage.records, 124);
+assert.deepEqual([...safetyCoverage.missing], []);
+const safetyRecord = app.structuredMealSafety(standardVeganBreakfasts[0]);
+assert.equal(safetyRecord.source, 'curated-built-in-recipe-record');
+assert.ok(Array.isArray(safetyRecord.allergens));
+
+// Seven-day planning starts on Monday, follows rota overrides and stores a
+// compatible meal selection in the normal account state.
+assert.equal(app.plannerWeekStart('2026-09-03'), '2026-08-31');
+assert.equal(app.plannerWeekDates('2026-09-03').length, 7);
+const plannerState = app.defaultState();
+plannerState.dietaryProfile = {
+  completed: true, pattern: 'vegan', approaches: ['calorie_deficit'], requirements: ['nut_free'], notes: ''
+};
+plannerState.shiftProfile.enabled = true;
+plannerState.shiftProfile.rota['2026-09-03'] = { type: 'night', start: '20:00', end: '08:00' };
+app.setState(plannerState);
+assert.equal(app.plannerShiftType('2026-09-03'), 'night');
+const plannedMeal = app.plannerMealSelection('2026-09-03', 'breakfast');
+assert.ok(plannedMeal.idea.id.startsWith('vegan-'));
+assert.equal(plannedMeal.idea.portionAdjusted, true);
+assert.equal(app.getState().weeklyMealPlan['2026-09-03'].meals.breakfast.recipeId, plannedMeal.idea.id);
+
+const clientSnapshot = { dietaryProfile: plannerState.dietaryProfile, shiftProfile: plannerState.shiftProfile };
+const coachIdeas = Array.from(app.coachPlanMealIdeas(clientSnapshot, '2026-09-03', 'breakfast'));
+assert.equal(coachIdeas.length, 5);
+assert.ok(coachIdeas.every(idea => idea.id.startsWith('vegan-') && idea.portionAdjusted));
+assert.equal(app.coachPlanDocumentId('coach-1', 'member-2', '2026-09-03'), 'coach-1_member-2_2026-08-31');
+
+// Photos use small IndexedDB references in account state; cloud/recovery copies
+// can strip them without touching the private device gallery.
+const photoReference = app.progressPhotoReference('2026-09-03', 'front', 'user-a');
+assert.ok(photoReference.startsWith('vfit-photo:'));
+assert.equal(app.progressPhotoIdFromReference(photoReference), 'user-a|2026-09-03|front');
+assert.equal(app.isValidPhotoData(photoReference), true);
 app.setState(app.defaultState());
 
 // Active pages return to the local current day, while an unfinished workout
@@ -281,6 +351,14 @@ assert.equal(scannerModal.style.display, 'none');
 app.restoreBarcodeScannerSurface();
 assert.equal(scannerCard.parentElement, scannerModal);
 assert.equal(mealScannerSlot.classList.contains('hidden'), true);
+const shoppingScannerSlot = document.getElementById('weekly-shopping-barcode-slot');
+app.setBarcodeScanMode('shopping');
+app.setBarcodeScannerEmbedded(true);
+assert.equal(app.mountBarcodeScannerSurface(), true);
+assert.equal(scannerCard.parentElement, shoppingScannerSlot);
+assert.equal(shoppingScannerSlot.classList.contains('hidden'), false);
+app.restoreBarcodeScannerSurface();
+assert.equal(scannerCard.parentElement, scannerModal);
 app.showMealBarcodeResult({ name: 'Test product', scannedBarcode: '5000112637922' });
 assert.equal(document.getElementById('meal-barcode-product').textContent, 'Test product');
 assert.equal(document.getElementById('meal-barcode-number').textContent, '5000112637922');

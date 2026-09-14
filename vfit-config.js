@@ -7,5 +7,5 @@ window.VFIT_CONFIG = Object.freeze({
   fcmVapidKey: '',
   paymentsEnabled: false,
   pushEnabled: false,
-  privacyVersion: '2026-09-03'
+  privacyVersion: '2026-09-14'
 });

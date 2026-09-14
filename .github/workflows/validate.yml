@@ -17,5 +17,8 @@ jobs:
           node-version: 20
       - run: node tests/static-audit.cjs
       - run: node tests/state-smoke.cjs
+      - run: node tests/photo-storage.cjs
+      - run: find core training nutrition ui metrics coaching firebase feedback -name '*.js' -print0 | xargs -0 -n1 node --check
+      - run: node --check App.js
       - run: node --check sw.js
       - run: node --check functions/index.js

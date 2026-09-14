@@ -7,14 +7,35 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'Styles.css'), 'utf8');
-const appSource = fs.readFileSync(path.join(root, 'App.js'), 'utf8');
+const moduleFiles = [
+  'core/state.js',
+  'training/training.js',
+  'nutrition/meal-planner.js',
+  'nutrition/scanner.js',
+  'ui/navigation.js',
+  'coaching/coaching.js',
+  'firebase/firebase-sync.js',
+  'nutrition/meal-safety.js',
+  'nutrition/weekly-planner.js',
+  'metrics/photo-storage.js',
+  'feedback/beta-feedback.js',
+  'coaching/plan-builder.js',
+  'App.js'
+];
+const moduleSources = new Map(moduleFiles.map(file => [file, fs.readFileSync(path.join(root, file), 'utf8')]));
+const appSource = moduleFiles.map(file => moduleSources.get(file)).join('\n');
 const source = html + '\n' + appSource;
 const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map(match => match[1]);
-assert.equal(inlineScripts.length, 0, 'application logic must live in App.js');
+assert.equal(inlineScripts.length, 0, 'application logic must live in external JavaScript modules');
 assert.ok(!/<style\b/i.test(html), 'application styles must live in Styles.css');
 assert.ok(html.includes('<link rel="stylesheet" href="./Styles.css">'), 'index.html must load Styles.css');
-assert.ok(html.includes('<script src="./App.js"></script>'), 'index.html must load App.js');
+moduleFiles.forEach(file => assert.ok(html.includes(`<script src="./${file}"></script>`), `index.html must load ${file}`));
+const localScripts = [...html.matchAll(/<script[^>]+src="\.\/([^"]+\.js)"[^>]*><\/script>/gi)].map(match => match[1]);
+assert.deepEqual(localScripts.slice(-moduleFiles.length), moduleFiles, 'application modules must load in dependency order');
+assert.ok(fs.existsSync(path.join(root, 'App.js')), 'App.js must remain the easy-to-find startup entry point');
+assert.equal((moduleSources.get('App.js').match(/AUTH STATE OBSERVER/g) || []).length, 1, 'auth startup must run only after all feature modules load');
 assert.ok(styles.trim().length > 1000, 'Styles.css must contain the extracted application styles');
+moduleSources.forEach((contents, file) => assert.doesNotThrow(() => new Function(contents), `${file} must parse`));
 new Function(appSource);
 
 function duplicates(values) {
@@ -53,7 +74,8 @@ assert.ok(!source.includes('scanBarcodePhoto('), 'the replacement photo-scanning
 assert.ok(source.includes('onclick="openBarcodeImagePicker()"'), 'photo barcode capture must release the live Android camera first');
 assert.ok(source.includes('oncancel="cancelBarcodeImagePicker()"'), 'cancelling a barcode photo must restart the live scanner');
 assert.ok(source.includes('const scannerIsVisible = barcodeScannerEmbedded ||') && source.includes('scannerIsVisible && !barcodeImagePickerOpen'), 'Android photo capture must survive the page-hidden transition');
-assert.ok(source.includes('id="meal-barcode-inline-slot"') && source.includes('mealSlot.appendChild(card)'), 'the Create Meal scanner must stay embedded in the meal planner');
+assert.ok(source.includes('id="meal-barcode-inline-slot"') && source.includes('embeddedSlot.appendChild(card)'), 'the Create Meal scanner must stay embedded in the meal planner');
+assert.ok(source.includes('id="weekly-shopping-barcode-slot"') && source.includes("barcodeScanMode = 'shopping'"), 'the scanner must also stay embedded in the weekly shopping list');
 assert.ok(source.includes('id="meal-barcode-number"') && source.includes('showMealBarcodeResult(food)'), 'the full scanned barcode must appear in the meal planner');
 assert.ok(source.includes('ing.barcode') && source.includes('escapeHtml(ing.barcode)'), 'scanned ingredient rows must retain and display their barcode');
 assert.ok(!/localStorage\.setItem\(['"]fittrack_state/.test(source), 'legacy shared state must never be overwritten');
@@ -80,7 +102,9 @@ new Function(serviceWorker);
 const appVersion = source.match(/const VFIT_APP_VERSION = '([^']+)'/);
 assert.ok(appVersion, 'app version must be declared');
 assert.ok(serviceWorker.includes(`const CACHE_VERSION = 'vfit-${appVersion[1]}'`), 'service worker cache must match app version');
-assert.ok(serviceWorker.includes("'./Styles.css'") && serviceWorker.includes("'./App.js'"), 'service worker must cache the split CSS and JavaScript files');
+assert.ok(serviceWorker.includes("'./Styles.css'"), 'service worker must cache Styles.css');
+moduleFiles.forEach(file => assert.ok(serviceWorker.includes(`'./${file}'`), `service worker must cache ${file}`));
+assert.ok(serviceWorker.includes("'./App.js'"), 'service worker must cache the App.js startup entry point');
 for (const host of ['googleapis.com', 'firestore.googleapis.com', 'identitytoolkit.googleapis.com', 'world.openfoodfacts.org']) {
   assert.ok(serviceWorker.includes(host), `service worker must keep ${host} network-only`);
 }
@@ -99,6 +123,9 @@ for (const guard of [
   'match /users/{uid}',
   'match /devices/{deviceId}',
   'match /notes/{threadId}',
+  'match /feedback/{feedbackId}',
+  'match /coachPlans/{planId}',
+  'function memberChangedOnlyCompletions()',
   'match /{document=**}',
   'allow read, write: if false;'
 ]) {
@@ -107,6 +134,9 @@ for (const guard of [
 assert.ok(firestoreRules.includes('allow list, create, update, delete: if false;'), 'admin records must not be client-writable');
 assert.ok(firestoreRules.includes("hasAny(['membership'])"), 'membership must be blocked during client account creation');
 assert.ok(firestoreRules.includes("'pushPreferences', 'privacy'"), 'self-update allowlist must include only explicit notification/privacy fields');
+assert.ok(firestoreRules.includes("hasOnly(['completed'])"), 'members may only change coach-plan completion fields');
+assert.ok(firestoreRules.includes("request.resource.data.status == 'new'"), 'new feedback must enter the owner workflow safely');
+assert.ok(firestoreRules.includes('allow read: if owner();'), 'feedback reports and private owner notes must be owner-readable only');
 assert.ok(!/allow\s+(?:read|write|read,\s*write)\s*:\s*if\s+true/.test(firestoreRules), 'Firestore rules must not allow unconditional access');
 
 for (const feature of [
@@ -171,6 +201,15 @@ assert.ok(source.includes('function shiftMealIdeasFor('), 'shift-specific meal r
 assert.ok(source.includes('data-shift-meal-options="${optionCount}"'), 'shift meal categories must expose their real option count');
 assert.ok(source.includes('function dietaryShiftCoachAdvice(') && source.includes('function dietaryShiftFocusHTML('), 'shift focus must use the saved dietary plan');
 assert.ok(source.includes('View Recipe &amp; More Meals'), 'meal cards must open the larger recipe popup');
+assert.ok(source.includes('function curatedMealSafetyCoverage(') && source.includes('CURATED_MEAL_SAFETY'), 'built-in recipes need structured safety records');
+assert.equal((moduleSources.get('nutrition/meal-safety.js').match(/^\s*'[^']+': \[/gm) || []).length, 64, 'all 64 original shift meals need explicit allergen records');
+assert.ok(source.includes('function openWeeklyMealPlanner(') && source.includes('Combined shopping list'), 'seven-day meal planning and shopping must be available');
+assert.ok(source.includes('Scan a product in Shopping List') && source.includes('function addShoppingProductFromBarcode('), 'barcode results must return to the planner shopping list');
+assert.ok(source.includes('function submitBetaFeedback(') && source.includes('Safe diagnostics included'), 'in-app beta feedback must include privacy-safe diagnostics');
+assert.ok(source.includes('function openCoachPlanBuilder(') && source.includes('function acceptMemberCoachPlan('), 'coach/member seven-day plan workflow must be present');
+assert.ok(source.includes("const VFIT_PHOTO_DB_NAME = 'vfit-progress-photos'") && source.includes('window.indexedDB.open'), 'progress photos must use expanded IndexedDB storage');
+assert.ok(source.includes('progressPhotos: records.map') && source.includes('Backup and progress photos restored'), 'photo backup and restore must be included');
+assert.ok(html.includes('id="photo-storage-status"') && html.includes('No fixed VFIT photo limit'), 'the progress-photo modal must explain expanded capacity');
 assert.ok(source.includes("id: 'deloadWeek'"), 'severe fatigue must reveal a deload-week question');
 assert.ok(source.includes('startedAt: workoutStartTime'), 'active workouts must persist the absolute start timestamp');
 assert.ok(source.includes('return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now())'), 'workout duration must derive from wall-clock time');
@@ -184,6 +223,9 @@ assert.ok(!/sk_(?:live|test)_[A-Za-z0-9]+/.test(runtimeConfig), 'Stripe secret k
 const functionsSource = fs.readFileSync(path.join(root, 'functions/index.js'), 'utf8');
 for (const backend of ['createCheckoutSession', 'stripeWebhook', 'sendUserPush', 'sendDueReminders', 'deleteMyAccount']) {
   assert.ok(functionsSource.includes(`exports.${backend}`), `Cloud Function is missing: ${backend}`);
+}
+for (const deletionTarget of ["collection('coachPlans').where('coachUid'", "collection('coachPlans').where('memberUid'", "collection('feedback').where('uid'"]) {
+  assert.ok(functionsSource.includes(deletionTarget), `account deletion must include ${deletionTarget}`);
 }
 
 assert.ok((manifest.shortcuts || []).some(item => item.url === './#coaching'), 'manifest needs a Coaching Hub shortcut');

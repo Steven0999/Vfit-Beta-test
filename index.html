@@ -2498,7 +2498,22 @@
                 <button onclick="closeProgressPhotosModal()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
             </div>
 
-            <p class="text-xs text-slate-500 mb-4">Tap a slot to upload. Photos save when you tap Save below.</p>
+            <p class="text-xs text-slate-500 mb-3">Tap a slot to upload. Photos save when you tap Save below.</p>
+
+            <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 mb-4" aria-live="polite">
+                <div class="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                        <p class="text-xs font-black text-emerald-900">Expanded device gallery</p>
+                        <p id="photo-storage-status" class="text-[10px] text-emerald-700 mt-0.5">Checking available storage…</p>
+                    </div>
+                    <i data-lucide="hard-drive" class="w-5 h-5 text-emerald-600 flex-shrink-0"></i>
+                </div>
+                <div class="h-2 bg-white rounded-full overflow-hidden" aria-hidden="true">
+                    <div id="photo-storage-bar" class="h-full bg-emerald-500 rounded-full transition-all" style="width:0%"></div>
+                </div>
+                <p id="photo-storage-note" class="text-[9px] text-emerald-700 mt-2">No fixed VFIT photo limit; capacity follows the free storage on this device.</p>
+                <p class="text-[9px] text-slate-500 mt-2 leading-relaxed">Photos stay private on this device and remain after closing VFIT or signing out. Clearing browser/app data or uninstalling can remove them, so use <b>Settings → Data &amp; Privacy → Export Backup</b> regularly.</p>
+            </div>
 
             <div class="grid grid-cols-3 gap-3 mb-6">
                 <div class="photo-slot" onclick="triggerPhotoUpload('front')">
@@ -3376,11 +3391,24 @@
             </div>
             <div class="border-t border-rose-200 pt-4">
                 <h4 class="font-black text-rose-600 mb-1">Permanently delete account</h4>
-                <p class="text-xs text-slate-400 mb-3">Deletes your authentication account, cloud profile, device registrations and coach conversation data. Export first if you want a copy.</p>
+                <p class="text-xs text-slate-400 mb-3">Deletes your authentication account, cloud profile, device registrations, coach plans/conversations, beta reports and this account’s device-only progress photos. Export first if you want a copy.</p>
                 <button onclick="deleteVfitAccount()" class="w-full bg-rose-600 text-white p-4 rounded-2xl font-bold">Delete My Account</button>
             </div>
         </div>
     </div>
+    <!-- VFIT application modules: ordered classic scripts share one app state. -->
+    <script src="./core/state.js"></script>
+    <script src="./training/training.js"></script>
+    <script src="./nutrition/meal-planner.js"></script>
+    <script src="./nutrition/scanner.js"></script>
+    <script src="./ui/navigation.js"></script>
+    <script src="./coaching/coaching.js"></script>
+    <script src="./firebase/firebase-sync.js"></script>
+    <script src="./nutrition/meal-safety.js"></script>
+    <script src="./nutrition/weekly-planner.js"></script>
+    <script src="./metrics/photo-storage.js"></script>
+    <script src="./feedback/beta-feedback.js"></script>
+    <script src="./coaching/plan-builder.js"></script>
     <script src="./App.js"></script>
 </body>
 </html>

@@ -265,15 +265,20 @@ exports.deleteMyAccount = onCall({ region: REGION, secrets: [STRIPE_SECRET_KEY],
       }
     }
   }
-  const [asCoach, asMember, linkedMembers] = await Promise.all([
+  const [asCoach, asMember, linkedMembers, plansAsCoach, plansAsMember, feedback] = await Promise.all([
     db.collection('notes').where('coachUid', '==', uid).get(),
     db.collection('notes').where('memberUid', '==', uid).get(),
-    db.collection('users').where('coachUid', '==', uid).get()
+    db.collection('users').where('coachUid', '==', uid).get(),
+    db.collection('coachPlans').where('coachUid', '==', uid).get(),
+    db.collection('coachPlans').where('memberUid', '==', uid).get(),
+    db.collection('feedback').where('uid', '==', uid).get()
   ]);
-  const noteDeletes = new Map();
-  asCoach.docs.concat(asMember.docs).forEach(doc => noteDeletes.set(doc.ref.path, doc.ref));
+  const relatedDeletes = new Map();
+  asCoach.docs
+    .concat(asMember.docs, plansAsCoach.docs, plansAsMember.docs, feedback.docs)
+    .forEach(doc => relatedDeletes.set(doc.ref.path, doc.ref));
   await Promise.all([
-    ...[...noteDeletes.values()].map(ref => ref.delete()),
+    ...[...relatedDeletes.values()].map(ref => ref.delete()),
     ...linkedMembers.docs.map(doc => doc.ref.set({ coachUid: null, coachName: null }, { merge: true }))
   ]);
   await db.recursiveDelete(userRef);

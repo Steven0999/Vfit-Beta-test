@@ -135,6 +135,190 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    function validFeedback(data) {
+      return data.keys().hasOnly([
+          'uid', 'email', 'type', 'title', 'details', 'steps', 'screenshot',
+          'diagnostics', 'status', 'adminNote', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.email is string
+        && data.email.size() <= 254
+        && data.type in ['bug', 'improvement']
+        && data.title is string
+        && data.title.size() >= 3
+        && data.title.size() <= 120
+        && data.details is string
+        && data.details.size() >= 5
+        && data.details.size() <= 3000
+        && data.steps is string
+        && data.steps.size() <= 1500
+        && data.screenshot is string
+        && data.screenshot.size() <= 700000
+        && (data.screenshot == '' || data.screenshot.matches('^data:image/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$'))
+        && data.diagnostics is map
+        && data.diagnostics.keys().hasOnly([
+          'appVersion', 'schemaVersion', 'screen', 'online', 'installed',
+          'viewport', 'device', 'cloudSyncPending', 'cloudSyncError', 'lastCloudSyncAt'
+        ])
+        && data.diagnostics.appVersion is string
+        && data.diagnostics.appVersion.size() <= 40
+        && data.diagnostics.schemaVersion is int
+        && data.diagnostics.screen is string
+        && data.diagnostics.screen.size() <= 120
+        && data.diagnostics.online is bool
+        && data.diagnostics.installed is bool
+        && data.diagnostics.viewport is string
+        && data.diagnostics.viewport.size() <= 40
+        && data.diagnostics.device is string
+        && data.diagnostics.device.size() <= 240
+        && data.diagnostics.cloudSyncPending is bool
+        && data.diagnostics.cloudSyncError is bool
+        && data.diagnostics.lastCloudSyncAt is string
+        && data.diagnostics.lastCloudSyncAt.size() <= 60
+        && data.status in ['new', 'reviewing', 'planned', 'resolved']
+        && data.adminNote is string
+        && data.adminNote.size() <= 1000
+        && data.createdAt is string
+        && data.updatedAt is string;
+    }
+
+    // Members can submit reports, while reads and workflow notes remain private
+    // to the provisioned owner.
+    match /feedback/{feedbackId} {
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'new'
+        && request.resource.data.adminNote == ''
+        && validFeedback(request.resource.data);
+      allow read: if owner();
+      allow update: if owner()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.details == resource.data.details
+        && request.resource.data.steps == resource.data.steps
+        && request.resource.data.screenshot == resource.data.screenshot
+        && request.resource.data.diagnostics == resource.data.diagnostics
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'adminNote', 'updatedAt'
+        ])
+        && validFeedback(request.resource.data);
+      allow delete: if owner();
+    }
+
+    function coachPlanParticipant(data) {
+      return signedIn()
+        && (data.coachUid == request.auth.uid || data.memberUid == request.auth.uid);
+    }
+
+    function coachLinkedToMember(coachUid, memberUid) {
+      return signedIn()
+        && request.auth.uid == coachUid
+        && approvedCoach()
+        && exists(/databases/$(database)/documents/users/$(memberUid))
+        && get(/databases/$(database)/documents/users/$(memberUid)).data.coachUid == coachUid;
+    }
+
+    function validCoachPlan(data) {
+      return data.keys().hasOnly([
+          'coachUid', 'memberUid', 'coachName', 'memberName', 'weekStart',
+          'status', 'coachMessage', 'memberMessage', 'days', 'createdAt', 'updatedAt'
+        ])
+        && data.coachUid is string
+        && data.memberUid is string
+        && data.coachName is string
+        && data.coachName.size() <= 120
+        && data.memberName is string
+        && data.memberName.size() <= 120
+        && data.weekStart is string
+        && data.weekStart.size() == 10
+        && data.status in ['draft', 'published', 'accepted', 'changes_requested', 'completed']
+        && data.coachMessage is string
+        && data.coachMessage.size() <= 1500
+        && data.memberMessage is string
+        && data.memberMessage.size() <= 1000
+        && data.days is list
+        && data.days.size() == 7
+        && validCoachPlanDay(data.days[0])
+        && validCoachPlanDay(data.days[1])
+        && validCoachPlanDay(data.days[2])
+        && validCoachPlanDay(data.days[3])
+        && validCoachPlanDay(data.days[4])
+        && validCoachPlanDay(data.days[5])
+        && validCoachPlanDay(data.days[6])
+        && data.createdAt is string
+        && data.updatedAt is string;
+    }
+
+    function validCoachPlanDay(day) {
+      return day is map
+        && day.keys().hasOnly(['date', 'shiftType', 'training', 'meals', 'note', 'completed'])
+        && day.date is string
+        && day.date.size() == 10
+        && day.shiftType in ['night', 'early', 'day', 'off']
+        && day.training is string
+        && day.training.size() <= 120
+        && day.meals is map
+        && day.meals.keys().hasOnly(['breakfast', 'lunch', 'dinner', 'snack'])
+        && day.meals.breakfast is string
+        && day.meals.breakfast.size() <= 120
+        && day.meals.lunch is string
+        && day.meals.lunch.size() <= 120
+        && day.meals.dinner is string
+        && day.meals.dinner.size() <= 120
+        && day.meals.snack is string
+        && day.meals.snack.size() <= 120
+        && day.note is string
+        && day.note.size() <= 500
+        && day.completed is bool;
+    }
+
+    function memberChangedOnlyCompletions() {
+      return request.resource.data.days[0].diff(resource.data.days[0]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[1].diff(resource.data.days[1]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[2].diff(resource.data.days[2]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[3].diff(resource.data.days[3]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[4].diff(resource.data.days[4]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[5].diff(resource.data.days[5]).affectedKeys().hasOnly(['completed'])
+        && request.resource.data.days[6].diff(resource.data.days[6]).affectedKeys().hasOnly(['completed']);
+    }
+
+    // A plan is private to one approved coach/member relationship. Coaches set
+    // the programme; members may only accept/request changes and tick completion.
+    match /coachPlans/{planId} {
+      allow read: if coachPlanParticipant(resource.data);
+      allow create: if coachLinkedToMember(request.resource.data.coachUid, request.resource.data.memberUid)
+        && request.resource.data.status in ['draft', 'published']
+        && validCoachPlan(request.resource.data);
+      allow update: if validCoachPlan(request.resource.data)
+        && request.resource.data.coachUid == resource.data.coachUid
+        && request.resource.data.memberUid == resource.data.memberUid
+        && request.resource.data.weekStart == resource.data.weekStart
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          (
+            coachLinkedToMember(resource.data.coachUid, resource.data.memberUid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'coachName', 'memberName', 'status', 'coachMessage',
+              'memberMessage', 'days', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            signedIn()
+            && request.auth.uid == resource.data.memberUid
+            && request.resource.data.status in ['accepted', 'changes_requested', 'completed']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'memberMessage', 'days', 'updatedAt'
+            ])
+            && memberChangedOnlyCompletions()
+          )
+        );
+      allow delete: if owner();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
