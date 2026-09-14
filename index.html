@@ -2652,7 +2652,7 @@
     <div id="barcode-scanner-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-2xl rounded-[40px] p-4 sm:p-8 max-h-[95vh] overflow-y-auto" style="max-width: 42rem;">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-black">Scan Barcode</h3>
+                <h3 id="barcode-scanner-title" class="text-xl font-black">Scan Barcode</h3>
                 <button onclick="closeBarcodeScanner()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
             </div>
             <div id="barcode-reader" class="w-full h-[55vh] min-h-[20rem] max-h-[34rem] bg-black rounded-2xl mb-3 overflow-hidden"></div>
@@ -2830,13 +2830,31 @@
                 <label class="text-[9px] font-black uppercase text-slate-400 block mb-2">Meal Name *</label>
                 <input id="meal-name-input" type="text" maxlength="120" placeholder="e.g. Chicken & Rice Bowl" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
             </div>
-            <div class="flex gap-2 mb-4">
-                <input id="meal-ingredient-search" type="text" placeholder="Search ingredient..." class="flex-1 bg-slate-100 rounded-xl px-4 py-3 outline-none">
-                <button onclick="openMealBarcodeScanner()" class="w-12 h-12 bg-indigo-600 text-white rounded-xl flex items-center justify-center hover:bg-indigo-700">
-                    <i data-lucide="scan-barcode" class="w-5 h-5"></i>
-                </button>
+            <div class="mb-3">
+                <p class="text-[9px] font-black uppercase text-slate-400 block mb-2">Find an ingredient</p>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 pointer-events-none"></i>
+                        <input id="meal-ingredient-search" type="text" placeholder="Search any food..." autocomplete="off" class="w-full bg-white border-2 border-slate-200 rounded-2xl py-4 pl-12 pr-12 focus:border-emerald-500 outline-none font-semibold text-base">
+                        <button id="meal-search-clear" type="button" onclick="clearMealIngredientSearch()" class="hidden absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 bg-slate-100 hover:bg-slate-200 rounded-full flex items-center justify-center" aria-label="Clear ingredient search">
+                            <i data-lucide="x" class="w-4 h-4 text-slate-600"></i>
+                        </button>
+                    </div>
+                    <button id="meal-barcode-button" type="button" onclick="openMealBarcodeScanner()" class="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center hover:bg-indigo-700 flex-shrink-0" aria-label="Scan ingredient barcode">
+                        <i data-lucide="scan-barcode" class="w-6 h-6"></i>
+                    </button>
+                </div>
+                <p id="meal-search-hint" class="text-xs text-slate-400 mt-2 px-1">Try "chicken breast" or "Hobnobs"</p>
             </div>
-            <div id="meal-search-results" class="space-y-2 mb-4 max-h-48 overflow-y-auto"></div>
+            <div class="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl mb-3">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
+                <span class="text-[11px] font-bold text-slate-500">Search or scan 🇬🇧 UK food data from Open Food Facts</span>
+            </div>
+            <div id="meal-search-loading" class="hidden py-6 text-center">
+                <i data-lucide="loader-2" class="animate-spin text-emerald-500 mx-auto w-7 h-7"></i>
+                <p class="text-xs text-slate-400 mt-2">Searching ingredients...</p>
+            </div>
+            <div id="meal-search-results" class="space-y-2 mb-4 max-h-72 overflow-y-auto"></div>
             <div class="mb-4">
                 <h4 class="text-sm font-black text-slate-400 uppercase mb-2">Ingredients</h4>
                 <div id="meal-ingredients-list" class="space-y-2"></div>
@@ -6380,7 +6398,7 @@
         if (!cfg || !cfg.enabled) return false;
 
         const now = new Date();
-        const today = now.toISOString().split('T')[0];
+        const today = localDateKey(now);
         const dow = now.getDay();       // 0..6
         const dom = now.getDate();      // 1..31
         const lastDone = cfg.lastDone;  // ISO date string or null
@@ -6413,7 +6431,7 @@
     function markReminderDone(key) {
         const cfg = updReminders()[key];
         if (!cfg) return;
-        cfg.lastDone = new Date().toISOString().split('T')[0];
+        cfg.lastDone = localDateKey();
         saveState();
         refreshDueAlertBadgeSoon();
     }
@@ -6928,7 +6946,7 @@
         if (!customMeals.length) return '';
         const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))
             ? String(dateKey)
-            : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? String(state.viewDate) : new Date().toISOString().split('T')[0]);
+            : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? String(state.viewDate) : localDateKey());
         const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
         return `
                 <div class="mt-4 border-t border-orange-100 pt-4" data-created-shift-meals="true">
@@ -7261,6 +7279,13 @@
         await loadFirebaseUserData();
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
 
+        // A saved snapshot may contain whichever historical day the member last
+        // viewed. Reset only the active page dates after device/cloud data has
+        // finished merging, so new nutrition, metrics and training entries open
+        // on the device's real local day. Historical records remain untouched.
+        resetActiveDatesToToday({ preserveActiveWorkout: true });
+        saveState({ uid: user.uid, skipCloud: true, preserveUpdatedAt: true });
+
         document.body.classList.toggle('is-coach', currentUserRole === 'coach');
         const coachView = document.getElementById('coach-view');
         if (coachView) coachView.style.display = 'none';
@@ -7354,8 +7379,8 @@
             updatedAt: null,
             lastCloudSyncAt: null
         },
-        viewDate: new Date().toISOString().split('T')[0],
-        metricsDate: new Date().toISOString().split('T')[0],
+        viewDate: localDateKey(),
+        metricsDate: localDateKey(),
         goals: { calories: 2500, water: 2500, steps: 10000 },
         waterLogs: {},
         stepsLogs: {},
@@ -7730,7 +7755,7 @@
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `vfit-backup-${new Date().toISOString().slice(0, 10)}.json`;
+            link.download = `vfit-backup-${localDateKey()}.json`;
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -8104,7 +8129,7 @@
             training: renderCoachPlanInTraining,
             metrics: () => {
                 const picker = document.getElementById('metrics-date-picker');
-                if (picker && !picker.value) picker.value = state.metricsDate || new Date().toISOString().split('T')[0];
+                if (picker && !picker.value) picker.value = state.metricsDate || localDateKey();
                 renderMetricsStatusLines();
                 renderMetricsHistory();
             }
@@ -9994,7 +10019,7 @@
             context: currentWorkoutContext,
             startedAt: workoutStartTime,
             elapsedSeconds: currentWorkoutElapsed(),
-            workoutDate: window.selectedWorkoutDate || (document.getElementById('workout-date-picker') || {}).value || new Date().toISOString().split('T')[0],
+            workoutDate: window.selectedWorkoutDate || (document.getElementById('workout-date-picker') || {}).value || localDateKey(),
             exercises: exercises,
             wizard: wizardActive,
             wizardIndex: wizardIndex,
@@ -10043,6 +10068,13 @@
             ? savedStart
             : (Number.isFinite(savedAt) && savedAt > 0 ? savedAt - legacyElapsed * 1000 : Date.now() - legacyElapsed * 1000);
         workoutAccumulatedSeconds = 0;
+
+        // Keep an in-progress session on the day it actually began. All other
+        // training views start on today through resetActiveDatesToToday().
+        const restoredWorkoutDate = isDateKey(saved.workoutDate)
+            ? saved.workoutDate
+            : localDateKey(new Date(workoutStartTime));
+        selectWorkoutDate(restoredWorkoutDate);
 
         // Make sure we're on the Training tab and showing the active workout view
         if (typeof switchTab === 'function') switchTab('training');
@@ -10656,7 +10688,7 @@
             return;
         }
 
-        const workoutDate = window.selectedWorkoutDate || document.getElementById('workout-date-picker').value || new Date().toISOString().split('T')[0];
+        const workoutDate = window.selectedWorkoutDate || document.getElementById('workout-date-picker').value || localDateKey();
         const focus = document.getElementById('active-workout-title').innerText;
 
         // Determine category so log filters work correctly
@@ -10922,17 +10954,78 @@
     // DATE MANAGEMENT - TRAINING
     // ==========================================================================
 
+    function isDateKey(value) {
+        return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+    }
+
+    // Move between date-only keys using local noon. Parsing YYYY-MM-DD directly
+    // creates a UTC date and can jump a day in UK/device time around DST.
+    function offsetLocalDateKey(dateKey, days) {
+        const source = isDateKey(dateKey) ? String(dateKey) : localDateKey();
+        const parts = source.split('-').map(Number);
+        const date = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0, 0);
+        date.setDate(date.getDate() + (Number(days) || 0));
+        return localDateKey(date);
+    }
+
+    /**
+     * Put each date-led area on the device's current local day without changing
+     * any dated history. An unfinished workout keeps the date on which it began.
+     */
+    function resetActiveDatesToToday(options) {
+        const config = options || {};
+        const today = localDateKey();
+        const previousMetricsDate = state.metricsDate;
+
+        state.viewDate = today;
+        state.metricsDate = today;
+
+        // currentPhotos is only an unsaved form buffer and has no date of its
+        // own. Clear a buffer from a previously viewed day so it cannot be saved
+        // against today by mistake; already-saved metric photos are untouched.
+        if (config.clearMetricDraft !== false && previousMetricsDate && previousMetricsDate !== today) {
+            state.currentPhotos = { front: null, side: null, back: null };
+        }
+
+        const savedWorkoutDate = config.preserveActiveWorkout !== false
+            && state.activeWorkout
+            && isDateKey(state.activeWorkout.workoutDate)
+            ? state.activeWorkout.workoutDate
+            : today;
+        window.selectedWorkoutDate = savedWorkoutDate;
+
+        const pickerDates = {
+            'workout-date-picker': savedWorkoutDate,
+            'nutrition-date-picker': today,
+            'shift-nutrition-date-picker': today,
+            'metrics-date-picker': today
+        };
+        Object.entries(pickerDates).forEach(([id, dateKey]) => {
+            const picker = document.getElementById(id);
+            if (picker) picker.value = dateKey;
+        });
+
+        const warnings = {
+            'workout-date-warning': savedWorkoutDate,
+            'nutrition-date-warning': today,
+            'metrics-date-warning': today
+        };
+        Object.entries(warnings).forEach(([id, dateKey]) => {
+            const warning = document.getElementById(id);
+            if (warning) warning.classList.toggle('hidden', dateKey === today);
+        });
+        return today;
+    }
+
     function changeWorkoutDate(days) {
-        const current = document.getElementById('workout-date-picker').value || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectWorkoutDate(date.toISOString().split('T')[0]);
+        const current = document.getElementById('workout-date-picker').value || localDateKey();
+        selectWorkoutDate(offsetLocalDateKey(current, days));
     }
 
     function selectWorkoutDate(dateStr) {
         document.getElementById('workout-date-picker').value = dateStr;
         window.selectedWorkoutDate = dateStr;
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('workout-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
         refreshIcons();
@@ -11106,10 +11199,8 @@
     }
 
     function changeNutritionDate(days) {
-        const current = state.viewDate || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectNutritionDate(date.toISOString().split('T')[0]);
+        const current = state.viewDate || localDateKey();
+        selectNutritionDate(offsetLocalDateKey(current, days));
     }
 
     function selectNutritionDate(dateStr) {
@@ -11119,7 +11210,7 @@
             const picker = document.getElementById(id);
             if (picker) picker.value = dateStr;
         });
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('nutrition-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
         renderDiary();
@@ -13347,6 +13438,8 @@
         const input = document.getElementById('manual-barcode');
         const imageInput = document.getElementById('barcode-image-input');
         if (!modal) return;
+        const title = document.getElementById('barcode-scanner-title');
+        if (title) title.textContent = barcodeScanMode === 'meal' ? 'Scan Ingredient Barcode' : 'Scan Barcode';
         modal.style.display = 'flex';
         if (input) input.value = '';
         if (imageInput) imageInput.value = '';
@@ -13430,7 +13523,14 @@
             addIngredient({
                 name: food.name || 'Scanned item',
                 cal: food.calories || 0,
-                protein: food.protein || 0
+                protein: food.protein || 0,
+                carbs: food.carbs || 0,
+                fat: food.fat || 0,
+                fiber: food.fiber || 0,
+                sugar: food.sugar || 0,
+                brand: food.brand || '',
+                image: food.image || '',
+                barcode: food.scannedBarcode || food.barcode || ''
             });
         } else {
             openFoodPopupModel(food);
@@ -13587,11 +13687,10 @@
         document.getElementById('create-meal-modal').style.display = 'flex';
         mealIngredients = [];
         document.getElementById('meal-name-input').value = '';
-        document.getElementById('meal-search-results').innerHTML = '';
-        const search = document.getElementById('meal-ingredient-search');
-        if (search) search.value = '';
+        setupMealIngredientSearch();
+        clearMealIngredientSearch();
         const planDate = document.getElementById('create-meal-plan-date');
-        if (planDate) planDate.value = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : new Date().toISOString().split('T')[0];
+        if (planDate) planDate.value = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : localDateKey();
         const planSlot = document.getElementById('create-meal-plan-slot');
         if (planSlot) planSlot.value = 'lunch';
         const addToPlan = document.getElementById('create-meal-add-to-plan');
@@ -13606,51 +13705,143 @@
     }
 
     let mealIngredientSearchToken = 0;
+    let mealIngredientSearchTimer = null;
 
     function setupMealIngredientSearch() {
         const input = document.getElementById('meal-ingredient-search');
         if (!input) return;
         if (input.dataset.searchWired === 'true') return;
         input.dataset.searchWired = 'true';
-        let timer;
         input.addEventListener('input', (e) => {
-            clearTimeout(timer);
+            clearTimeout(mealIngredientSearchTimer);
             const q = e.target.value.trim();
+            const clearButton = document.getElementById('meal-search-clear');
+            if (clearButton) clearButton.classList.toggle('hidden', q.length === 0);
             if (q.length < 2) {
                 mealIngredientSearchToken += 1;
-                document.getElementById('meal-search-results').innerHTML = '';
+                const results = document.getElementById('meal-search-results');
+                const loading = document.getElementById('meal-search-loading');
+                const hint = document.getElementById('meal-search-hint');
+                if (results) results.innerHTML = '';
+                if (loading) loading.classList.add('hidden');
+                if (hint) hint.textContent = q.length ? 'Type at least 2 characters' : 'Try "chicken breast" or "Hobnobs"';
                 return;
             }
-            timer = setTimeout(() => searchIngredient(q), 300);
+            mealIngredientSearchTimer = setTimeout(() => searchIngredient(q), 350);
         });
     }
 
+    function clearMealIngredientSearch() {
+        mealIngredientSearchToken += 1;
+        clearTimeout(mealIngredientSearchTimer);
+        const input = document.getElementById('meal-ingredient-search');
+        const clearButton = document.getElementById('meal-search-clear');
+        const results = document.getElementById('meal-search-results');
+        const loading = document.getElementById('meal-search-loading');
+        const hint = document.getElementById('meal-search-hint');
+        if (input) input.value = '';
+        if (clearButton) clearButton.classList.add('hidden');
+        if (results) results.innerHTML = '';
+        if (loading) loading.classList.add('hidden');
+        if (hint) hint.textContent = 'Try "chicken breast" or "Hobnobs"';
+    }
+
+    function renderMealIngredientSearchResults(products) {
+        const results = document.getElementById('meal-search-results');
+        if (!results) return;
+        results.innerHTML = products.map(product => {
+            const food = normaliseOpenFoodFactsProduct(product, product && product.code);
+            const ingredient = {
+                name: food.name,
+                cal: food.calories,
+                protein: food.protein,
+                carbs: food.carbs,
+                fat: food.fat,
+                fiber: food.fiber,
+                sugar: food.sugar,
+                brand: food.brand,
+                image: food.image,
+                barcode: food.barcode
+            };
+            return cardHtml({
+                name: food.name,
+                brand: food.brand || 'Open Food Facts',
+                image: food.image,
+                cals: food.calories,
+                protein: food.protein,
+                carbs: food.carbs,
+                fat: food.fat,
+                perLabel: 'per 100g',
+                sourceBadge: sourceTag('off'),
+                onClick: `addIngredient(${safeJsonForInline(ingredient)})`
+            });
+        }).join('');
+        refreshIcons();
+    }
+
     async function searchIngredient(query) {
+        const cleanedQuery = String(query || '').trim();
+        if (cleanedQuery.length < 2) return;
         const requestToken = ++mealIngredientSearchToken;
         const results = document.getElementById('meal-search-results');
+        const loading = document.getElementById('meal-search-loading');
+        const hint = document.getElementById('meal-search-hint');
+        if (loading) loading.classList.remove('hidden');
+        if (results) results.innerHTML = '';
+        if (hint) hint.textContent = 'Searching Open Food Facts…';
         try {
-            const r = await fetchWithTimeout(`https://uk.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5&tagtype_0=countries&tag_contains_0=contains&tag_0=united-kingdom`, 10000);
-            if (!r.ok) throw new Error(`Search failed (${r.status})`);
-            const d = await r.json();
+            // Reuse the main food search route: Search-a-licious first, with the
+            // UK legacy endpoint as its fallback, then apply the same ranking.
+            const response = await searchOpenFoodFacts(cleanedQuery, 'all', 1);
             if (requestToken !== mealIngredientSearchToken) return;
-            const items = (d.products || []).filter(p => p.product_name && p.nutriments && p.nutriments['energy-kcal_100g']);
-            results.innerHTML = items.map(p => {
-                const item = {
-                    name: String(p.product_name).slice(0, 160),
-                    cal: Number(p.nutriments['energy-kcal_100g']) || 0,
-                    protein: Number(p.nutriments.proteins_100g) || 0
-                };
-                return `
-                <div onclick='addIngredient(${safeJsonForInline(item)})' class="p-2 hover:bg-indigo-50 cursor-pointer rounded-lg border text-xs">
-                    <span class="font-bold">${escapeHtml(item.name)}</span> <span class="text-slate-400">${Math.round(item.cal)} kcal/100g</span>
-                </div>
-            `;
-            }).join('');
+
+            const ranked = (response.products || []).map(product => {
+                let score = scoreRelevance(product.product_name, cleanedQuery);
+                if (score <= 0) {
+                    const haystack = ((product.product_name || '') + ' ' + (product.brands || '')).toLowerCase();
+                    const words = cleanedQuery.toLowerCase().split(/\s+/).filter(Boolean);
+                    if (words.length && words.every(word => haystack.includes(word))) score = 150;
+                }
+                const nutrients = product.nutriments || {};
+                if (!nutrients['energy-kcal_100g'] && !nutrients['energy-kcal_serving']) score -= 300;
+                if (!nutrients.proteins_100g && !nutrients.proteins_serving) score -= 100;
+                return Object.assign({}, product, { _score: score });
+            });
+
+            const byName = new Map();
+            ranked.forEach(product => {
+                const key = String(product.product_name || '').toLowerCase().trim();
+                if (!key) return;
+                const previous = byName.get(key);
+                if (!previous || (product._score || 0) > (previous._score || 0)) byName.set(key, product);
+            });
+            const matches = Array.from(byName.values())
+                .filter(product => (product._score || 0) > 0)
+                .sort((a, b) => (b._score || 0) - (a._score || 0))
+                .slice(0, 20);
+
+            if (matches.length) {
+                renderMealIngredientSearchResults(matches);
+                if (hint) hint.textContent = 'Tap a food, enter the grams, then keep building your meal';
+            } else {
+                if (results) results.innerHTML = emptyState('search-x', 'No ingredients found', 'Try a different food or scan its barcode.');
+                if (hint) hint.textContent = 'Try another name or use the barcode scanner';
+            }
         } catch (error) {
             if (requestToken !== mealIngredientSearchToken) return;
             console.warn('Ingredient search failed:', error);
-            if (results) results.innerHTML = '<p class="text-xs text-slate-400 p-3">Search unavailable. Check your connection and try again.</p>';
+            if (results) results.innerHTML = `<div class="text-center py-6"><p class="font-bold text-slate-600 mb-1">Couldn't reach Open Food Facts</p><p class="text-xs text-slate-400 mb-3">Check your connection, try again, or scan the barcode.</p><button type="button" onclick="retryMealIngredientSearch()" class="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-xs">Try Again</button></div>`;
+            if (hint) hint.textContent = 'Ingredient search is temporarily unavailable';
+        } finally {
+            if (requestToken === mealIngredientSearchToken && loading) loading.classList.add('hidden');
+            refreshIcons();
         }
+    }
+
+    function retryMealIngredientSearch() {
+        const input = document.getElementById('meal-ingredient-search');
+        const query = input ? input.value.trim() : '';
+        if (query.length >= 2) searchIngredient(query);
     }
 
     function addIngredient(item) {
@@ -13658,33 +13849,60 @@
         const itemName = String(item.name || 'Ingredient').slice(0, 160);
         const grams = parseFloat(prompt(`How many grams of "${itemName}"?`, '100'));
         if (!grams || grams <= 0) return;
+        const safeGrams = Math.min(grams, 100000);
+        const per100 = {
+            calories: nutritionNumber(item.cal != null ? item.cal : item.calories),
+            protein: nutritionNumber(item.protein),
+            carbs: nutritionNumber(item.carbs),
+            fat: nutritionNumber(item.fat),
+            fiber: nutritionNumber(item.fiber),
+            sugar: nutritionNumber(item.sugar)
+        };
         mealIngredients.push({
             name: itemName,
-            grams: Math.min(grams, 100000),
+            brand: String(item.brand || '').slice(0, 160),
+            image: safeImageUrl(item.image || ''),
+            barcode: normaliseBarcode(item.barcode),
+            grams: safeGrams,
             // Keep per-100g base so the weight can be edited later
-            calPer100: item.cal || 0,
-            proteinPer100: item.protein || 0,
-            calories: (Number(item.cal) || 0) * (Math.min(grams, 100000) / 100),
-            protein: (Number(item.protein) || 0) * (Math.min(grams, 100000) / 100)
+            calPer100: per100.calories,
+            proteinPer100: per100.protein,
+            carbsPer100: per100.carbs,
+            fatPer100: per100.fat,
+            fiberPer100: per100.fiber,
+            sugarPer100: per100.sugar,
+            calories: per100.calories * (safeGrams / 100),
+            protein: per100.protein * (safeGrams / 100),
+            carbs: per100.carbs * (safeGrams / 100),
+            fat: per100.fat * (safeGrams / 100),
+            fiber: per100.fiber * (safeGrams / 100),
+            sugar: per100.sugar * (safeGrams / 100)
         });
         renderMealIngredients();
-        // Clear the search so it's ready for the next ingredient
-        const search = document.getElementById('meal-ingredient-search');
-        if (search) search.value = '';
-        document.getElementById('meal-search-results').innerHTML = '';
+        clearMealIngredientSearch();
     }
 
-    // Change an ingredient's weight inline → recalcs its cals/protein + totals
+    // Change an ingredient's weight inline → recalculate nutrition + totals.
     function updateIngredientGrams(idx, value) {
-        const grams = parseFloat(value);
         const ing = mealIngredients[idx];
         if (!ing) return;
-        ing.grams = (!grams || grams < 0) ? 0 : grams;
-        // Recompute from the stored per-100g base
-        const base100cal = ing.calPer100 != null ? ing.calPer100 : (ing.grams ? ing.calories / (ing.grams / 100) : 0);
-        const base100prot = ing.proteinPer100 != null ? ing.proteinPer100 : (ing.grams ? ing.protein / (ing.grams / 100) : 0);
-        ing.calories = base100cal * (ing.grams / 100);
-        ing.protein = base100prot * (ing.grams / 100);
+        const previousGrams = Number(ing.grams) || 100;
+        const parsedGrams = parseFloat(value);
+        const nextGrams = Number.isFinite(parsedGrams) && parsedGrams >= 0 ? Math.min(parsedGrams, 100000) : 0;
+        const nutrients = [
+            ['calories', 'calPer100'], ['protein', 'proteinPer100'],
+            ['carbs', 'carbsPer100'], ['fat', 'fatPer100'],
+            ['fiber', 'fiberPer100'], ['sugar', 'sugarPer100']
+        ];
+        nutrients.forEach(([field, baseField]) => {
+            const storedBase = toFiniteNumber(ing[baseField]);
+            const per100 = storedBase !== null
+                ? nutritionNumber(storedBase)
+                : nutritionNumber((Number(ing[field]) || 0) / (previousGrams / 100));
+            ing[baseField] = per100;
+            ing[field] = per100 * (nextGrams / 100);
+        });
+        ing.grams = nextGrams;
         // Update just this row's readout + the totals (no full re-render, so the
         // input keeps focus while typing)
         const rowInfo = document.getElementById('ing-info-' + idx);
@@ -13761,17 +13979,18 @@
             if (picker) picker.value = targetDate;
         });
         const dateWarning = document.getElementById('nutrition-date-warning');
-        if (dateWarning) dateWarning.classList.toggle('hidden', targetDate === new Date().toISOString().split('T')[0]);
+        if (dateWarning) dateWarning.classList.toggle('hidden', targetDate === localDateKey());
 
         const calories = Number(meal.calories) || 0;
         const protein = Number(meal.protein) || 0;
         const carbs = Number(meal.carbs) || 0;
         const fat = Number(meal.fat) || 0;
         const fiber = Number(meal.fiber) || 0;
-        const base = { calories, protein, carbs, fat, fiber, sugar: 0, isCustom: true, serving: '1 portion' };
+        const sugar = Number(meal.sugar) || 0;
+        const base = { calories, protein, carbs, fat, fiber, sugar, isCustom: true, serving: '1 portion' };
         const entry = {
             id: Date.now() + Math.random(), date: targetDate, type: targetSlot, mealType: targetSlot,
-            name: meal.name || 'Created meal', image: null, calories, protein, carbs, fat, fiber, sugar: 0,
+            name: meal.name || 'Created meal', image: null, calories, protein, carbs, fat, fiber, sugar,
             amount: 1, amountType: 'portion', base, source: 'created-meal', createdMealId: meal.id,
             createdAt: new Date().toISOString()
         };
@@ -13795,6 +14014,10 @@
 
         const totalCal = mealIngredients.reduce((s, i) => s + i.calories, 0);
         const totalProt = mealIngredients.reduce((s, i) => s + i.protein, 0);
+        const totalCarbs = mealIngredients.reduce((s, i) => s + (i.carbs || 0), 0);
+        const totalFat = mealIngredients.reduce((s, i) => s + (i.fat || 0), 0);
+        const totalFiber = mealIngredients.reduce((s, i) => s + (i.fiber || 0), 0);
+        const totalSugar = mealIngredients.reduce((s, i) => s + (i.sugar || 0), 0);
         const addToPlan = !!(document.getElementById('create-meal-add-to-plan') || {}).checked;
         const addToShiftIdeas = !!(document.getElementById('create-meal-add-to-shift') || {}).checked;
         const planDate = (document.getElementById('create-meal-plan-date') || {}).value || state.viewDate;
@@ -13812,6 +14035,10 @@
             name,
             calories: totalCal,
             protein: totalProt,
+            carbs: totalCarbs,
+            fat: totalFat,
+            fiber: totalFiber,
+            sugar: totalSugar,
             ingredients: mealIngredients.map(item => Object.assign({}, item)),
             defaultMealType: planSlot,
             plannedDate: addToPlan ? String(planDate) : null,
@@ -13869,7 +14096,7 @@
     // ==========================================================================
 
     function openSaveNutritionModal() {
-        const today = state.viewDate || new Date().toISOString().split('T')[0];
+        const today = state.viewDate || localDateKey();
         document.getElementById('save-nutrition-date').value = today;
 
         const meals = state.dailyMeals.filter(m => m.date === today);
@@ -14199,11 +14426,13 @@
             if (currentDate !== lastCheckDate) {
                 saveDailyNutrition();
                 lastCheckDate = currentDate;
-                const today = new Date().toISOString().split('T')[0];
-                state.viewDate = today;
+                resetActiveDatesToToday({ preserveActiveWorkout: true });
                 saveState();
                 renderDiary();
+                renderShiftWorker();
                 renderDashboard();
+                renderMetricsStatusLines();
+                renderMetricsHistory();
             }
         }, 60000);
     }
@@ -14378,16 +14607,14 @@
     // ==========================================================================
 
     function changeMetricsDate(days) {
-        const current = document.getElementById('metrics-date-picker').value || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectMetricsDate(date.toISOString().split('T')[0]);
+        const current = document.getElementById('metrics-date-picker').value || localDateKey();
+        selectMetricsDate(offsetLocalDateKey(current, days));
     }
 
     function selectMetricsDate(dateStr) {
         state.metricsDate = dateStr;
         document.getElementById('metrics-date-picker').value = dateStr;
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('metrics-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
 
@@ -14527,12 +14754,12 @@
     }
 
     function getCurrentMetricEntry() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         return (state.metricsHistory || []).find(m => m.date === date) || null;
     }
 
     function formatMetricsDateLabel(dateStr) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         if (dateStr === today) return 'Today';
         const d = new Date(dateStr);
         return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
@@ -14572,7 +14799,7 @@
     }
 
     function openRecordWeightModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-weight-date').textContent = formatMetricsDateLabel(date);
 
         // Apply the user's preferred unit
@@ -14667,7 +14894,7 @@
     }
 
     function saveRecordedWeight() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         const unit = state.weightUnit || 'kg';
 
         let kg;
@@ -14699,7 +14926,7 @@
     // -- MEASUREMENTS MODAL --
 
     function openRecordMeasurementsModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-meas-date').textContent = formatMetricsDateLabel(date);
 
         const existing = getCurrentMetricEntry() || {};
@@ -14720,7 +14947,7 @@
     }
 
     function saveRecordedMeasurements() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
 
         const fields = {};
         const parts = ['chest', 'shoulders', 'arms', 'waist', 'legs', 'glutes', 'neck'];
@@ -14752,7 +14979,7 @@
     // -- PHOTOS MODAL --
 
     function openProgressPhotosModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-photos-date').textContent = formatMetricsDateLabel(date);
 
         // Reset buffer and load any existing photos for the date
@@ -14782,7 +15009,7 @@
     }
 
     function saveRecordedPhotos() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
 
         const photos = {};
         let anyChange = false;
@@ -15476,7 +15703,7 @@
             const d = new Date();
             d.setHours(0, 0, 0, 0);
             d.setDate(d.getDate() - days);
-            cutoff = d.toISOString().split('T')[0];
+            cutoff = localDateKey(d);
         }
 
         if (pick.startsWith('body:')) {
@@ -16040,7 +16267,7 @@
     }
 
     function comparisonFileName() {
-        const d = new Date().toISOString().split('T')[0];
+        const d = localDateKey();
         return `VFIT-progress-${d}.jpg`;
     }
 
@@ -16313,7 +16540,7 @@
                 const day = d.getDay() || 7;
                 const monday = new Date(d);
                 monday.setDate(d.getDate() - day + 1);
-                const weekKey = monday.toISOString().split('T')[0];
+                const weekKey = localDateKey(monday);
                 if (!byWeek[weekKey]) byWeek[weekKey] = { total: 0, days: 0, start: monday };
                 byWeek[weekKey].total += h.calories || 0;
                 byWeek[weekKey].days += 1;
@@ -16472,7 +16699,7 @@
                 const day = d.getDay() || 7;
                 const monday = new Date(d);
                 monday.setDate(d.getDate() - day + 1);
-                const weekKey = monday.toISOString().split('T')[0];
+                const weekKey = localDateKey(monday);
                 if (!byWeek[weekKey]) byWeek[weekKey] = { total: 0, days: 0, start: monday };
                 byWeek[weekKey].total += h.protein || 0;
                 byWeek[weekKey].days += 1;
@@ -18300,7 +18527,7 @@
         if (!state.cardioLogs) state.cardioLogs = [];
         state.cardioLogs.unshift({
             id: Date.now(),
-            date: new Date().toISOString().split('T')[0],
+            date: localDateKey(),
             type: type,
             duration: duration,
             distance: distance,
@@ -19628,18 +19855,9 @@
             }
         });
 
-        // Set today as default for date pickers
-        const today = new Date().toISOString().split('T')[0];
-
-        const workoutPicker = document.getElementById('workout-date-picker');
-        if (workoutPicker) workoutPicker.value = today;
-        window.selectedWorkoutDate = today;
-
-        const nutritionPicker = document.getElementById('nutrition-date-picker');
-        if (nutritionPicker) nutritionPicker.value = today;
-
-        const metricsPicker = document.getElementById('metrics-date-picker');
-        if (metricsPicker) metricsPicker.value = today;
+        // Prime all date-led pages with the device's current local day. The auth
+        // flow repeats this after saved device/cloud data has finished loading.
+        resetActiveDatesToToday({ preserveActiveWorkout: true, clearMetricDraft: false });
 
         // Wire up the food search input listener. Without this, typing in the
         // food search box does nothing because no input handler is attached.
