@@ -152,6 +152,9 @@
             <!-- DASHBOARD TAB -->
             <!-- ============================== -->
             <section id="dashboard" class="tab-content active space-y-6">
+                <!-- Daily readiness summary appears after the 10am check-in. -->
+                <div id="daily-readiness-card" class="hidden glass-card rounded-[2.5rem] p-6"></div>
+
                 <!-- AI COACH BUBBLE -->
                 <div id="ai-coach-bubble" class="glass-card rounded-[2.5rem] p-6 relative bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200">
                     <!-- Speech bubble arrow -->
@@ -210,6 +213,7 @@
                         <div class="absolute text-center">
                             <div id="dash-calories" class="text-4xl font-black text-slate-900">0</div>
                             <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Kcal Eaten</div>
+                            <div id="dash-calorie-target" class="text-[9px] font-black text-indigo-500 mt-1">Target 2,500</div>
                         </div>
                     </div>
                     <div class="grid grid-cols-3 w-full gap-4 mt-8 border-t border-slate-100 pt-6">
@@ -389,6 +393,9 @@
                     </div>
                 </div>
 
+                <!-- Recovery training guidance for the selected workout date. -->
+                <div id="training-recovery-card" class="hidden rounded-[2rem] p-5 border-2 border-amber-200 bg-amber-50"></div>
+
                 <!-- Coach's assigned plan — only shown to clients who have a coach -->
                 <div id="coach-plan-card" class="hidden glass-card p-6 rounded-[2.5rem]">
                     <div class="flex items-center gap-2 mb-1">
@@ -509,6 +516,9 @@
                         </div>
                     </div>
 
+                    <!-- Readiness-based nutrition target for the selected date. -->
+                    <div id="nutrition-readiness-card" class="hidden rounded-[2rem] p-5 border-2"></div>
+
                     <div id="nutrition-save-buttons" class="hidden flex gap-3">
                         <button onclick="saveNutritionChanges()" class="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700">Save Changes</button>
                         <button onclick="cancelNutritionChanges()" class="flex-1 py-4 bg-slate-200 text-slate-700 rounded-2xl font-bold hover:bg-slate-300">Cancel</button>
@@ -519,6 +529,7 @@
                             <div>
                                 <div id="total-kcal" class="text-5xl font-black text-slate-900 mb-1">0</div>
                                 <div class="text-[10px] text-slate-400 font-black uppercase tracking-widest">Calories Today</div>
+                                <div id="nutrition-calorie-target" class="text-[10px] text-indigo-500 font-black mt-1">Target 2,500 kcal</div>
                             </div>
                             <div class="text-right">
                                 <div class="text-xl font-black text-blue-600 flex items-center gap-1 justify-end">
@@ -2188,18 +2199,26 @@
                 </select>
             </div>
 
+            <label class="mb-6 flex items-start gap-3 bg-indigo-50 border border-indigo-100 p-4 rounded-2xl cursor-pointer">
+                <input id="exercise-relative-toggle" type="checkbox" onchange="renderExerciseProgressChart()" class="mt-0.5 w-5 h-5 accent-indigo-600 flex-shrink-0">
+                <span>
+                    <span class="block text-sm font-black text-indigo-900">Show weight lifted per kg of bodyweight</span>
+                    <span class="block text-xs text-indigo-600 mt-1">Uses bodyweight from the lift date, or the most recent available weight when that day has no entry.</span>
+                </span>
+            </label>
+
             <div id="exercise-progress-stats" class="hidden mb-6">
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div class="bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-2xl">
-                        <p class="text-[9px] font-black uppercase text-indigo-600 mb-1">Current Max</p>
+                        <p id="exercise-current-max-label" class="text-[9px] font-black uppercase text-indigo-600 mb-1">Best Weight</p>
                         <p id="exercise-current-max" class="text-2xl font-black text-indigo-900">-</p>
                     </div>
                     <div class="bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 rounded-2xl">
-                        <p class="text-[9px] font-black uppercase text-emerald-600 mb-1">Starting Weight</p>
+                        <p id="exercise-starting-weight-label" class="text-[9px] font-black uppercase text-emerald-600 mb-1">Starting Weight</p>
                         <p id="exercise-starting-weight" class="text-2xl font-black text-emerald-900">-</p>
                     </div>
                     <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-2xl">
-                        <p class="text-[9px] font-black uppercase text-purple-600 mb-1">Total Gain</p>
+                        <p id="exercise-total-gain-label" class="text-[9px] font-black uppercase text-purple-600 mb-1">Total Change</p>
                         <p id="exercise-total-gain" class="text-2xl font-black text-purple-900">-</p>
                     </div>
                     <div class="bg-gradient-to-br from-amber-50 to-amber-100 p-4 rounded-2xl">
@@ -2207,6 +2226,7 @@
                         <p id="exercise-workout-count" class="text-2xl font-black text-amber-900">-</p>
                     </div>
                 </div>
+                <div id="exercise-relative-context" class="hidden mt-3 bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs text-slate-600"></div>
             </div>
 
             <div id="exercise-progress-chart-container" class="hidden">
@@ -2229,8 +2249,8 @@
                 <div class="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                     <i data-lucide="bar-chart-3" class="w-10 h-10 text-slate-400"></i>
                 </div>
-                <p class="text-slate-400 font-bold mb-2">Select an exercise to view progress</p>
-                <p class="text-xs text-slate-400">Track your strength gains over time</p>
+                <p id="exercise-progress-empty-title" class="text-slate-400 font-bold mb-2">Select an exercise to view progress</p>
+                <p id="exercise-progress-empty-text" class="text-xs text-slate-400">Track your strength gains over time</p>
             </div>
         </div>
     </div>
@@ -2810,6 +2830,14 @@
                 </div>
             </div>
 
+            <label id="cmp-relative-control" class="hidden mb-5 flex items-start gap-3 bg-indigo-50 border border-indigo-100 p-4 rounded-2xl cursor-pointer">
+                <input id="cmp-relative-toggle" type="checkbox" onchange="loadProgressComparison()" class="mt-0.5 w-5 h-5 accent-indigo-600 flex-shrink-0">
+                <span>
+                    <span class="block text-sm font-black text-indigo-900">Compare weight per kg of bodyweight</span>
+                    <span class="block text-xs text-indigo-600 mt-1">Each lift uses the bodyweight recorded that day, falling back to the most recent available entry.</span>
+                </span>
+            </label>
+
             <!-- Live trend preview -->
             <canvas id="cmp-trend-canvas" class="hidden w-full rounded-2xl mb-3" style="max-height:280px;"></canvas>
 
@@ -2818,6 +2846,62 @@
             <button id="cmp-save-btn" onclick="buildProgressImage()" class="hidden w-full mt-6 bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 flex items-center justify-center gap-2">
                 <i data-lucide="download" class="w-5 h-5"></i> Save Comparison
             </button>
+        </div>
+    </div>
+
+    <!-- DAILY READINESS CHECK-IN -->
+    <div id="daily-readiness-modal" class="modal-overlay" style="z-index:260;">
+        <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-start gap-4 mb-5">
+                <div>
+                    <p class="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-1">Daily readiness · 10am</p>
+                    <h3 class="text-2xl font-black">How are you feeling?</h3>
+                    <p class="text-xs text-slate-400 mt-1">Your answers tailor today's calories and training only.</p>
+                </div>
+                <button onclick="closeDailyReadinessCheck(true)" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none flex-shrink-0" aria-label="Skip today's readiness check">×</button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label for="readiness-energy" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Energy level</label>
+                    <select id="readiness-energy" onchange="previewDailyReadiness()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                        <option value="">Choose...</option><option value="1">1 · Drained</option><option value="2">2 · Low</option><option value="3">3 · Okay</option><option value="4">4 · Good</option><option value="5">5 · Full of energy</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="readiness-mood" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Mood</label>
+                    <select id="readiness-mood" onchange="previewDailyReadiness()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                        <option value="">Choose...</option><option value="1">1 · Very low</option><option value="2">2 · Low</option><option value="3">3 · Neutral</option><option value="4">4 · Good</option><option value="5">5 · Great</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="readiness-feeling" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Overall, how do you feel?</label>
+                    <select id="readiness-feeling" onchange="previewDailyReadiness()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                        <option value="">Choose...</option><option value="1">1 · Very rough</option><option value="2">2 · Rough</option><option value="3">3 · Okay</option><option value="4">4 · Good</option><option value="5">5 · Great</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="readiness-hunger" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Hunger</label>
+                        <select id="readiness-hunger" onchange="previewDailyReadiness()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                            <option value="">Choose...</option><option value="1">1 · Very low</option><option value="2">2 · Low</option><option value="3">3 · Normal</option><option value="4">4 · High</option><option value="5">5 · Very high</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="readiness-fatigue" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Fatigue</label>
+                        <select id="readiness-fatigue" onchange="previewDailyReadiness()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                            <option value="">Choose...</option><option value="1">1 · Fresh</option><option value="2">2 · Mild</option><option value="3">3 · Moderate</option><option value="4">4 · High</option><option value="5">5 · Exhausted</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label for="readiness-note" class="text-[10px] font-black uppercase text-slate-500 block mb-2">Anything else? <span class="normal-case font-normal text-slate-300">(optional)</span></label>
+                    <textarea id="readiness-note" rows="2" maxlength="300" placeholder="Soreness, poor sleep, stress..." class="w-full p-4 bg-slate-50 rounded-2xl font-medium outline-none resize-none"></textarea>
+                </div>
+            </div>
+
+            <div id="readiness-preview" class="hidden mt-5 p-4 rounded-2xl border text-sm"></div>
+            <button onclick="saveDailyReadiness()" class="w-full mt-6 bg-indigo-600 text-white p-4 rounded-2xl font-black hover:bg-indigo-700">Save Today's Check-in</button>
         </div>
     </div>
 

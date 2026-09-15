@@ -213,6 +213,7 @@
                 customExercises: [],
                 barcodeFoods: [],
                 shiftProfile: state.shiftProfile || null,
+                latestReadiness: null,
                 disabledExercises: { gym: [], home: [] }
             });
 
@@ -287,6 +288,7 @@
                 applyExercisePrefsFromCloud(firebaseUserData);
                 mergeBarcodeFoodsFromCloud(firebaseUserData.barcodeFoods);
                 applyShiftProfileFromCloud(firebaseUserData);
+                mergeLatestReadinessFromCloud(firebaseUserData.latestReadiness);
             } else {
                 await db.collection('users').doc(currentUser.uid).set({
                     name: currentUser.displayName || 'User',
@@ -305,6 +307,7 @@
                     customExercises: state.customExercises || [],
                     barcodeFoods: state.barcodeFoods || [],
                     shiftProfile: state.shiftProfile || null,
+                    latestReadiness: null,
                     disabledExercises: {
                         gym: (state.disabledExercises && state.disabledExercises.gym) || [],
                         home: (state.disabledExercises && state.disabledExercises.home) || []
@@ -1950,7 +1953,7 @@
         if (!cfg || !cfg.enabled) return false;
 
         const now = new Date();
-        const today = now.toISOString().split('T')[0];
+        const today = localDateKey(now);
         const dow = now.getDay();       // 0..6
         const dom = now.getDate();      // 1..31
         const lastDone = cfg.lastDone;  // ISO date string or null
@@ -1984,7 +1987,7 @@
     function markReminderDone(key) {
         const cfg = updReminders()[key];
         if (!cfg) return;
-        cfg.lastDone = new Date().toISOString().split('T')[0];
+        cfg.lastDone = localDateKey();
         saveState();
         refreshDueAlertBadgeSoon();
     }
@@ -3097,6 +3100,7 @@
         } catch (e) { /* ignore */ }
         const w = assigned[idx];
         if (!w) { showToast('Workout not found'); return; }
+        const recoveryPlan = getRecoveryPlanForDate(selectedWorkoutDateKey());
 
         closeAssignedWorkouts();
         switchTab('training');
@@ -3114,7 +3118,7 @@
         { const _cpc = document.getElementById('coach-plan-card'); if (_cpc) _cpc.classList.add('hidden'); }
         document.getElementById('workout-active').classList.remove('hidden');
         const titleEl = document.getElementById('active-workout-title');
-        if (titleEl) titleEl.innerText = '📋 ' + (w.title || 'Coach Workout');
+        if (titleEl) titleEl.innerText = '📋 ' + (w.title || 'Coach Workout') + (recoveryPlan ? ' · Recovery' : '');
         document.getElementById('exercise-list').innerHTML = '';
 
         // Build a name→focus map so each exercise card shows the coach's focus note.
@@ -3142,14 +3146,19 @@
             }
             const setsContainer = card.querySelector('[id^="sets-"]');
             const exId = setsContainer ? setsContainer.id.replace('sets-', '') : null;
-            (ex.sets || []).forEach(s => {
+            const assignedSets = ex.sets || [];
+            const plannedSets = recoveryPlan
+                ? assignedSets.slice(0, Math.max(1, Math.ceil(assignedSets.length * recoveryPlan.volumeMultiplier)))
+                : assignedSets;
+            plannedSets.forEach(s => {
                 if (exId) addSetToExercise(exId, ex.name ? getPersonalRecord(ex.name) : null, ex.name || '');
                 const rows = card.querySelectorAll('.set-row');
                 const row = rows[rows.length - 1];
                 if (row) {
                     const w2 = row.querySelector('.set-weight');
                     const r2 = row.querySelector('.set-reps');
-                    if (w2) w2.value = s.weight || '';
+                    const adjustedWeight = recoveryPlan ? recoveryAdjustedWeight(s.weight, ex.name || '', recoveryPlan) : s.weight;
+                    if (w2) w2.value = adjustedWeight === null || adjustedWeight === undefined ? '' : adjustedWeight;
                     if (r2) r2.value = s.reps || '';
                 }
             });
@@ -3157,6 +3166,9 @@
         // Step through it one exercise at a time like other workouts
         setTimeout(() => enterWizardMode(), 120);
         persistActiveWorkout();
+        if (recoveryPlan) {
+            showToast(`Coach workout adjusted for recovery · ${Math.round(recoveryPlan.volumeMultiplier * 100)}% sets · ${Math.round(recoveryPlan.loadMultiplier * 100)}% load`);
+        }
         showToast('Following your coach\'s workout 💪');
     }
 
@@ -3282,6 +3294,7 @@
             setupMidnightSave();
             setupFoodSearch();
             renderWorkoutEnvTabs();
+            setupDailyReadinessPrompt();
 
             // Notifications: show the unread badge, then keep it fresh
             refreshNotifBadge();
@@ -3294,6 +3307,7 @@
 
             lucide.createIcons();
         } else {
+            teardownDailyReadinessPrompt();
             currentUser = null;
             document.getElementById('auth-screen').style.display = 'flex';
             document.getElementById('app-screen').style.display = 'none';
@@ -3330,8 +3344,8 @@
     // ==========================================================================
 
     const DEFAULT_STATE = {
-        viewDate: new Date().toISOString().split('T')[0],
-        metricsDate: new Date().toISOString().split('T')[0],
+        viewDate: localDateKey(),
+        metricsDate: localDateKey(),
         goals: { calories: 2500, water: 2500, steps: 10000 },
         waterLogs: {},
         stepsLogs: {},
@@ -3356,6 +3370,10 @@
         dietGoal: { mode: '', rate: 1, rateUnit: 'lbs', gainRate: 250 },
         cardioLogs: [],
         hydrationLogs: {},
+        // One entry per local date. A completed check-in can temporarily tailor
+        // that day's calorie target and training prescription without changing
+        // the user's normal goals.
+        dailyReadiness: {},
         aiCoachEnabled: true,
         proteinGoal: 150,
         weightUnit: 'kg', // user's preferred display unit: 'kg' | 'lbs' | 'st'
@@ -3776,6 +3794,9 @@
                 // Ensure the exercise-database fields exist and have the right shape
                 if (!Array.isArray(state.customExercises)) state.customExercises = [];
                 if (!Array.isArray(state.barcodeFoods)) state.barcodeFoods = [];
+                if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object' || Array.isArray(state.dailyReadiness)) {
+                    state.dailyReadiness = {};
+                }
                 state.disabledExercises = {
                     gym: Array.isArray(parsed.disabledExercises && parsed.disabledExercises.gym) ? parsed.disabledExercises.gym : [],
                     home: Array.isArray(parsed.disabledExercises && parsed.disabledExercises.home) ? parsed.disabledExercises.home : []
@@ -3831,6 +3852,7 @@
             const entry = {
                 date: dateToSave,
                 calories: totalCals,
+                targetCalories: getDailyCalorieTarget(dateToSave),
                 protein: totalProtein,
                 carbs: totalCarbs,
                 fat: totalFat,
@@ -3871,11 +3893,14 @@
         if (tabId === 'profile') renderProfile();
         if (tabId === 'settings') renderSettings();
         if (tabId === 'dashboard') renderDashboard();
-        if (tabId === 'training') renderCoachPlanInTraining();
+        if (tabId === 'training') {
+            renderCoachPlanInTraining();
+            renderDailyReadinessCards();
+        }
         if (tabId === 'metrics') {
             // Set date picker to current viewing date and refresh status + history
             const picker = document.getElementById('metrics-date-picker');
-            if (picker && !picker.value) picker.value = state.metricsDate || new Date().toISOString().split('T')[0];
+            if (picker && !picker.value) picker.value = state.metricsDate || localDateKey();
             renderMetricsStatusLines();
             renderMetricsHistory();
         }
@@ -4828,6 +4853,427 @@
     });
 
     // ==========================================================================
+    // DAILY READINESS + RECOVERY DAY
+    // ==========================================================================
+
+    const READINESS_PROMPT_HOUR = 10;
+    const RECOVERY_VOLUME_MULTIPLIER = 0.60;
+    const RECOVERY_LOAD_MULTIPLIER = 0.85;
+    let dailyReadinessTimer = null;
+    let dailyReadinessRetryTimer = null;
+    let dailyReadinessListenersReady = false;
+
+    function readinessDateKey(value) {
+        if (value instanceof Date) return localDateKey(value);
+        if (!value) return localDateKey();
+        return String(value).slice(0, 10);
+    }
+
+    function readinessRecordForDate(dateKey) {
+        const key = readinessDateKey(dateKey);
+        const records = state.dailyReadiness || {};
+        return records[key] || null;
+    }
+
+    function readinessRecordTime(record) {
+        if (!record) return 0;
+        return Date.parse(record.completedAt || record.skippedAt || '') || 0;
+    }
+
+    function mergeLatestReadinessFromCloud(record) {
+        if (!record || !record.date) return;
+        const dateKey = readinessDateKey(record.date);
+        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+        const local = state.dailyReadiness[dateKey];
+        if (!local || readinessRecordTime(record) >= readinessRecordTime(local)) {
+            state.dailyReadiness[dateKey] = Object.assign({}, record, { date: dateKey });
+            saveState();
+        }
+    }
+
+    async function syncLatestReadinessToCloud(record) {
+        if (!currentUser || !record) return;
+        try {
+            await db.collection('users').doc(currentUser.uid).update({
+                latestReadiness: record,
+                readinessUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            firebaseUserData.latestReadiness = record;
+        } catch (error) {
+            // The local plan remains authoritative offline and will still work.
+            console.warn('Could not sync daily readiness:', error);
+        }
+    }
+
+    /** The normal goal remains untouched; only a completed daily plan can override it. */
+    function getDailyCalorieTarget(dateKey) {
+        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
+        const record = readinessRecordForDate(dateKey);
+        if (record && record.status === 'completed' && parseInt(record.recommendedCalories, 10) > 0) {
+            return parseInt(record.recommendedCalories, 10);
+        }
+        return baseline;
+    }
+
+    function getRecoveryPlanForDate(dateKey) {
+        const record = readinessRecordForDate(dateKey);
+        return (record && record.status === 'completed' && record.recovery) ? record : null;
+    }
+
+    function recoveryAdjustedWeight(weight, exerciseName, recoveryPlan) {
+        const kg = parseFloat(weight);
+        if (isNaN(kg) || !recoveryPlan) return isNaN(kg) ? null : kg;
+        let adjusted;
+        if (isAssistanceExercise(exerciseName)) {
+            // Assistance is inverted: more assistance means less bodyweight moved.
+            // When bodyweight is known, reduce the actual moved load by the same
+            // percentage; otherwise use a conservative increase in assistance.
+            const bodyweight = getBodyweightForDate(selectedWorkoutDateKey());
+            adjusted = bodyweight && kg <= bodyweight.weight
+                ? bodyweight.weight - ((bodyweight.weight - kg) * recoveryPlan.loadMultiplier)
+                : kg * (2 - recoveryPlan.loadMultiplier);
+        } else {
+            adjusted = kg * recoveryPlan.loadMultiplier;
+        }
+        return Math.max(0, Math.round(adjusted * 2) / 2);
+    }
+
+    function selectedWorkoutDateKey() {
+        const picker = document.getElementById('workout-date-picker');
+        return readinessDateKey(window.selectedWorkoutDate || (picker && picker.value) || localDateKey());
+    }
+
+    function readDailyReadinessForm() {
+        const numberValue = id => {
+            const el = document.getElementById(id);
+            return el && el.value !== '' ? parseInt(el.value, 10) : null;
+        };
+        const note = document.getElementById('readiness-note');
+        return {
+            energy: numberValue('readiness-energy'),
+            mood: numberValue('readiness-mood'),
+            feeling: numberValue('readiness-feeling'),
+            hunger: numberValue('readiness-hunger'),
+            fatigue: numberValue('readiness-fatigue'),
+            note: note ? note.value.trim().slice(0, 300) : ''
+        };
+    }
+
+    function readinessAnswersComplete(answers) {
+        return ['energy', 'mood', 'feeling', 'hunger', 'fatigue']
+            .every(key => Number.isInteger(answers[key]) && answers[key] >= 1 && answers[key] <= 5);
+    }
+
+    function buildDailyReadinessPlan(answers) {
+        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
+        const maintenance = calculateMaintenanceCalories();
+        const recovery = answers.energy <= 2 && answers.hunger >= 4 && answers.fatigue >= 4;
+        // Halfway between the normal target and maintenance gives meaningful extra
+        // recovery fuel without replacing the user's long-term goal.
+        const recommendedCalories = recovery && maintenance
+            ? Math.round((baseline + maintenance) / 2)
+            : baseline;
+
+        let nutritionMessage;
+        let trainingMessage;
+        if (recovery) {
+            nutritionMessage = maintenance
+                ? `Today's target moves from ${baseline.toLocaleString()} to ${recommendedCalories.toLocaleString()} kcal — halfway toward your estimated ${maintenance.toLocaleString()} kcal maintenance. Prioritise protein, fluids, carbohydrates and regular meals.`
+                : `Recovery is active. Your target stays at ${baseline.toLocaleString()} kcal until maintenance can be calculated; complete About You and log a bodyweight to unlock the tailored recovery target.`;
+            trainingMessage = 'Use about 60% of normal training volume and 85% of normal load. Keep repetitions controlled and stop well before failure.';
+        } else {
+            const nutritionParts = [`Keep today's normal ${baseline.toLocaleString()} kcal target.`];
+            if (answers.hunger >= 4) nutritionParts.push('Build meals around protein, fibre and high-volume foods to manage hunger.');
+            if (answers.energy <= 2) nutritionParts.push('Place more of today’s carbohydrates around training and keep fluids up.');
+            if (answers.mood <= 2 || answers.feeling <= 2) nutritionParts.push('Keep meals simple and regular rather than relying on restriction.');
+            if (nutritionParts.length === 1) nutritionParts.push('Keep protein consistent and fuel training as planned.');
+            nutritionMessage = nutritionParts.join(' ');
+            trainingMessage = answers.fatigue >= 4
+                ? 'Recovery mode was not triggered, but fatigue is high. Train conservatively and stop if performance or technique drops.'
+                : 'Normal training is available today; adjust effort if your warm-up feels unusually difficult.';
+        }
+
+        return {
+            recovery,
+            baselineCalories: baseline,
+            maintenanceCalories: maintenance || null,
+            recommendedCalories,
+            volumeMultiplier: recovery ? RECOVERY_VOLUME_MULTIPLIER : 1,
+            loadMultiplier: recovery ? RECOVERY_LOAD_MULTIPLIER : 1,
+            nutritionMessage,
+            trainingMessage
+        };
+    }
+
+    function readinessPlanPreviewHTML(plan) {
+        if (plan.recovery) {
+            return `
+                <div class="flex items-start gap-3">
+                    <i data-lucide="battery-medium" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
+                    <div>
+                        <p class="font-black text-amber-900">Recovery day will be activated</p>
+                        <p class="text-xs text-amber-800 mt-1">${plan.nutritionMessage}</p>
+                        <p class="text-xs text-amber-800 mt-2">${plan.trainingMessage}</p>
+                    </div>
+                </div>`;
+        }
+        return `
+            <div class="flex items-start gap-3">
+                <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <p class="font-black text-emerald-900">Normal plan</p>
+                    <p class="text-xs text-emerald-800 mt-1">${plan.nutritionMessage}</p>
+                    <p class="text-xs text-emerald-800 mt-2">${plan.trainingMessage}</p>
+                </div>
+            </div>`;
+    }
+
+    function previewDailyReadiness() {
+        const preview = document.getElementById('readiness-preview');
+        if (!preview) return;
+        const answers = readDailyReadinessForm();
+        if (!readinessAnswersComplete(answers)) {
+            preview.classList.add('hidden');
+            preview.innerHTML = '';
+            return;
+        }
+        const plan = buildDailyReadinessPlan(answers);
+        preview.className = `mt-5 p-4 rounded-2xl border text-sm ${plan.recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+        preview.innerHTML = readinessPlanPreviewHTML(plan);
+        lucide.createIcons();
+    }
+
+    function openDailyReadinessCheck() {
+        const modal = document.getElementById('daily-readiness-modal');
+        if (!modal) return;
+        const dateKey = localDateKey();
+        const record = readinessRecordForDate(dateKey);
+        window._dailyReadinessDate = dateKey;
+
+        ['energy', 'mood', 'feeling', 'hunger', 'fatigue'].forEach(key => {
+            const el = document.getElementById('readiness-' + key);
+            if (el) el.value = record && record.status === 'completed' ? String(record[key] || '') : '';
+        });
+        const note = document.getElementById('readiness-note');
+        if (note) note.value = record && record.status === 'completed' ? (record.note || '') : '';
+        const preview = document.getElementById('readiness-preview');
+        if (preview) { preview.classList.add('hidden'); preview.innerHTML = ''; }
+
+        modal.style.display = 'flex';
+        previewDailyReadiness();
+        lucide.createIcons();
+    }
+
+    function closeDailyReadinessCheck(markSkipped) {
+        const modal = document.getElementById('daily-readiness-modal');
+        if (modal) modal.style.display = 'none';
+        if (!markSkipped) return;
+
+        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
+        const existing = readinessRecordForDate(dateKey);
+        // Closing a previously completed check-in is just Cancel; it never erases it.
+        if (!existing || existing.status !== 'completed') {
+            if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+            state.dailyReadiness[dateKey] = {
+                status: 'skipped',
+                date: dateKey,
+                skippedAt: new Date().toISOString()
+            };
+            saveState();
+            syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
+            renderDailyReadinessCards();
+            showToast('Today’s check-in skipped — you can complete it from the dashboard');
+        }
+    }
+
+    function saveDailyReadiness() {
+        const answers = readDailyReadinessForm();
+        if (!readinessAnswersComplete(answers)) {
+            showToast('Answer all five readiness questions');
+            return;
+        }
+
+        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
+        const plan = buildDailyReadinessPlan(answers);
+        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+        state.dailyReadiness[dateKey] = Object.assign({
+            status: 'completed',
+            date: dateKey,
+            completedAt: new Date().toISOString()
+        }, answers, plan);
+
+        saveState();
+        syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
+        closeDailyReadinessCheck(false);
+        renderDashboard();
+        renderDiary();
+        renderDailyReadinessCards();
+        pushMemberDataToCloud();
+        showToast(plan.recovery
+            ? `Recovery day active · ${plan.recommendedCalories.toLocaleString()} kcal · lighter training`
+            : `Readiness saved · ${plan.recommendedCalories.toLocaleString()} kcal target`);
+    }
+
+    function isAnotherModalOpen(excludedId) {
+        return Array.from(document.querySelectorAll('.modal-overlay')).some(modal => {
+            if (modal.id === excludedId) return false;
+            return window.getComputedStyle(modal).display !== 'none';
+        });
+    }
+
+    function maybeShowDailyReadiness() {
+        if (!currentUser) return;
+        const now = new Date();
+        if (now.getHours() < READINESS_PROMPT_HOUR) return;
+        const readinessModal = document.getElementById('daily-readiness-modal');
+        if (readinessModal && window.getComputedStyle(readinessModal).display !== 'none') return;
+        const record = readinessRecordForDate(localDateKey(now));
+        if (record && (record.status === 'completed' || record.status === 'skipped')) return;
+
+        if (isAnotherModalOpen('daily-readiness-modal')) {
+            clearTimeout(dailyReadinessRetryTimer);
+            dailyReadinessRetryTimer = setTimeout(maybeShowDailyReadiness, 30000);
+            return;
+        }
+        openDailyReadinessCheck();
+    }
+
+    function handleReadinessVisibility() {
+        if (document.visibilityState === 'visible') maybeShowDailyReadiness();
+    }
+
+    function scheduleNextReadinessPrompt() {
+        clearTimeout(dailyReadinessTimer);
+        const now = new Date();
+        const tenToday = new Date(now);
+        tenToday.setHours(READINESS_PROMPT_HOUR, 0, 0, 0);
+        const nextTen = new Date(tenToday);
+
+        if (now >= tenToday) {
+            setTimeout(maybeShowDailyReadiness, 1200);
+            nextTen.setDate(nextTen.getDate() + 1);
+        }
+
+        dailyReadinessTimer = setTimeout(() => {
+            maybeShowDailyReadiness();
+            scheduleNextReadinessPrompt();
+        }, Math.max(1000, nextTen.getTime() - now.getTime()));
+    }
+
+    function setupDailyReadinessPrompt() {
+        scheduleNextReadinessPrompt();
+        if (!dailyReadinessListenersReady) {
+            document.addEventListener('visibilitychange', handleReadinessVisibility);
+            window.addEventListener('focus', maybeShowDailyReadiness);
+            dailyReadinessListenersReady = true;
+        }
+        renderDailyReadinessCards();
+    }
+
+    function teardownDailyReadinessPrompt() {
+        clearTimeout(dailyReadinessTimer);
+        clearTimeout(dailyReadinessRetryTimer);
+        dailyReadinessTimer = null;
+        dailyReadinessRetryTimer = null;
+        if (dailyReadinessListenersReady) {
+            document.removeEventListener('visibilitychange', handleReadinessVisibility);
+            window.removeEventListener('focus', maybeShowDailyReadiness);
+            dailyReadinessListenersReady = false;
+        }
+        const modal = document.getElementById('daily-readiness-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    function renderDailyReadinessCards() {
+        const todayKey = localDateKey();
+        const todayRecord = readinessRecordForDate(todayKey);
+        const dashCard = document.getElementById('daily-readiness-card');
+
+        if (dashCard) {
+            const afterTen = new Date().getHours() >= READINESS_PROMPT_HOUR;
+            if (todayRecord && todayRecord.status === 'completed') {
+                const recovery = !!todayRecord.recovery;
+                dashCard.className = `glass-card rounded-[2.5rem] p-6 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+                dashCard.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-3 min-w-0">
+                            <div class="w-11 h-11 ${recovery ? 'bg-amber-500' : 'bg-emerald-500'} text-white rounded-2xl flex items-center justify-center flex-shrink-0">
+                                <i data-lucide="${recovery ? 'battery-medium' : 'battery-charging'}" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery day active' : 'Ready for the normal plan'}</p>
+                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">Energy ${todayRecord.energy}/5 · Mood ${todayRecord.mood}/5 · Hunger ${todayRecord.hunger}/5 · Fatigue ${todayRecord.fatigue}/5</p>
+                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-2"><b>${getDailyCalorieTarget(todayKey).toLocaleString()} kcal</b> today${recovery ? ' · 60% volume · 85% load' : ''}</p>
+                            </div>
+                        </div>
+                        <button onclick="openDailyReadinessCheck()" class="text-xs font-black underline ${recovery ? 'text-amber-700' : 'text-emerald-700'} flex-shrink-0">Update</button>
+                    </div>`;
+            } else if (afterTen) {
+                const skipped = todayRecord && todayRecord.status === 'skipped';
+                dashCard.className = 'glass-card rounded-[2.5rem] p-6 border-2 bg-indigo-50 border-indigo-100';
+                dashCard.innerHTML = `
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="font-black text-indigo-900">${skipped ? 'Today’s check-in was skipped' : 'Daily readiness check'}</p>
+                            <p class="text-xs text-indigo-600 mt-1">Check energy, mood, hunger and fatigue to tailor today’s plan.</p>
+                        </div>
+                        <button onclick="openDailyReadinessCheck()" class="bg-indigo-600 text-white px-4 py-3 rounded-xl text-xs font-black flex-shrink-0">Check in</button>
+                    </div>`;
+            } else {
+                dashCard.classList.add('hidden');
+                dashCard.innerHTML = '';
+            }
+        }
+
+        const dashTarget = document.getElementById('dash-calorie-target');
+        if (dashTarget) dashTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()}`;
+
+        const nutritionTarget = document.getElementById('nutrition-calorie-target');
+        if (nutritionTarget) nutritionTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()} kcal`;
+
+        const nutritionCard = document.getElementById('nutrition-readiness-card');
+        if (nutritionCard) {
+            const record = readinessRecordForDate(state.viewDate);
+            if (record && record.status === 'completed') {
+                const recovery = !!record.recovery;
+                nutritionCard.className = `rounded-[2rem] p-5 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+                nutritionCard.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <i data-lucide="${recovery ? 'utensils' : 'salad'}" class="w-5 h-5 ${recovery ? 'text-amber-600' : 'text-emerald-600'} flex-shrink-0 mt-0.5"></i>
+                        <div>
+                            <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery nutrition' : 'Today’s nutrition plan'}</p>
+                            <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">${record.nutritionMessage}</p>
+                        </div>
+                    </div>`;
+            } else {
+                nutritionCard.classList.add('hidden');
+                nutritionCard.innerHTML = '';
+            }
+        }
+
+        const trainingCard = document.getElementById('training-recovery-card');
+        if (trainingCard) {
+            const workoutDate = selectedWorkoutDateKey();
+            const recovery = getRecoveryPlanForDate(workoutDate);
+            if (recovery) {
+                trainingCard.className = 'rounded-[2rem] p-5 border-2 border-amber-200 bg-amber-50';
+                trainingCard.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <i data-lucide="shield" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
+                        <div>
+                            <p class="font-black text-amber-900">Recovery training · ${Math.round(recovery.volumeMultiplier * 100)}% volume · ${Math.round(recovery.loadMultiplier * 100)}% load</p>
+                            <p class="text-xs text-amber-800 mt-1">AI-generated sessions use fewer exercises and working-weight suggestions are reduced. ${recovery.trainingMessage}</p>
+                        </div>
+                    </div>`;
+            } else {
+                trainingCard.classList.add('hidden');
+                trainingCard.innerHTML = '';
+            }
+        }
+        lucide.createIcons();
+    }
+
+    // ==========================================================================
     // DASHBOARD
     // ==========================================================================
 
@@ -4851,7 +5297,7 @@
         const dashFat = document.getElementById('dash-fat');
         if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
 
-        const calorieGoal = (state.goals && state.goals.calories) ? state.goals.calories : 2500;
+        const calorieGoal = getDailyCalorieTarget(state.viewDate);
         const progress = Math.min((totalCals / calorieGoal) * 534, 534);
         const progressEl = document.getElementById('calorie-progress');
         if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;
@@ -4901,6 +5347,9 @@
 
         // Render AI Coach recommendations
         renderAICoach();
+
+        // Readiness summary + any date-specific nutrition/training overrides
+        renderDailyReadinessCards();
 
         lucide.createIcons();
     }
@@ -5270,6 +5719,7 @@
     function startWorkout(mode) {
         const focus = document.getElementById('workout-focus').value;
         const isSpecific = focus === 'Specific Muscle';
+        const recoveryPlan = getRecoveryPlanForDate(selectedWorkoutDateKey());
 
         // Validate Specific Muscle selection before starting
         if (isSpecific && selectedMuscles.length === 0) {
@@ -5288,7 +5738,7 @@
         } else {
             title = focus;
         }
-        title = envLabel + ' · ' + title;
+        title = envLabel + ' · ' + title + (recoveryPlan ? ' · Recovery' : '');
 
         document.getElementById('workout-setup').classList.add('hidden');
         { const _cpc = document.getElementById('coach-plan-card'); if (_cpc) _cpc.classList.add('hidden'); }
@@ -5342,8 +5792,11 @@
             // Order by muscle demand: hardest muscle groups first, compound lifts
             // before isolation within each group, finishing one muscle before the next.
             const finalList = orderWorkoutExercises(dedupedList, env);
+            const plannedList = recoveryPlan
+                ? finalList.slice(0, Math.max(1, Math.ceil(finalList.length * recoveryPlan.volumeMultiplier)))
+                : finalList;
 
-            if (finalList.length === 0) {
+            if (plannedList.length === 0) {
                 const envLabel = env === 'home' ? 'Home' : 'Gym';
                 showToast(`No ${envLabel} exercises for ${muscleKeys.join(', ')}. Try the other environment or different muscles.`, 5000);
             } else {
@@ -5353,7 +5806,7 @@
                     showToast(`No ${envLabel} exercises for: ${missingMuscles.join(', ')}`, 4000);
                 }
                 let delay = 0;
-                finalList.forEach(ex => {
+                plannedList.forEach(ex => {
                     setTimeout(() => addExercise(ex), delay);
                     delay += 20;
                 });
@@ -5371,7 +5824,9 @@
                     delay += 20;
                     setTimeout(() => addExercise(core2), delay);
                 }
-                showToast('AI workout generated! 💪');
+                showToast(recoveryPlan
+                    ? `Recovery workout generated · ${Math.round(recoveryPlan.volumeMultiplier * 100)}% volume · ${Math.round(recoveryPlan.loadMultiplier * 100)}% load`
+                    : 'AI workout generated! 💪');
                 // ALL focuses step through one exercise at a time. `delay` accounts
                 // for every card queued above (including cardio/core), so we wait
                 // until they all exist before entering the wizard.
@@ -5420,13 +5875,16 @@
                 const seen = new Set();
                 const deduped = queued.filter(e => { if (seen.has(e)) return false; seen.add(e); return true; });
                 const ordered = orderWorkoutExercises(deduped, env);
+                const planned = recoveryPlan
+                    ? ordered.slice(0, Math.max(1, Math.ceil(ordered.length * recoveryPlan.volumeMultiplier)))
+                    : ordered;
 
-                if (ordered.length === 0) {
+                if (planned.length === 0) {
                     const envLabel = env === 'home' ? 'Home' : 'Gym';
                     showToast(`No ${envLabel} exercises for ${selectedMuscles.join(', ')}.`, 5000);
                     addExercise(); // fall back to a blank card so the wizard still works
                 } else {
-                    ordered.forEach(ex => addExercise(ex));
+                    planned.forEach(ex => addExercise(ex));
                 }
             } else {
                 // Non-specific focus, manual: begin with one blank exercise to fill in.
@@ -5649,7 +6107,7 @@
             title: titleEl ? titleEl.innerText : 'Workout',
             context: currentWorkoutContext,
             elapsedSeconds: currentWorkoutElapsed(),
-            workoutDate: window.selectedWorkoutDate || (document.getElementById('workout-date-picker') || {}).value || new Date().toISOString().split('T')[0],
+            workoutDate: window.selectedWorkoutDate || (document.getElementById('workout-date-picker') || {}).value || localDateKey(),
             exercises: exercises,
             wizard: wizardActive,
             wizardIndex: wizardIndex,
@@ -5693,6 +6151,11 @@
         currentWorkoutContext = saved.context || null;
         workoutAccumulatedSeconds = saved.elapsedSeconds || 0;
         workoutStartTime = Date.now();
+        if (saved.workoutDate) {
+            window.selectedWorkoutDate = readinessDateKey(saved.workoutDate);
+            const workoutPicker = document.getElementById('workout-date-picker');
+            if (workoutPicker) workoutPicker.value = window.selectedWorkoutDate;
+        }
 
         // Make sure we're on the Training tab and showing the active workout view
         if (typeof switchTab === 'function') switchTab('training');
@@ -5881,9 +6344,18 @@
         const addSetBtn = document.createElement('button');
         addSetBtn.type = "button";
         addSetBtn.className = "w-full py-3 sm:py-3.5 bg-indigo-600 text-white rounded-xl font-bold text-sm sm:text-base hover:bg-indigo-700 active:bg-indigo-800";
-        addSetBtn.textContent = "+ Add Set";
+        const cardRecoveryPlan = getRecoveryPlanForDate(selectedWorkoutDateKey());
+        addSetBtn.textContent = cardRecoveryPlan ? "+ Add Set · Recovery: aim for 2" : "+ Add Set";
         // Read the exercise name live so suggestions/labels reflect any rename or swap
-        addSetBtn.addEventListener('click', () => { addSetToExercise(id, getPersonalRecord(nameInput.value.trim()), nameInput.value.trim()); persistActiveWorkout(); });
+        addSetBtn.addEventListener('click', () => {
+            const activeRecovery = getRecoveryPlanForDate(selectedWorkoutDateKey());
+            const currentSets = setsContainer.querySelectorAll('.set-row').length;
+            if (activeRecovery && currentSets >= 2) {
+                showToast('Recovery target is 2 working sets — add more only if you still feel fresh');
+            }
+            addSetToExercise(id, getPersonalRecord(nameInput.value.trim()), nameInput.value.trim());
+            persistActiveWorkout();
+        });
 
         const deleteExBtn = document.createElement('button');
         deleteExBtn.type = "button";
@@ -6037,8 +6509,13 @@
         } else {
             html += `<span class="text-slate-400">No PB yet — first time logging this</span>`;
         }
-        if (suggestion && suggestion.suggested) {
-            html += ` <span class="text-slate-300">·</span> <span class="${suggestion.bumped ? 'text-emerald-600' : 'text-indigo-600'}">Try ${suggestion.suggested}kg${isAssist ? ' assist' : ''}</span>`;
+        if (suggestion && suggestion.suggested !== null && suggestion.suggested !== undefined) {
+            const suggestionClass = suggestion.recovery ? 'text-amber-600' : (suggestion.bumped ? 'text-emerald-600' : 'text-indigo-600');
+            const suggestionLabel = suggestion.recovery ? 'Recovery target' : 'Try';
+            html += ` <span class="text-slate-300">·</span> <span class="${suggestionClass}">${suggestionLabel} ${suggestion.suggested}kg${isAssist ? ' assist' : ''}</span>`;
+        }
+        if (getRecoveryPlanForDate(selectedWorkoutDateKey())) {
+            html += ' <span class="text-slate-300">·</span> <span class="text-amber-600">Aim for 2 working sets</span>';
         }
         line.innerHTML = html;
     }
@@ -6097,8 +6574,12 @@
         if (suggestion) {
             weightInput.placeholder = (isAssist ? 'Assist ' : '') + suggestion.suggested + 'kg';
             const hint = document.createElement('span');
-            hint.className = "absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.bumped ? 'text-emerald-600' : 'text-slate-400');
-            if (suggestion.bumped) {
+            hint.className = "absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.recovery ? 'text-amber-600' : (suggestion.bumped ? 'text-emerald-600' : 'text-slate-400'));
+            if (suggestion.recovery) {
+                hint.textContent = isAssist
+                    ? `recovery: ${suggestion.last}→${suggestion.suggested}kg assist`
+                    : `recovery: ${suggestion.last}→${suggestion.suggested}kg`;
+            } else if (suggestion.bumped) {
                 hint.textContent = isAssist
                     ? `↓ ${suggestion.last}→${suggestion.suggested}kg assist`
                     : `↑ ${suggestion.last}→${suggestion.suggested}kg`;
@@ -6251,7 +6732,21 @@
             }
             bumped = true;
         }
-        return { suggested, last: lastWeight, bumped };
+
+        const recoveryPlan = getRecoveryPlanForDate(selectedWorkoutDateKey());
+        if (recoveryPlan) {
+            // A larger assistance number makes assisted movements easier; all other
+            // loads are reduced directly. Round to the app's 0.5kg input step.
+            suggested = recoveryAdjustedWeight(lastWeight, exerciseName, recoveryPlan);
+            return {
+                suggested,
+                last: lastWeight,
+                bumped: false,
+                recovery: true,
+                loadMultiplier: recoveryPlan.loadMultiplier
+            };
+        }
+        return { suggested, last: lastWeight, bumped, recovery: false };
     }
 
     // Holds the pending workout while the user is rating exercises.
@@ -6299,7 +6794,7 @@
             return;
         }
 
-        const workoutDate = window.selectedWorkoutDate || document.getElementById('workout-date-picker').value || new Date().toISOString().split('T')[0];
+        const workoutDate = window.selectedWorkoutDate || document.getElementById('workout-date-picker').value || localDateKey();
         const focus = document.getElementById('active-workout-title').innerText;
 
         // Determine category so log filters work correctly
@@ -6560,18 +7055,18 @@
     // ==========================================================================
 
     function changeWorkoutDate(days) {
-        const current = document.getElementById('workout-date-picker').value || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectWorkoutDate(date.toISOString().split('T')[0]);
+        const current = document.getElementById('workout-date-picker').value || localDateKey();
+        const date = dateFromLocalKey(current) || new Date();
+        selectWorkoutDate(localDateKey(addLocalDays(date, days)));
     }
 
     function selectWorkoutDate(dateStr) {
         document.getElementById('workout-date-picker').value = dateStr;
         window.selectedWorkoutDate = dateStr;
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('workout-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
+        renderDailyReadinessCards();
         lucide.createIcons();
     }
 
@@ -6663,6 +7158,7 @@
         }).join('');
 
         renderNutritionHistory();
+        renderDailyReadinessCards();
         lucide.createIcons();
     }
 
@@ -6741,10 +7237,9 @@
     }
 
     function changeNutritionDate(days) {
-        const current = state.viewDate || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectNutritionDate(date.toISOString().split('T')[0]);
+        const current = state.viewDate || localDateKey();
+        const date = dateFromLocalKey(current) || new Date();
+        selectNutritionDate(localDateKey(addLocalDays(date, days)));
     }
 
     function selectNutritionDate(dateStr) {
@@ -6752,7 +7247,7 @@
         saveState();
         const picker = document.getElementById('nutrition-date-picker');
         if (picker) picker.value = dateStr;
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('nutrition-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
         renderDiary();
@@ -9355,7 +9850,7 @@
     // ==========================================================================
 
     function openSaveNutritionModal() {
-        const today = state.viewDate || new Date().toISOString().split('T')[0];
+        const today = state.viewDate || localDateKey();
         document.getElementById('save-nutrition-date').value = today;
 
         const meals = state.dailyMeals.filter(m => m.date === today);
@@ -9684,7 +10179,7 @@
             if (currentDate !== lastCheckDate) {
                 saveDailyNutrition();
                 lastCheckDate = currentDate;
-                const today = new Date().toISOString().split('T')[0];
+                const today = localDateKey();
                 state.viewDate = today;
                 saveState();
                 renderDiary();
@@ -9865,16 +10360,15 @@
     // ==========================================================================
 
     function changeMetricsDate(days) {
-        const current = document.getElementById('metrics-date-picker').value || new Date().toISOString().split('T')[0];
-        const date = new Date(current);
-        date.setDate(date.getDate() + days);
-        selectMetricsDate(date.toISOString().split('T')[0]);
+        const current = document.getElementById('metrics-date-picker').value || localDateKey();
+        const date = dateFromLocalKey(current) || new Date();
+        selectMetricsDate(localDateKey(addLocalDays(date, days)));
     }
 
     function selectMetricsDate(dateStr) {
         state.metricsDate = dateStr;
         document.getElementById('metrics-date-picker').value = dateStr;
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         const warning = document.getElementById('metrics-date-warning');
         if (warning) warning.classList.toggle('hidden', dateStr === today);
 
@@ -10010,12 +10504,12 @@
     }
 
     function getCurrentMetricEntry() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         return (state.metricsHistory || []).find(m => m.date === date) || null;
     }
 
     function formatMetricsDateLabel(dateStr) {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         if (dateStr === today) return 'Today';
         const d = new Date(dateStr);
         return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
@@ -10055,7 +10549,7 @@
     }
 
     function openRecordWeightModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-weight-date').textContent = formatMetricsDateLabel(date);
 
         // Apply the user's preferred unit
@@ -10150,7 +10644,7 @@
     }
 
     function saveRecordedWeight() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         const unit = state.weightUnit || 'kg';
 
         let kg;
@@ -10182,7 +10676,7 @@
     // -- MEASUREMENTS MODAL --
 
     function openRecordMeasurementsModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-meas-date').textContent = formatMetricsDateLabel(date);
 
         const existing = getCurrentMetricEntry() || {};
@@ -10203,7 +10697,7 @@
     }
 
     function saveRecordedMeasurements() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
 
         const fields = {};
         const parts = ['chest', 'shoulders', 'arms', 'waist', 'legs', 'glutes', 'neck'];
@@ -10235,7 +10729,7 @@
     // -- PHOTOS MODAL --
 
     async function openProgressPhotosModal() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
         document.getElementById('record-photos-date').textContent = formatMetricsDateLabel(date);
         const loadToken = ++photoModalLoadToken;
 
@@ -10281,7 +10775,7 @@
     }
 
     async function saveRecordedPhotos() {
-        const date = state.metricsDate || new Date().toISOString().split('T')[0];
+        const date = state.metricsDate || localDateKey();
 
         const photos = {};
         let anyChange = false;
@@ -10944,6 +11438,70 @@
     }
 
     // ==========================================================================
+    // BODYWEIGHT-RELATIVE STRENGTH
+    // ==========================================================================
+
+    /**
+     * Resolve the bodyweight to use for a lift date.
+     * 1) exact same-day entry; 2) latest entry on/before that day; 3) if the
+     * user has no earlier entry, their latest available weight overall.
+     */
+    function getBodyweightForDate(dateKey) {
+        const target = readinessDateKey(dateKey);
+        const entries = (state.metricsHistory || [])
+            .map((entry, index) => ({
+                date: readinessDateKey(entry && entry.date),
+                weight: parseFloat(entry && entry.weight),
+                index
+            }))
+            .filter(entry => entry.date && !isNaN(entry.weight) && entry.weight > 0);
+        if (entries.length === 0) return null;
+
+        const exact = entries.find(entry => entry.date === target);
+        if (exact) return { weight: exact.weight, date: exact.date, source: 'same-day' };
+
+        const prior = entries
+            .filter(entry => entry.date <= target)
+            .sort((a, b) => b.date.localeCompare(a.date) || a.index - b.index)[0];
+        if (prior) return { weight: prior.weight, date: prior.date, source: 'latest-prior' };
+
+        const latest = entries.sort((a, b) => b.date.localeCompare(a.date) || a.index - b.index)[0];
+        return latest ? { weight: latest.weight, date: latest.date, source: 'latest-available' } : null;
+    }
+
+    function formatStrengthDate(dateKey) {
+        const key = readinessDateKey(dateKey);
+        const date = dateFromLocalKey(key);
+        return date ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : key;
+    }
+
+    function bodyweightReferenceText(reference, liftDate) {
+        if (!reference) return 'No bodyweight available';
+        if (reference.source === 'same-day') return `${reference.weight}kg BW on the lift date (${formatStrengthDate(liftDate)})`;
+        const type = reference.source === 'latest-prior' ? 'latest prior weight' : 'latest available weight';
+        return `${reference.weight}kg BW · ${type} from ${formatStrengthDate(reference.date)}`;
+    }
+
+    function relativeLoadMoved(weight, bodyweight, assisted) {
+        const kg = parseFloat(weight);
+        const bw = bodyweight && parseFloat(bodyweight.weight);
+        if (isNaN(kg) || isNaN(bw) || bw <= 0) return null;
+        return assisted ? Math.max(0, bw - kg) : kg;
+    }
+
+    function relativeLiftCalculationText(record, exerciseName) {
+        if (!record || !record.bodyweight) return 'No bodyweight available';
+        const assisted = isAssistanceExercise(exerciseName);
+        const moved = record.relativeLoadKg !== undefined
+            ? record.relativeLoadKg
+            : relativeLoadMoved(record.weight, record.bodyweight, assisted);
+        if (assisted) {
+            return `${moved}kg moved (${record.bodyweight.weight}kg BW − ${record.weight}kg assistance)`;
+        }
+        return `${record.weight}kg lifted ÷ ${record.bodyweight.weight}kg BW`;
+    }
+
+    // ==========================================================================
     // COMPARE PROGRESS — body metrics, weight, and weight lifted
     // ==========================================================================
     // Same idea as the photo comparison: pick two dates, see the before/after,
@@ -10965,6 +11523,8 @@
 
     function openCompareProgress() {
         compareMode = 'body';
+        const relativeToggle = document.getElementById('cmp-relative-toggle');
+        if (relativeToggle) relativeToggle.checked = false;
         setCompareMode('body');
         document.getElementById('compare-progress-modal').style.display = 'flex';
         lucide.createIcons();
@@ -10992,7 +11552,9 @@
         // Trend mode swaps the two date pickers for a single "what to track" picker
         const dateCtrls = document.getElementById('cmp-date-controls');
         const trendCtrls = document.getElementById('cmp-trend-controls');
+        const relativeCtrl = document.getElementById('cmp-relative-control');
         const canvas = document.getElementById('cmp-trend-canvas');
+        if (relativeCtrl) relativeCtrl.classList.toggle('hidden', mode !== 'lifts');
         if (mode === 'trend') {
             if (dateCtrls) dateCtrls.classList.add('hidden');
             if (trendCtrls) trendCtrls.classList.remove('hidden');
@@ -11063,7 +11625,7 @@
             const d = new Date();
             d.setHours(0, 0, 0, 0);
             d.setDate(d.getDate() - days);
-            cutoff = d.toISOString().split('T')[0];
+            cutoff = localDateKey(d);
         }
 
         if (pick.startsWith('body:')) {
@@ -11210,12 +11772,12 @@
         if (compareMode === 'body') {
             return (state.metricsHistory || [])
                 .filter(m => BODY_FIELDS.some(f => m[f.key] !== undefined && m[f.key] !== null && m[f.key] !== ''))
-                .map(m => m.date)
+                .map(m => readinessDateKey(m.date))
                 .filter(Boolean);
         }
         // lifts: dates where a workout was logged
         const set = new Set();
-        (state.workoutHistory || []).forEach(w => { if (w.date) set.add(w.date); });
+        (state.workoutHistory || []).forEach(w => { if (w.date) set.add(readinessDateKey(w.date)); });
         return Array.from(set);
     }
 
@@ -11226,7 +11788,7 @@
         if (!s1 || !s2) return;
 
         const opts = dates.map(d => {
-            const label = new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+            const label = formatStrengthDate(d);
             return `<option value="${d}">${label}</option>`;
         }).join('');
         s1.innerHTML = '<option value="">Select date...</option>' + opts;
@@ -11239,30 +11801,53 @@
         }
     }
 
-    /** Best set for an exercise on or before a date. For assisted exercises the
-     *  best is the LOWEST weight (least assistance); otherwise the heaviest. */
-    function bestLiftUpTo(exerciseName, date) {
+    /** Best set for an exercise on or before a date, including the date and
+     * bodyweight reference behind it. In relative mode, "best" is the best
+     * load/bodyweight ratio rather than simply the largest plate weight. */
+    function bestLiftRecordUpTo(exerciseName, date, useRelative) {
         const assisted = isAssistanceExercise(exerciseName);
-        let best = assisted ? null : 0;
+        let best = null;
         (state.workoutHistory || []).forEach(w => {
-            if (!w.date || w.date > date) return;
+            const workoutDate = readinessDateKey(w.date);
+            if (!workoutDate || workoutDate > readinessDateKey(date)) return;
             (w.exercises || []).forEach(ex => {
                 if (ex.name !== exerciseName) return;
                 (ex.sets || []).forEach(s => {
                     const kg = parseFloat(s.weight);
                     if (isNaN(kg)) return;
-                    if (assisted) { if (best === null || kg < best) best = kg; }
-                    else { if (kg > best) best = kg; }
+                    const bodyweight = useRelative ? getBodyweightForDate(workoutDate) : null;
+                    if (useRelative && !bodyweight) return;
+                    const relativeLoadKg = useRelative ? relativeLoadMoved(kg, bodyweight, assisted) : null;
+                    const value = useRelative ? relativeLoadKg / bodyweight.weight : kg;
+                    const isBetter = !best
+                        || (useRelative ? value > best.value : (assisted ? value < best.value : value > best.value))
+                        || (value === best.value && workoutDate > best.date);
+                    if (isBetter) {
+                        best = {
+                            weight: kg,
+                            value,
+                            date: workoutDate,
+                            bodyweight,
+                            relativeLoadKg
+                        };
+                    }
                 });
             });
         });
-        return best === null ? 0 : best;
+        return best;
+    }
+
+    function bestLiftUpTo(exerciseName, date) {
+        const best = bestLiftRecordUpTo(exerciseName, date, false);
+        return best ? best.weight : 0;
     }
 
     function loadProgressComparison() {
         const box = document.getElementById('cmp-results');
         const saveBtn = document.getElementById('cmp-save-btn');
         const canvas = document.getElementById('cmp-trend-canvas');
+        const relativeToggle = document.getElementById('cmp-relative-toggle');
+        const useRelative = compareMode === 'lifts' && !!(relativeToggle && relativeToggle.checked);
         if (!box) return;
 
         // ---- TREND MODE: chart one thing over time ----
@@ -11329,8 +11914,8 @@
         const to   = d1 < d2 ? d2 : d1;
 
         if (compareMode === 'body') {
-            const m1 = (state.metricsHistory || []).find(m => m.date === from) || {};
-            const m2 = (state.metricsHistory || []).find(m => m.date === to) || {};
+            const m1 = (state.metricsHistory || []).find(m => readinessDateKey(m.date) === from) || {};
+            const m2 = (state.metricsHistory || []).find(m => readinessDateKey(m.date) === to) || {};
             BODY_FIELDS.forEach(f => {
                 const a = parseFloat(m1[f.key]);
                 const b = parseFloat(m2[f.key]);
@@ -11346,27 +11931,43 @@
             // Lifts: compare best weight for every exercise trained in the period
             const names = new Set();
             (state.workoutHistory || []).forEach(w => {
-                if (!w.date || w.date > to) return;
+                if (!w.date || readinessDateKey(w.date) > to) return;
                 (w.exercises || []).forEach(ex => { if (ex.name) names.add(ex.name); });
             });
             names.forEach(name => {
-                const a = bestLiftUpTo(name, from);
-                const b = bestLiftUpTo(name, to);
-                if (b <= 0) return;                 // never lifted by the end date
+                const aRecord = bestLiftRecordUpTo(name, from, useRelative);
+                const bRecord = bestLiftRecordUpTo(name, to, useRelative);
+                if (!aRecord || !bRecord) return;   // need both sides for a real comparison
+                const precision = useRelative ? 100 : 10;
+                const a = Math.round(aRecord.value * precision) / precision;
+                const b = Math.round(bRecord.value * precision) / precision;
                 if (a === b) return;                // no change — skip for a cleaner card
+                const delta = Math.round((b - a) * precision) / precision;
                 progressRows.push({
-                    label: name, unit: 'kg',
+                    label: name, unit: useRelative ? '× BW' : 'kg',
                     before: a, after: b,
-                    delta: Math.round((b - a) * 10) / 10,
-                    good: isAssistanceExercise(name) ? (b < a) : (b > a)
+                    delta,
+                    good: useRelative ? (b > a) : (isAssistanceExercise(name) ? (b < a) : (b > a)),
+                    beforeLiftKg: useRelative ? Math.round(aRecord.relativeLoadKg * 10) / 10 : aRecord.weight,
+                    afterLiftKg: useRelative ? Math.round(bRecord.relativeLoadKg * 10) / 10 : bRecord.weight,
+                    beforeBodyweight: aRecord.bodyweight ? aRecord.bodyweight.weight : null,
+                    afterBodyweight: bRecord.bodyweight ? bRecord.bodyweight.weight : null,
+                    beforeLiftDate: aRecord.date,
+                    afterLiftDate: bRecord.date,
+                    beforeDetail: useRelative ? `${relativeLiftCalculationText(aRecord, name)} on ${formatStrengthDate(aRecord.date)} · ${bodyweightReferenceText(aRecord.bodyweight, aRecord.date)}` : '',
+                    afterDetail: useRelative ? `${relativeLiftCalculationText(bRecord, name)} on ${formatStrengthDate(bRecord.date)} · ${bodyweightReferenceText(bRecord.bodyweight, bRecord.date)}` : ''
                 });
             });
-            // Biggest gains first
-            progressRows.sort((x, y) => y.delta - x.delta);
+            // Put improvements first (including reduced assistance), then the
+            // largest absolute changes so both directions remain meaningful.
+            progressRows.sort((x, y) => Number(y.good) - Number(x.good) || Math.abs(y.delta) - Math.abs(x.delta));
         }
 
         if (progressRows.length === 0) {
-            box.innerHTML = `<p class="text-sm text-slate-400 text-center py-8">No ${compareMode === 'body' ? 'measurements' : 'lifts'} recorded on both dates.</p>`;
+            const emptyText = useRelative
+                ? 'No comparable lifts with bodyweight data. Add a weight in Metrics, then try again.'
+                : `No ${compareMode === 'body' ? 'measurements' : 'lifts'} recorded on both dates.`;
+            box.innerHTML = `<p class="text-sm text-slate-400 text-center py-8">${emptyText}</p>`;
             if (saveBtn) saveBtn.classList.add('hidden');
             return;
         }
@@ -11380,19 +11981,23 @@
 
         window.cmpFrom = from;
         window.cmpTo = to;
+        window.cmpRelative = useRelative;
 
         box.innerHTML = progressRows.map(r => {
             const sign = r.delta > 0 ? '+' : '';
             const colour = r.good ? 'text-emerald-600' : 'text-rose-500';
             return `
-                <div class="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
-                    <span class="font-bold text-sm flex-1 min-w-0 truncate">${escapeHtml(r.label)}</span>
-                    <div class="flex items-center gap-2 flex-shrink-0 text-sm">
-                        <span class="text-slate-400">${r.before}${r.unit}</span>
-                        <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-300"></i>
-                        <span class="font-black">${r.after}${r.unit}</span>
-                        <span class="${colour} font-black w-16 text-right">${sign}${r.delta}${r.unit}</span>
+                <div class="bg-slate-50 p-3 rounded-xl">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="font-bold text-sm flex-1 min-w-0 truncate">${escapeHtml(r.label)}</span>
+                        <div class="flex items-center gap-2 flex-shrink-0 text-sm">
+                            <span class="text-slate-400">${r.before}${r.unit}</span>
+                            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-300"></i>
+                            <span class="font-black">${r.after}${r.unit}</span>
+                            <span class="${colour} font-black w-20 text-right">${sign}${r.delta}${r.unit}</span>
+                        </div>
                     </div>
+                    ${r.beforeDetail ? `<div class="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500"><p><b>From:</b> ${escapeHtml(r.beforeDetail)}</p><p class="mt-1"><b>To:</b> ${escapeHtml(r.afterDetail)}</p></div>` : ''}
                 </div>`;
         }).join('');
 
@@ -11412,6 +12017,7 @@
         const from = window.cmpFrom, to = window.cmpTo;
         const fromLbl = new Date(from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         const toLbl = new Date(to).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        const relativeLiftComparison = compareMode === 'lifts' && !!window.cmpRelative;
 
         // Cap rows so the card stays readable
         const rows = progressRows.slice(0, 10);
@@ -11420,7 +12026,7 @@
         const pad = 60;
         const titleH = 130;
         const headlineH = progressHeadline ? 190 : 0;
-        const rowH = 78;
+        const rowH = relativeLiftComparison ? 116 : 78;
         const footerH = 110;
         const H = pad * 2 + titleH + headlineH + rows.length * rowH + footerH;
 
@@ -11444,7 +12050,7 @@
         ctx.fillStyle = '#fb923c';
         ctx.font = '900 54px system-ui, -apple-system, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(compareMode === 'body' ? 'MY PROGRESS' : 'MY LIFTS', W / 2, pad + 40);
+        ctx.fillText(compareMode === 'body' ? 'MY PROGRESS' : (relativeLiftComparison ? 'MY LIFTS / KG BODYWEIGHT' : 'MY LIFTS'), W / 2, pad + 40);
         ctx.fillStyle = '#f97316';
         ctx.font = 'bold 28px system-ui, -apple-system, sans-serif';
         ctx.fillText(`${fromLbl}  →  ${toLbl}`, W / 2, pad + 92);
@@ -11477,6 +12083,7 @@
 
         rows.forEach((r, i) => {
             const cy = y + i * rowH + rowH / 2;
+            const mainY = relativeLiftComparison ? cy - 18 : cy;
 
             // subtle row striping so it's readable
             if (i % 2 === 0) {
@@ -11488,23 +12095,33 @@
             ctx.fillStyle = '#fdba74';
             ctx.font = 'bold 34px system-ui, -apple-system, sans-serif';
             const name = r.label.length > 22 ? r.label.slice(0, 21) + '…' : r.label;
-            ctx.fillText(name, colL, cy);
+            ctx.fillText(name, colL, mainY);
 
             ctx.textAlign = 'right';
             ctx.fillStyle = '#9a6a3a';
             ctx.font = '32px system-ui, -apple-system, sans-serif';
-            ctx.fillText(`${r.before}${r.unit}`, colBefore, cy);
+            ctx.fillText(`${r.before}${r.unit}`, colBefore, mainY);
 
             ctx.textAlign = 'left';
             ctx.fillStyle = '#fb923c';
             ctx.font = '900 36px system-ui, -apple-system, sans-serif';
-            ctx.fillText(`${r.after}${r.unit}`, colAfter, cy);
+            ctx.fillText(`${r.after}${r.unit}`, colAfter, mainY);
 
             ctx.textAlign = 'right';
             const sign = r.delta > 0 ? '+' : '';
             ctx.fillStyle = r.good ? '#22c55e' : '#ef4444';
             ctx.font = '900 34px system-ui, -apple-system, sans-serif';
-            ctx.fillText(`${sign}${r.delta}${r.unit}`, colDelta, cy);
+            ctx.fillText(`${sign}${r.delta}${r.unit}`, colDelta, mainY);
+
+            if (relativeLiftComparison) {
+                ctx.font = '22px system-ui, -apple-system, sans-serif';
+                ctx.fillStyle = '#9a6a3a';
+                ctx.textAlign = 'right';
+                ctx.fillText(`${r.beforeLiftKg}kg ÷ ${r.beforeBodyweight}kg BW`, colBefore, cy + 24);
+                ctx.textAlign = 'left';
+                ctx.fillStyle = '#fdba74';
+                ctx.fillText(`${r.afterLiftKg}kg ÷ ${r.afterBodyweight}kg BW`, colAfter, cy + 24);
+            }
         });
 
         // --- WATERMARK: bottom-right ---
@@ -11627,7 +12244,7 @@
     }
 
     function comparisonFileName() {
-        const d = new Date().toISOString().split('T')[0];
+        const d = localDateKey();
         return `VFIT-progress-${d}.jpg`;
     }
 
@@ -11695,6 +12312,12 @@
         document.getElementById('exercise-progress-stats').classList.add('hidden');
         document.getElementById('exercise-progress-chart-container').classList.add('hidden');
         document.getElementById('exercise-progress-empty').classList.remove('hidden');
+        const emptyTitle = document.getElementById('exercise-progress-empty-title');
+        const emptyText = document.getElementById('exercise-progress-empty-text');
+        if (emptyTitle) emptyTitle.textContent = 'Select an exercise to view progress';
+        if (emptyText) emptyText.textContent = 'Track your strength gains over time';
+        const relativeContext = document.getElementById('exercise-relative-context');
+        if (relativeContext) relativeContext.classList.add('hidden');
 
         lucide.createIcons();
     }
@@ -11706,73 +12329,135 @@
 
     function renderExerciseProgressChart() {
         const exerciseName = document.getElementById('exercise-select').value;
+        const relativeToggle = document.getElementById('exercise-relative-toggle');
+        const useRelative = !!(relativeToggle && relativeToggle.checked);
+        const empty = document.getElementById('exercise-progress-empty');
+        const emptyTitle = document.getElementById('exercise-progress-empty-title');
+        const emptyText = document.getElementById('exercise-progress-empty-text');
+        const stats = document.getElementById('exercise-progress-stats');
+        const chartContainer = document.getElementById('exercise-progress-chart-container');
+        const relativeContext = document.getElementById('exercise-relative-context');
+
+        const showEmpty = (title, detail) => {
+            if (emptyTitle) emptyTitle.textContent = title;
+            if (emptyText) emptyText.textContent = detail;
+            if (empty) empty.classList.remove('hidden');
+            if (stats) stats.classList.add('hidden');
+            if (chartContainer) chartContainer.classList.add('hidden');
+            if (relativeContext) relativeContext.classList.add('hidden');
+        };
+
         if (!exerciseName) {
-            document.getElementById('exercise-progress-stats').classList.add('hidden');
-            document.getElementById('exercise-progress-chart-container').classList.add('hidden');
-            document.getElementById('exercise-progress-empty').classList.remove('hidden');
+            showEmpty('Select an exercise to view progress', 'Track your strength gains over time');
             return;
         }
 
-        // Gather data points for this exercise (date + max weight that day)
-        const dataPoints = [];
-        (state.workoutHistory || []).forEach(w => {
-            (w.exercises || []).forEach(ex => {
-                if (ex.name === exerciseName) {
-                    let maxWeight = 0;
-                    let totalReps = 0;
-                    (ex.sets || []).forEach(s => {
-                        const weight = parseFloat(s.weight) || 0;
-                        const reps = parseInt(s.reps) || 0;
-                        if (weight > maxWeight) maxWeight = weight;
-                        totalReps += reps;
-                    });
-                    if (maxWeight > 0) {
-                        dataPoints.push({ date: w.date, weight: maxWeight, reps: totalReps });
-                    }
-                }
+        const assisted = isAssistanceExercise(exerciseName);
+        const pointsByDate = new Map();
+        let workoutCount = 0;
+
+        // Aggregate multiple sessions on the same day into that day's best set.
+        (state.workoutHistory || []).forEach(workout => {
+            const workoutDate = readinessDateKey(workout.date);
+            let sessionBest = null;
+            let sessionReps = 0;
+            (workout.exercises || []).forEach(exercise => {
+                if (exercise.name !== exerciseName) return;
+                (exercise.sets || []).forEach(set => {
+                    const kg = parseFloat(set.weight);
+                    if (isNaN(kg) || kg < 0) return;
+                    sessionReps += parseInt(set.reps, 10) || 0;
+                    if (sessionBest === null || (assisted ? kg < sessionBest : kg > sessionBest)) sessionBest = kg;
+                });
             });
+            if (sessionBest === null || (!assisted && sessionBest <= 0)) return;
+            workoutCount += 1;
+            const existing = pointsByDate.get(workoutDate);
+            if (!existing || (assisted ? sessionBest < existing.weight : sessionBest > existing.weight)) {
+                pointsByDate.set(workoutDate, { date: workoutDate, weight: sessionBest, reps: sessionReps });
+            } else {
+                existing.reps += sessionReps;
+            }
         });
 
+        const allPoints = Array.from(pointsByDate.values())
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .map(point => {
+                const bodyweight = getBodyweightForDate(point.date);
+                const relativeLoadKg = bodyweight ? relativeLoadMoved(point.weight, bodyweight, assisted) : null;
+                return Object.assign({}, point, {
+                    bodyweight,
+                    relativeLoadKg,
+                    ratio: bodyweight ? relativeLoadKg / bodyweight.weight : null
+                });
+            });
+        const dataPoints = useRelative ? allPoints.filter(point => point.ratio !== null) : allPoints;
+
         if (dataPoints.length === 0) {
-            document.getElementById('exercise-progress-empty').classList.remove('hidden');
-            document.getElementById('exercise-progress-stats').classList.add('hidden');
-            document.getElementById('exercise-progress-chart-container').classList.add('hidden');
+            showEmpty(
+                useRelative ? 'Add a bodyweight to compare strength' : 'No weighted sets found',
+                useRelative
+                    ? 'Record your weight in Metrics. If the lift day has no weight, VFIT will use your most recent available entry.'
+                    : 'Log at least one weighted set for this exercise.'
+            );
             return;
         }
 
-        dataPoints.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        if (empty) empty.classList.add('hidden');
+        if (stats) stats.classList.remove('hidden');
+        if (chartContainer) chartContainer.classList.remove('hidden');
 
-        // Show stats and chart sections
-        document.getElementById('exercise-progress-empty').classList.add('hidden');
-        document.getElementById('exercise-progress-stats').classList.remove('hidden');
-        document.getElementById('exercise-progress-chart-container').classList.remove('hidden');
+        const valueOf = point => useRelative ? point.ratio : point.weight;
+        const startingPoint = dataPoints[0];
+        const bestPoint = dataPoints.reduce((best, point) => {
+            if (!best) return point;
+            return assisted && !useRelative
+                ? (valueOf(point) < valueOf(best) ? point : best)
+                : (valueOf(point) > valueOf(best) ? point : best);
+        }, null);
+        const startingValue = valueOf(startingPoint);
+        const bestValue = valueOf(bestPoint);
+        const totalChange = bestValue - startingValue;
+        const digits = useRelative ? 2 : 1;
+        const unit = useRelative ? '× BW' : 'kg';
 
-        const currentMax = Math.max(...dataPoints.map(d => d.weight));
-        const startingWeight = dataPoints[0].weight;
-        const totalGain = currentMax - startingWeight;
-        const workoutCount = dataPoints.length;
-
-        document.getElementById('exercise-current-max').textContent = currentMax + 'kg';
-        document.getElementById('exercise-starting-weight').textContent = startingWeight + 'kg';
-        document.getElementById('exercise-total-gain').textContent = (totalGain >= 0 ? '+' : '') + totalGain.toFixed(1) + 'kg';
+        document.getElementById('exercise-current-max-label').textContent = useRelative ? 'Best Ratio' : (assisted ? 'Best Assist' : 'Best Weight');
+        document.getElementById('exercise-starting-weight-label').textContent = useRelative ? 'Starting Ratio' : 'Starting Weight';
+        document.getElementById('exercise-total-gain-label').textContent = useRelative ? 'Ratio Change' : 'Total Change';
+        document.getElementById('exercise-current-max').textContent = bestValue.toFixed(digits) + unit;
+        document.getElementById('exercise-starting-weight').textContent = startingValue.toFixed(digits) + unit;
+        document.getElementById('exercise-total-gain').textContent = (totalChange >= 0 ? '+' : '') + totalChange.toFixed(digits) + unit;
         document.getElementById('exercise-workout-count').textContent = workoutCount;
 
-        // Render chart
+        if (relativeContext) {
+            if (useRelative) {
+                relativeContext.classList.remove('hidden');
+                relativeContext.innerHTML = `
+                    <p><b>Starting (${formatStrengthDate(startingPoint.date)}):</b> ${escapeHtml(relativeLiftCalculationText(startingPoint, exerciseName))} = ${startingPoint.ratio.toFixed(2)}× BW</p>
+                    <p class="text-slate-400 mt-1">${escapeHtml(bodyweightReferenceText(startingPoint.bodyweight, startingPoint.date))}</p>
+                    <p class="mt-2"><b>Best (${formatStrengthDate(bestPoint.date)}):</b> ${escapeHtml(relativeLiftCalculationText(bestPoint, exerciseName))} = ${bestPoint.ratio.toFixed(2)}× BW</p>
+                    <p class="text-slate-400 mt-1">${escapeHtml(bodyweightReferenceText(bestPoint.bodyweight, bestPoint.date))}</p>`;
+            } else {
+                relativeContext.classList.add('hidden');
+                relativeContext.innerHTML = '';
+            }
+        }
+
         const canvas = document.getElementById('exercise-progress-chart');
         if (exerciseProgressChart) exerciseProgressChart.destroy();
 
         exerciseProgressChart = new Chart(canvas, {
             type: 'line',
             data: {
-                labels: dataPoints.map(d => new Date(d.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })),
+                labels: dataPoints.map(point => formatStrengthDate(point.date).replace(/ \d{4}$/, '')),
                 datasets: [{
-                    label: 'Max Weight (kg)',
-                    data: dataPoints.map(d => d.weight),
+                    label: useRelative ? 'Weight / Bodyweight' : (assisted ? 'Best Assistance (kg)' : 'Best Weight (kg)'),
+                    data: dataPoints.map(point => Number(valueOf(point).toFixed(useRelative ? 3 : 1))),
                     borderColor: '#4f46e5',
                     backgroundColor: 'rgba(79, 70, 229, 0.1)',
                     borderWidth: 3,
                     fill: true,
-                    tension: 0.4,
+                    tension: 0.35,
                     pointRadius: 5,
                     pointHoverRadius: 8,
                     pointBackgroundColor: '#4f46e5'
@@ -11781,21 +12466,46 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: context => {
+                                const point = dataPoints[context.dataIndex];
+                                return useRelative
+                                    ? `${point.ratio.toFixed(2)}× BW (${relativeLiftCalculationText(point, exerciseName)})`
+                                    : `${point.weight}kg`;
+                            },
+                            afterLabel: context => {
+                                if (!useRelative) return '';
+                                const point = dataPoints[context.dataIndex];
+                                return bodyweightReferenceText(point.bodyweight, point.date);
+                            }
+                        }
+                    }
+                },
                 scales: {
-                    y: { beginAtZero: false, grid: { color: '#e2e8f0' } },
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: '#e2e8f0' },
+                        title: { display: true, text: useRelative ? 'Load per kg bodyweight (× BW)' : 'Weight (kg)' }
+                    },
                     x: { grid: { display: false } }
                 }
             }
         });
 
-        // Insights
         const insights = document.getElementById('exercise-insights');
         const insightsList = [];
-        if (totalGain > 0) {
-            insightsList.push(`<p class="flex items-start gap-2"><i data-lucide="trending-up" class="w-3 h-3 text-emerald-500 mt-1"></i><span>You've gained <b>${totalGain.toFixed(1)}kg</b> on this exercise since you started!</span></p>`);
-        } else if (totalGain < 0) {
-            insightsList.push(`<p class="flex items-start gap-2"><i data-lucide="trending-down" class="w-3 h-3 text-amber-500 mt-1"></i><span>Current max is <b>${Math.abs(totalGain).toFixed(1)}kg</b> below your starting weight. Consider a deload week.</span></p>`);
+        const improved = assisted && !useRelative ? totalChange < 0 : totalChange > 0;
+        if (totalChange !== 0) {
+            const amount = Math.abs(totalChange).toFixed(digits);
+            const direction = improved ? 'improved' : 'moved back';
+            const metric = useRelative ? 'weight-moved-to-bodyweight ratio' : (assisted ? 'assistance requirement' : 'best lift');
+            insightsList.push(`<p class="flex items-start gap-2"><i data-lucide="${improved ? 'trending-up' : 'trending-down'}" class="w-3 h-3 ${improved ? 'text-emerald-500' : 'text-amber-500'} mt-1"></i><span>Your ${metric} has <b>${direction} by ${amount}${unit}</b> from the starting point to your best result.</span></p>`);
+        }
+        if (useRelative) {
+            insightsList.push('<p class="flex items-start gap-2"><i data-lucide="scale" class="w-3 h-3 text-indigo-500 mt-1"></i><span>Every point is calculated with the bodyweight available for that lift date, so scale changes are accounted for.</span></p>');
         }
         if (workoutCount >= 5) {
             insightsList.push(`<p class="flex items-start gap-2"><i data-lucide="award" class="w-3 h-3 text-purple-500 mt-1"></i><span>Solid consistency — <b>${workoutCount} sessions</b> logged with this lift.</span></p>`);
@@ -11866,6 +12576,7 @@
 
         let labels = [];
         let values = [];
+        let targets = [];
         // FIXED: declare weeks at the top of function so it's in scope everywhere
         let weeks = [];
 
@@ -11876,6 +12587,7 @@
 
             labels = last14.map(h => new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }));
             values = last14.map(h => Math.round(h.calories || 0));
+            targets = last14.map(h => parseInt(h.targetCalories, 10) || getDailyCalorieTarget(h.date));
 
             // Daily stats
             if (values.length > 0) {
@@ -11899,7 +12611,7 @@
                 const day = d.getDay() || 7;
                 const monday = new Date(d);
                 monday.setDate(d.getDate() - day + 1);
-                const weekKey = monday.toISOString().split('T')[0];
+                const weekKey = localDateKey(monday);
                 if (!byWeek[weekKey]) byWeek[weekKey] = { total: 0, days: 0, start: monday };
                 byWeek[weekKey].total += h.calories || 0;
                 byWeek[weekKey].days += 1;
@@ -11911,6 +12623,14 @@
 
             labels = weeks.map(([k, v]) => 'Week of ' + v.start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }));
             values = weeks.map(([k, v]) => Math.round(v.total));
+            targets = weeks.map(([weekKey]) => {
+                const monday = dateFromLocalKey(weekKey);
+                let weeklyTarget = 0;
+                for (let offset = 0; offset < 7; offset += 1) {
+                    weeklyTarget += getDailyCalorieTarget(localDateKey(addLocalDays(monday, offset)));
+                }
+                return weeklyTarget;
+            });
 
             // Weekly stats
             if (values.length > 0) {
@@ -11929,8 +12649,9 @@
             }
         }
 
-        // Calculate maintenance target for chart (multiply by 7 for weekly)
-        const targetLine = calorieChartView === 'daily' ? target : target * 7;
+        // Historic recovery days retain their tailored target line. Fall back to
+        // the normal goal when older nutrition entries pre-date readiness data.
+        if (targets.length !== values.length) targets = values.map(() => calorieChartView === 'daily' ? target : target * 7);
 
         if (calorieChart) calorieChart.destroy();
 
@@ -11942,14 +12663,14 @@
                     {
                         label: 'Calories',
                         data: values,
-                        backgroundColor: values.map(v => v > targetLine ? 'rgba(244, 63, 94, 0.7)' : 'rgba(16, 185, 129, 0.7)'),
-                        borderColor: values.map(v => v > targetLine ? '#f43f5e' : '#10b981'),
+                        backgroundColor: values.map((v, i) => v > targets[i] ? 'rgba(244, 63, 94, 0.7)' : 'rgba(16, 185, 129, 0.7)'),
+                        borderColor: values.map((v, i) => v > targets[i] ? '#f43f5e' : '#10b981'),
                         borderWidth: 2,
                         borderRadius: 8
                     },
                     {
                         label: 'Target',
-                        data: values.map(() => targetLine),
+                        data: targets,
                         type: 'line',
                         borderColor: '#ef4444',
                         borderWidth: 2,
@@ -12057,7 +12778,7 @@
                 const day = d.getDay() || 7;
                 const monday = new Date(d);
                 monday.setDate(d.getDate() - day + 1);
-                const weekKey = monday.toISOString().split('T')[0];
+                const weekKey = localDateKey(monday);
                 if (!byWeek[weekKey]) byWeek[weekKey] = { total: 0, days: 0, start: monday };
                 byWeek[weekKey].total += h.protein || 0;
                 byWeek[weekKey].days += 1;
@@ -12381,7 +13102,7 @@
         if (!state.cardioLogs) state.cardioLogs = [];
         state.cardioLogs.unshift({
             id: Date.now(),
-            date: new Date().toISOString().split('T')[0],
+            date: localDateKey(),
             type: type,
             duration: duration,
             distance: distance,
@@ -12729,7 +13450,7 @@
 
         if (recent.length === 0) return null;
 
-        const target = state.goals.calories || 2500;
+        const target = Math.round(recent.reduce((sum, h) => sum + (parseInt(h.targetCalories, 10) || getDailyCalorieTarget(h.date)), 0) / recent.length);
         const avgCals = recent.reduce((sum, h) => sum + (h.calories || 0), 0) / recent.length;
         const diff = avgCals - target;
 
@@ -13598,7 +14319,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         // Set today as default for date pickers
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
 
         const workoutPicker = document.getElementById('workout-date-picker');
         if (workoutPicker) workoutPicker.value = today;
