@@ -1,0 +1,525 @@
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+        :root {
+            --brand-primary: #4f46e5;
+            --brand-secondary: #f43f5e;
+            --bg-main: #f8fafc;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            background-color: var(--bg-main);
+            color: #1e293b;
+            overflow-x: hidden;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+        }
+
+        .tab-content { display: none; animation: fadeIn 0.3s ease-out; }
+        .tab-content.active { display: block; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .progress-ring-circle {
+            transition: stroke-dashoffset 0.5s ease-in-out;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+
+        .photo-slot {
+            aspect-ratio: 3/4;
+            background: #f1f5f9;
+            border-radius: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            overflow: hidden;
+            border: 2px dashed #e2e8f0;
+            position: relative;
+            transition: all 0.2s;
+            min-height: 120px;
+        }
+
+        .photo-slot:hover { border-color: var(--brand-primary); transform: scale(1.02); }
+        .photo-slot:active { transform: scale(0.98); }
+        .photo-slot img { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+            z-index: 200;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+
+        .modal-overlay > div {
+            width: 100%;
+            max-width: 32rem;
+            margin: auto;
+        }
+
+        .store-dropdown { animation: dropdownPop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes dropdownPop {
+            from { opacity: 0; transform: scale(0.95) translateY(-10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #1e293b;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 1000;
+            opacity: 0;
+            transition: all 0.3s ease;
+            max-width: 90%;
+            text-align: center;
+            word-wrap: break-word;
+        }
+
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+        button {
+            transition: all 0.2s ease;
+            min-height: 44px;
+        }
+
+        button:active { transform: scale(0.97); }
+
+        input, select {
+            min-height: 48px;
+            font-size: 16px;
+        }
+
+        #sidebar {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .translate-x-0 { transform: translateX(0); }
+        .-translate-x-full { transform: translateX(-100%); }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .animate-spin { animation: spin 1s linear infinite; }
+
+        /* Auth screens */
+        #auth-screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        #app-screen { display: none; }
+
+        .input-group { position: relative; }
+        .input-group i {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            pointer-events: none;
+        }
+        .input-group input { padding-left: 3rem; }
+
+        @media (max-width: 640px) {
+            main { padding: 0.75rem !important; }
+            .space-y-6 > * + * { margin-top: 1rem !important; }
+            .glass-card { padding: 1rem !important; }
+
+            .text-5xl { font-size: 2.25rem !important; line-height: 1.2; }
+            .text-4xl { font-size: 1.875rem !important; line-height: 1.2; }
+            .text-3xl { font-size: 1.5rem !important; line-height: 1.3; }
+            .text-2xl { font-size: 1.25rem !important; }
+            .text-xl { font-size: 1.125rem !important; }
+
+            .modal-overlay > div {
+                border-radius: 1.5rem !important;
+                padding: 1.25rem !important;
+                margin-top: 1rem;
+                margin-bottom: 1rem;
+            }
+
+            button { min-height: 48px !important; }
+            input, select { min-height: 52px !important; font-size: 16px !important; }
+        }
+
+        .muscle-chip.selected { background-color: #4f46e5; color: white; border-color: #4f46e5; }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+        .flex-1 { flex: 1 1 0%; min-width: 0; }
+
+        header { padding: 1rem 1.25rem; }
+        @media (max-width: 640px) { header { padding: 0.875rem 1rem; } }
+
+        /* ============================================================
+           VFIT THEME — orange text · dark-grey background · black panels
+           A global override that remaps the app's Tailwind colour classes
+           to the new scheme while keeping all layout the same. Orange shades
+           are chosen for strong contrast against black/dark-grey so text
+           stays easily readable.
+           ============================================================ */
+
+        :root {
+            --vfit-bg: #1f2937;        /* dark grey — page background */
+            --vfit-panel: #000000;     /* black — cards / middle panels */
+            --vfit-panel-2: #0a0a0a;   /* near-black — nested panels */
+            --vfit-orange: #f97316;    /* primary orange — main text */
+            --vfit-orange-bright: #fb923c; /* brighter orange — headings/emphasis */
+            --vfit-orange-soft: #fdba74;   /* soft orange — secondary/muted text */
+            --vfit-border: #2d2d2d;    /* subtle border on black panels */
+        }
+
+        /* Page background */
+        body { background-color: var(--vfit-bg) !important; color: var(--vfit-orange) !important; }
+        main, section, #app-screen, #dashboard, .tab-content { background-color: transparent !important; }
+
+        /* Panels / cards → black. Covers white, glass, and the dark slate cards. */
+        .glass-card,
+        .bg-white,
+        .bg-slate-900, .bg-slate-800, .bg-slate-50, .bg-slate-100, .bg-gray-50, .bg-gray-100,
+        .bg-indigo-50, .bg-emerald-50, .bg-amber-50, .bg-rose-50, .bg-red-50, .bg-purple-50, .bg-blue-50 {
+            background-color: var(--vfit-panel) !important;
+            backdrop-filter: none !important;
+            border-color: var(--vfit-border) !important;
+        }
+
+        /* Nested / inset elements get a very-slightly-lifted black so they're distinguishable */
+        .bg-slate-50, .bg-slate-100, .bg-gray-50, .bg-gray-100 {
+            background-color: var(--vfit-panel-2) !important;
+        }
+
+        /* Text colours → orange family. Map every slate/gray text shade. */
+        .text-slate-900, .text-slate-800, .text-slate-700, .text-slate-600,
+        .text-gray-900, .text-gray-800, .text-gray-700, .text-gray-600,
+        .text-black {
+            color: var(--vfit-orange) !important;
+        }
+        .text-slate-500, .text-slate-400, .text-slate-300,
+        .text-gray-500, .text-gray-400, .text-gray-300 {
+            color: var(--vfit-orange-soft) !important;  /* muted but still readable */
+        }
+        /* White text sits on coloured buttons that become black — make it orange */
+        .text-white { color: var(--vfit-orange-bright) !important; }
+
+        /* Headings a touch brighter for hierarchy */
+        h1, h2, h3, h4, h5, h6 { color: var(--vfit-orange-bright) !important; }
+
+        /* Coloured accent text → keep orange so nothing turns invisible on black */
+        .text-indigo-600, .text-indigo-500, .text-indigo-700,
+        .text-emerald-600, .text-emerald-500, .text-emerald-700,
+        .text-rose-500, .text-rose-600, .text-red-500, .text-red-600,
+        .text-amber-600, .text-amber-700, .text-amber-500,
+        .text-purple-600, .text-purple-700, .text-blue-600 {
+            color: var(--vfit-orange-bright) !important;
+        }
+
+        /* Buttons that were coloured fills → black with an orange border + orange text */
+        .bg-indigo-600, .bg-indigo-700, .bg-indigo-500,
+        .bg-emerald-600, .bg-emerald-700, .bg-emerald-500,
+        .bg-purple-600, .bg-purple-700,
+        .bg-slate-900, .bg-slate-800, .bg-rose-500, .bg-rose-600,
+        .bg-red-600, .bg-blue-600 {
+            background-color: var(--vfit-panel) !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+            color: var(--vfit-orange-bright) !important;
+        }
+        .bg-indigo-600 *, .bg-emerald-600 *, .bg-purple-600 *,
+        .bg-slate-900 *, .bg-rose-500 *, .bg-red-600 * {
+            color: var(--vfit-orange-bright) !important;
+        }
+
+        /* Hover states for those buttons */
+        .hover\:bg-indigo-700:hover, .hover\:bg-indigo-600:hover,
+        .hover\:bg-emerald-700:hover, .hover\:bg-purple-700:hover,
+        .hover\:bg-slate-800:hover, .hover\:bg-slate-700:hover,
+        .hover\:bg-red-100:hover, .hover\:bg-slate-200:hover, .hover\:bg-slate-100:hover {
+            background-color: #1a1a1a !important;
+        }
+
+        /* Inputs / selects → black field, orange text, visible orange-ish border */
+        input, select, textarea {
+            background-color: var(--vfit-panel-2) !important;
+            color: var(--vfit-orange) !important;
+            border-color: var(--vfit-border) !important;
+        }
+        input::placeholder, textarea::placeholder { color: #9a6a3a !important; }
+        select option { background-color: #000 !important; color: var(--vfit-orange) !important; }
+
+        /* Borders that were light → dark so they don't glow white on black */
+        .border-slate-200, .border-slate-100, .border-slate-300,
+        .border-gray-200, .border-gray-100, .border-transparent,
+        .border-indigo-100, .border-emerald-100, .border-amber-100 {
+            border-color: var(--vfit-border) !important;
+        }
+        /* Keep the focus accents orange */
+        .focus\:border-indigo-500:focus, .focus\:border-emerald-500:focus,
+        .focus\:border-amber-400:focus {
+            border-color: var(--vfit-orange) !important;
+        }
+
+        /* Dividers */
+        .bg-slate-200, .divide-slate-200 > *, .bg-gray-200 { background-color: var(--vfit-border) !important; }
+
+        /* Toast stays high-contrast: black bg, orange text */
+        .toast { background: #000 !important; color: var(--vfit-orange-bright) !important; border: 1px solid var(--vfit-orange); }
+
+        /* Modal panels are caught by .bg-white above; darken the overlay a touch more */
+        .modal-overlay { background: rgba(0,0,0,0.75) !important; }
+
+        /* Progress bars / coloured fills inside volume tracker etc. — keep them orange
+           so they're visible, with varying brightness handled inline where needed */
+        .bg-amber-400, .bg-emerald-500, .bg-red-400, .bg-indigo-600 { /* covered above; bars use inline width */ }
+
+        /* Auth screen gradient → dark grey to black, with orange text */
+        #auth-screen { background: linear-gradient(135deg, #1f2937 0%, #000000 100%) !important; }
+
+        /* Muscle chip selected state in the new theme */
+        .muscle-chip.selected { background-color: #000 !important; color: var(--vfit-orange-bright) !important; border-color: var(--vfit-orange) !important; }
+
+        /* SVG icons (Lucide) inherit currentColor — ensure they read as orange */
+        svg { color: inherit; }
+
+        /* Accent colour for checkboxes/range */
+        input[type="checkbox"], input[type="range"] { accent-color: var(--vfit-orange) !important; }
+
+        /* Gradient cards/buttons → solid black so they match the theme and keep text readable.
+           Tailwind builds gradients from --tw-gradient-stops; clearing the image + stops
+           and forcing a black background flattens them to plain black panels. */
+        [class*="bg-gradient-"] {
+            background-image: none !important;
+            background-color: var(--vfit-panel) !important;
+            border: 1.5px solid var(--vfit-border) !important;
+        }
+        [class*="from-"], [class*="via-"], [class*="to-"] {
+            --tw-gradient-from: transparent !important;
+            --tw-gradient-via: transparent !important;
+            --tw-gradient-to: transparent !important;
+            --tw-gradient-stops: transparent !important;
+        }
+
+        /* ============================================================
+           WORKOUT SECTION — grey panel · black fields · orange text
+           Also sizes the exercise card so it always fits fully on screen
+           (no cut-off) with the wizard nav always reachable.
+           ============================================================ */
+
+        /* The workout panel itself is grey so it stands apart from the black fields */
+        #workout-active {
+            background-color: #2b2f36 !important;   /* grey workout section */
+            border: 1.5px solid var(--vfit-orange) !important;
+            color: var(--vfit-orange) !important;
+            padding: 1rem !important;               /* tighter so more fits on screen */
+        }
+        #workout-active h3,
+        #workout-active #workout-timer,
+        #workout-active label,
+        #workout-active span,
+        #workout-active p {
+            color: var(--vfit-orange) !important;
+        }
+
+        /* Exercise card sits on the grey panel — keep it grey, orange-outlined */
+        #exercise-list > div {
+            background-color: #2b2f36 !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+            color: var(--vfit-orange) !important;
+        }
+
+        /* Sets container: BLACK background behind the numbers */
+        #exercise-list [id^="sets-"] {
+            background-color: #000000 !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+        }
+
+        /* Each set row: black, orange outline */
+        #exercise-list .set-row {
+            background-color: #000000 !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+        }
+
+        /* All input fields in the workout (exercise name, reps, weight, RIR):
+           black background, orange text, orange outline. */
+        #workout-active input,
+        #workout-active select,
+        #exercise-list input,
+        #exercise-list .set-reps,
+        #exercise-list .set-weight,
+        #exercise-list .set-rir {
+            background-color: #000000 !important;
+            color: var(--vfit-orange) !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+            -webkit-text-fill-color: var(--vfit-orange) !important; /* iOS override */
+        }
+        #workout-active input::placeholder,
+        #exercise-list input::placeholder {
+            color: #a86b32 !important;   /* dimmer orange so placeholders read as hints */
+            opacity: 1;
+        }
+        #workout-active input:focus,
+        #exercise-list input:focus {
+            border-color: var(--vfit-orange-bright) !important;
+            outline: none !important;
+        }
+
+        /* Column headers above the sets (REPS / WEIGHT / RIR) → orange */
+        #exercise-list [id^="weight-header-"],
+        #exercise-list [id^="sets-"] span {
+            color: var(--vfit-orange-bright) !important;
+        }
+
+        /* Buttons inside the workout: black with orange border + orange text */
+        #workout-active button,
+        #wizard-nav button {
+            background-color: #000000 !important;
+            color: var(--vfit-orange-bright) !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+        }
+        #wizard-nav button:disabled { opacity: 0.35 !important; }
+        #wizard-progress { color: var(--vfit-orange-bright) !important; }
+
+        /* The live PB line + PB badge stay readable on black */
+        #exercise-list [id^="pb-line-"] span { color: var(--vfit-orange-bright) !important; }
+        #exercise-list .pb-badge {
+            background-color: #000000 !important;
+            color: var(--vfit-orange-bright) !important;
+            border: 1px solid var(--vfit-orange) !important;
+        }
+
+        /* Exercise dropdown (search list) — black with orange text */
+        #exercise-list [id^="dropdown-"] {
+            background-color: #000000 !important;
+            border: 1.5px solid var(--vfit-orange) !important;
+        }
+        #exercise-list [id^="dropdown-"] * { color: var(--vfit-orange) !important; }
+
+        /* ---- FIT THE EXERCISE FULLY ON SCREEN ----
+           Make the exercise list a scrollable region sized to the viewport, so a
+           long exercise card can be seen in full and the Back/Next bar is always
+           visible underneath rather than pushed off the bottom. */
+        #exercise-list {
+            max-height: calc(100vh - 320px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;  /* smooth momentum scroll on iOS */
+            padding-right: 2px;                  /* stop the scrollbar clipping borders */
+        }
+        /* Slimmer padding inside the card so more fits without scrolling at all */
+        #exercise-list > div { padding: 0.85rem !important; }
+        #exercise-list [id^="sets-"] { padding: 0.6rem !important; min-height: 0 !important; }
+        #exercise-list .set-row { padding: 0.4rem !important; margin-bottom: 0.4rem !important; }
+        /* Slightly smaller number inputs so a full set row fits comfortably */
+        #exercise-list .set-reps,
+        #exercise-list .set-weight,
+        #exercise-list .set-rir {
+            padding: 0.55rem !important;
+            font-size: 1rem !important;
+        }
+        /* Keep the wizard nav pinned in view at the bottom of the panel */
+        #wizard-nav { position: sticky; bottom: 0; background-color: #2b2f36; padding-top: 0.5rem; z-index: 5; }
+
+        /* On short screens, give the list a bit more room */
+        @media (max-height: 700px) {
+            #exercise-list { max-height: calc(100vh - 280px); }
+        }
+
+        /* Remove the browser's number spinners — they clip the orange border and
+           waste horizontal space in the reps/weight/RIR fields. */
+        #exercise-list input[type="number"]::-webkit-outer-spin-button,
+        #exercise-list input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        #exercise-list input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+        /* ---- MAXIMUM-SPECIFICITY OVERRIDES ----
+           Belt and braces: these use html body + id so nothing can outrank them,
+           regardless of what Tailwind's runtime CDN injects afterwards. */
+        html body #workout-active { background-color: #2b2f36 !important; }
+        html body #exercise-list > div { background-color: #2b2f36 !important; border: 1.5px solid #f97316 !important; }
+        html body #exercise-list div[id^="sets-"] { background-color: #000 !important; border: 1.5px solid #f97316 !important; }
+        html body #exercise-list .set-row { background-color: #000 !important; border: 1.5px solid #f97316 !important; }
+        html body #exercise-list input,
+        html body #workout-active input {
+            background-color: #000 !important;
+            color: #f97316 !important;
+            -webkit-text-fill-color: #f97316 !important;
+            border: 1.5px solid #f97316 !important;
+        }
+        html body #workout-active h3,
+        html body #workout-active p,
+        html body #workout-active span,
+        html body #exercise-list span,
+        html body #wizard-nav button,
+        html body #wizard-progress { color: #fb923c !important; }
+        html body #workout-active button,
+        html body #wizard-nav button {
+            background-color: #000 !important;
+            border: 1.5px solid #f97316 !important;
+        }
+
+        /* Dedicated 1-D food-barcode camera surface. Keep Quagga's processing
+           canvas measurable (opacity 0 rather than display:none) so Android frames
+           retain their real dimensions while the full video stays visible. */
+        #barcode-reader {
+            position: relative;
+            isolation: isolate;
+        }
+        #barcode-reader video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            background: #000;
+        }
+        #barcode-reader canvas.drawingBuffer {
+            display: block !important;
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+        #barcode-reader::after {
+            content: "";
+            position: absolute;
+            z-index: 20;
+            left: 4%;
+            right: 4%;
+            top: 34%;
+            height: 30%;
+            border: 3px solid rgba(249, 115, 22, 0.96);
+            border-radius: 14px;
+            box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.10);
+            pointer-events: none;
+        }
+
