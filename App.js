@@ -2086,6 +2086,8 @@
     let shiftPlannerWeekOffset = 0;
     let shiftAdviceDateKey = null;
     let plannedShiftEditorDateKey = null;
+    let activeShiftPopupSection = null;
+    let activeShiftPopupDateKey = null;
 
     function shiftP() {
         if (!state.shiftProfile) state.shiftProfile = JSON.parse(JSON.stringify(DEFAULT_STATE.shiftProfile));
@@ -2638,20 +2640,9 @@
                 </p>
             </div>`;
 
-        if (!onShift) html += offDayMealHTML();
-        else if (shiftForDay.type === 'nights') html += nightShiftMealHTML(shiftForDay);
-        else if (shiftForDay.type === 'earlies') html += earlyShiftMealHTML(shiftForDay);
-        else if (shiftForDay.type === 'lates') html += lateShiftMealHTML(shiftForDay);
-        else html += dayShiftMealHTML(shiftForDay);
-
-        html += shiftTrainingHTML(onShift, isNight, shiftForDay);
-
-        if (sp.goal === 'fat_loss' && sp.useFasting) {
-            html += fastingGuidanceHTML(onShift, dayLabel);
-        }
-
-        html += shiftFoodIdeasHTML(isNight && onShift);
-        html += shiftScienceHTML();
+        // Keep the Shift landing page compact on a phone. Each detailed section
+        // now opens as its own popup page instead of expanding down the screen.
+        html += shiftSectionButtonsHTML(onShift, isNight, shiftForDay, dayLabel);
 
         html += `
             <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
@@ -2659,6 +2650,146 @@
                 <button onclick="reshowShiftDisclaimer()" class="text-[11px] font-bold text-amber-700 underline mt-2">View safety notice again</button>
             </div>`;
         return html;
+    }
+
+    function shiftSectionButtonHTML(section, icon, title, description) {
+        return `
+            <button type="button" onclick="openShiftSectionPopup('${section}')" class="w-full glass-card p-5 rounded-2xl flex items-center gap-4 text-left hover:shadow-lg transition-all active:scale-[0.99]">
+                <span class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-2xl flex-shrink-0" aria-hidden="true">${icon}</span>
+                <span class="flex-1 min-w-0">
+                    <span class="font-black text-sm block">${title}</span>
+                    <span class="text-xs text-slate-400 mt-1 block">${description}</span>
+                </span>
+                <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400 flex-shrink-0"></i>
+            </button>`;
+    }
+
+    function shiftSectionButtonsHTML(onShift, isNight, shiftForDay, dayLabel) {
+        const sp = shiftP();
+        const meta = shiftTypeMeta(shiftForDay.type);
+        const mealLabel = shiftForDay.type === 'off'
+            ? 'Rest-day meal timing'
+            : `${meta.short} shift meal timing`;
+        let buttons = '';
+        buttons += shiftSectionButtonHTML('meals', '🍽️', 'Meal Timing', mealLabel + ' for ' + dayLabel);
+        buttons += shiftSectionButtonHTML('training', '🏋️', 'Training Advice', `${sp.goal === 'fat_loss' ? 'Fat-loss' : 'muscle-gain'} guidance matched to this shift`);
+        if (sp.goal === 'fat_loss' && sp.useFasting) {
+            buttons += shiftSectionButtonHTML('fasting', '⏱️', 'Optional Fasting', onShift ? 'This workday is automatically protected from fasting' : 'View the optional rest-day guidance');
+        }
+        buttons += shiftSectionButtonHTML('food', '🥗', 'Food Ideas', isNight && onShift ? 'Protein-forward options prepared for a night shift' : 'Practical protein-forward meals and snacks');
+        buttons += shiftSectionButtonHTML('science', '🧠', 'Science Explained', 'Circadian rhythms, the SCN and timing cues');
+
+        return `
+            <div class="space-y-3">
+                <div class="px-1">
+                    <h3 class="text-lg font-black">Open a Shift Section</h3>
+                    <p class="text-xs text-slate-400 mt-1">Tap a button to open the full page. Use Save &amp; Close at the bottom when finished.</p>
+                </div>
+                ${buttons}
+            </div>`;
+    }
+
+    function getShiftSectionPopupContent(section, dateKey) {
+        const safeDateKey = dateFromLocalKey(dateKey) ? dateKey : localDateKey();
+        const adviceDate = dateFromLocalKey(safeDateKey);
+        const shiftForDay = getShiftForDate(safeDateKey);
+        const onShift = shiftForDay.type !== 'off';
+        const isNight = shiftForDay.type === 'nights';
+        const dayLabel = formatShiftPlannerDate(adviceDate, {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+        });
+
+        if (section === 'meals') {
+            const content = !onShift
+                ? offDayMealHTML()
+                : shiftForDay.type === 'nights'
+                    ? nightShiftMealHTML(shiftForDay)
+                    : shiftForDay.type === 'earlies'
+                        ? earlyShiftMealHTML(shiftForDay)
+                        : shiftForDay.type === 'lates'
+                            ? lateShiftMealHTML(shiftForDay)
+                            : dayShiftMealHTML(shiftForDay);
+            return { title: 'Meal Timing', dayLabel, content };
+        }
+        if (section === 'training') {
+            return {
+                title: 'Training Advice',
+                dayLabel,
+                content: shiftTrainingHTML(onShift, isNight, shiftForDay)
+            };
+        }
+        if (section === 'fasting') {
+            return {
+                title: 'Optional Fasting',
+                dayLabel,
+                content: fastingGuidanceHTML(onShift, dayLabel)
+            };
+        }
+        if (section === 'food') {
+            return {
+                title: 'Protein-Forward Food Ideas',
+                dayLabel,
+                content: shiftFoodIdeasHTML(isNight && onShift)
+            };
+        }
+        if (section === 'science') {
+            return { title: 'The Science', dayLabel, content: shiftScienceHTML() };
+        }
+        return null;
+    }
+
+    function openShiftSectionPopup(section) {
+        const dateKey = dateFromLocalKey(shiftAdviceDateKey) ? shiftAdviceDateKey : localDateKey();
+        const page = getShiftSectionPopupContent(section, dateKey);
+        const modal = document.getElementById('shift-section-modal');
+        const title = document.getElementById('shift-section-modal-title');
+        const date = document.getElementById('shift-section-modal-date');
+        const body = document.getElementById('shift-section-modal-body');
+        if (!page || !modal || !title || !date || !body) return;
+
+        // Fasting only appears when enabled, but keep this guard for old links or
+        // stale browser pages so a hidden option cannot be opened accidentally.
+        if (section === 'fasting') {
+            const sp = shiftP();
+            if (sp.goal !== 'fat_loss' || !sp.useFasting) {
+                showToast('Enable optional fasting in Default Pattern first');
+                return;
+            }
+        }
+
+        activeShiftPopupSection = section;
+        activeShiftPopupDateKey = dateKey;
+        title.textContent = page.title;
+        date.textContent = page.dayLabel;
+        body.innerHTML = page.content;
+        body.scrollTop = 0;
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        lucide.createIcons();
+    }
+
+    function closeShiftSectionPopup() {
+        const modal = document.getElementById('shift-section-modal');
+        if (modal) modal.style.display = 'none';
+        document.body.style.overflow = '';
+        activeShiftPopupSection = null;
+        activeShiftPopupDateKey = null;
+    }
+
+    function saveShiftSectionPopup() {
+        if (!activeShiftPopupSection) {
+            closeShiftSectionPopup();
+            return;
+        }
+        // All editable shift/date values save in their existing editors. This
+        // confirms the current guide and syncs the latest shift profile before close.
+        persistShiftProfile();
+        const page = getShiftSectionPopupContent(activeShiftPopupSection, activeShiftPopupDateKey);
+        closeShiftSectionPopup();
+        showToast(`${page ? page.title : 'Shift section'} saved`);
     }
 
     function mealRow(time, title, desc, tone) {
@@ -2858,8 +2989,8 @@
 
     function shiftScienceHTML() {
         return `
-            <details class="glass-card rounded-[2.5rem] p-6">
-                <summary class="text-lg font-black cursor-pointer">The science (why this works)</summary>
+            <div class="glass-card rounded-[2.5rem] p-6">
+                <h3 class="text-lg font-black">The science (why this works)</h3>
                 <div class="space-y-3 text-sm text-slate-600 mt-4">
                     <p><b>Your master clock — the SCN.</b> Deep in your brain (the hypothalamus) sits the suprachiasmatic nucleus, or SCN. It's your body's master clock, and it's set mainly by <b>light</b>. It tells your body when to be alert, when to release melatonin for sleep, and when your metabolism is primed for food.</p>
                     <p><b>Zeitgebers — "time-givers".</b> Besides light, your body takes timing cues from <b>food, activity and temperature</b>. These are called zeitgebers (German for "time-givers"). Your gut and muscles have their own "peripheral clocks" that respond to when you eat and train — not just to light.</p>
@@ -2867,7 +2998,7 @@
                     <p><b>What we do about it.</b> We use the zeitgebers you <i>can</i> control — food timing and training timing — to reduce that mismatch: concentrate eating when your body is more aligned, keep the deep-night hours light, and place training near your true strength peak (a few hours after waking, when core temperature is up).</p>
                     <p class="text-xs text-slate-400">This is a simplified summary of active research. The science is still developing and individual responses vary — another reason to work with your GP.</p>
                 </div>
-            </details>`;
+            </div>`;
     }
 
     // Only appears when the client actually has a coach.

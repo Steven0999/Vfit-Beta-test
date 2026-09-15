@@ -2513,6 +2513,27 @@
         </div>
     </div>
 
+    <!-- SHIFT DETAIL PAGE — opened from the Shift section buttons -->
+    <div id="shift-section-modal" class="modal-overlay" style="z-index:225;" role="dialog" aria-modal="true" aria-labelledby="shift-section-modal-title">
+        <div class="bg-white w-full max-w-2xl rounded-[40px] p-6 sm:p-8 max-h-[92vh] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-start gap-4 mb-4 flex-shrink-0">
+                <div class="min-w-0">
+                    <p id="shift-section-modal-date" class="text-[10px] font-black uppercase text-indigo-500 mb-1"></p>
+                    <h3 id="shift-section-modal-title" class="text-xl font-black">Shift Guide</h3>
+                </div>
+                <button type="button" onclick="closeShiftSectionPopup()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none flex-shrink-0" aria-label="Close shift page">×</button>
+            </div>
+
+            <div id="shift-section-modal-body" class="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1"></div>
+
+            <div class="pt-4 mt-4 border-t border-slate-100 flex-shrink-0">
+                <button id="shift-section-save-btn" type="button" onclick="saveShiftSectionPopup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">
+                    Save &amp; Close
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- SHIFT WORKER SETUP -->
     <div id="shift-setup-modal" class="modal-overlay" style="z-index:210;">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
