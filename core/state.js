@@ -2925,12 +2925,12 @@
         buttons += shiftSectionButtonHTML('meals', '🍽️', 'Meal Timing', `${dateLabel} · ${shiftLabel}`);
         buttons += shiftSectionButtonHTML('dietary', '🎯', 'Personalised Dietary Focus', profile.completed ? `${dietaryPatternLabel(profile.pattern)} priorities matched to this shift` : 'Set your dietary preferences and requirements');
         buttons += shiftSectionButtonHTML('planner', '📖', 'Personalised Meal Planner', `${recipeCount} compatible recipes for this day`);
-        buttons += shiftSectionButtonHTML('training', '🏋️', 'Training Plan', `${sp.goal === 'fat_loss' ? 'Fat-loss' : 'muscle-gain'} advice matched to ${shiftLabel}`);
+        buttons += shiftSectionButtonHTML('training', '🏋️', 'Training Advice', `${sp.goal === 'fat_loss' ? 'Fat-loss' : 'muscle-gain'} advice matched to ${shiftLabel}`);
         if (fastingEnabled) {
-            buttons += shiftSectionButtonHTML('fasting', '⏱️', 'Intermittent-Fasting Guidance', `Safe, practical timing for this ${shiftLabel}`);
+            buttons += shiftSectionButtonHTML('fasting', '⏱️', 'Optional Fasting', `Safe, practical timing for this ${shiftLabel}`);
         }
-        buttons += shiftSectionButtonHTML('food', '🥗', `${dietaryPatternLabel(profile.pattern)} Protein Ideas`, 'Shift-friendly foods, preparation and your saved meals');
-        buttons += shiftSectionButtonHTML('science', '🧠', 'The Science', 'Circadian rhythms, the SCN and timing cues');
+        buttons += shiftSectionButtonHTML('food', '🥗', 'Food Ideas', `${dietaryPatternLabel(profile.pattern)} shift-friendly foods, preparation and saved meals`);
+        buttons += shiftSectionButtonHTML('science', '🧠', 'Science Explained', 'Circadian rhythms, the SCN and timing cues');
 
         return `
             <div class="space-y-3" data-shift-section-buttons="${dateKey}">
@@ -2970,23 +2970,23 @@
         }
         if (section === 'training') {
             return {
-                title: `Training Plan — ${shiftP().goal === 'fat_loss' ? 'Fat Loss' : 'Muscle Gain'}`,
+                title: `Training Advice — ${shiftP().goal === 'fat_loss' ? 'Fat Loss' : 'Muscle Gain'}`,
                 dateLabel,
                 content: shiftTrainingHTML(onShift, isNight, isEarly)
             };
         }
         if (section === 'fasting') {
-            return { title: 'Intermittent-Fasting Shift Guidance', dateLabel, content: fastingGuidanceHTML(onShift, type) };
+            return { title: 'Optional Fasting', dateLabel, content: fastingGuidanceHTML(onShift, type) };
         }
         if (section === 'food') {
             return {
-                title: `${dietaryPatternLabel(profile.pattern)} Protein Ideas`,
+                title: 'Food Ideas',
                 dateLabel,
                 content: shiftFoodIdeasHTML(isNight && onShift, dateKey)
             };
         }
         if (section === 'science') {
-            return { title: 'The Science (Why This Works)', dateLabel, content: shiftScienceHTML() };
+            return { title: 'Science Explained', dateLabel, content: shiftScienceHTML() };
         }
         return null;
     }
