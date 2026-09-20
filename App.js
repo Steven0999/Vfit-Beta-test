@@ -8,6 +8,7 @@
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
+            if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
             currentUser = null;
             firebaseUserData = {};
             currentUserRole = 'member';
@@ -99,6 +100,7 @@
         clearInterval(window._notifPoll);
         window._notifPoll = setInterval(refreshNotifBadge, 60000);
         setTimeout(() => { try { maybeShowUpdateAlerts(); } catch (error) {} }, 900);
+        if (typeof setupDailyReadinessPrompt === 'function') setupDailyReadinessPrompt();
         scheduleCloudSnapshotSync(500);
         ensureAccessibleDom(document);
         refreshIcons();

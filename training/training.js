@@ -935,7 +935,9 @@
         const dashFat = document.getElementById('dash-fat');
         if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
 
-        const calorieGoal = (state.goals && state.goals.calories) ? state.goals.calories : 2500;
+        const calorieGoal = typeof getDailyCalorieTarget === 'function'
+            ? getDailyCalorieTarget(state.viewDate)
+            : ((state.goals && state.goals.calories) ? state.goals.calories : 2500);
         const progress = Math.min((totalCals / calorieGoal) * 534, 534);
         const progressEl = document.getElementById('calorie-progress');
         if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;
@@ -1498,7 +1500,14 @@
 
             // Order by muscle demand: hardest muscle groups first, compound lifts
             // before isolation within each group, finishing one muscle before the next.
-            const finalList = orderWorkoutExercises(dedupedList, env);
+            let finalList = orderWorkoutExercises(dedupedList, env);
+            const recovery = typeof getRecoveryPlanForDate === 'function'
+                ? getRecoveryPlanForDate(window.selectedWorkoutDate || state.viewDate || localDateKey()) : null;
+            if (recovery && finalList.length > 1) {
+                const limit = Math.max(1, Math.ceil(finalList.length * recovery.volumeMultiplier));
+                finalList = finalList.slice(0, limit);
+                showToast(`Recovery mode: reduced session to ${limit} exercise${limit === 1 ? '' : 's'}`, 3500);
+            }
 
             if (finalList.length === 0) {
                 const envLabel = env === 'home' ? 'Home' : 'Gym';
@@ -2428,13 +2437,18 @@
     function getSuggestedWeight(exerciseName) {
         const recommendation = smartProgressionForExercise(exerciseName, state);
         if (!recommendation) return null;
+        const workoutDate = window.selectedWorkoutDate || state.viewDate || localDateKey();
+        const recovery = typeof getRecoveryPlanForDate === 'function' ? getRecoveryPlanForDate(workoutDate) : null;
+        const adjusted = recovery && typeof recoveryAdjustedWeight === 'function'
+            ? recoveryAdjustedWeight(recommendation.suggested, exerciseName, recovery)
+            : recommendation.suggested;
         return {
-            suggested: recommendation.suggested,
+            suggested: adjusted,
             last: recommendation.current,
-            bumped: recommendation.action === 'progress',
-            changed: recommendation.suggested !== recommendation.current,
-            action: recommendation.action,
-            reason: recommendation.reason
+            bumped: adjusted > recommendation.current,
+            changed: adjusted !== recommendation.current,
+            action: recovery ? 'recovery' : recommendation.action,
+            reason: recovery ? `Recovery mode: ${Math.round(recovery.loadMultiplier * 100)}% load target. ${recommendation.reason}` : recommendation.reason
         };
     }
 

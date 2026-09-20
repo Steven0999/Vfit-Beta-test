@@ -1460,6 +1460,36 @@
         return best === null ? 0 : best;
     }
 
+    // Resolve the bodyweight used for a lift: prefer an entry on that date,
+    // otherwise use the most recent logged weight at or before it.
+    function getBodyweightForDate(dateKey) {
+        const rows = (state.metricsHistory || []).filter(m => parseFloat(m.weight) > 0 && m.date);
+        if (!rows.length) return null;
+        const exact = rows.find(m => m.date === dateKey);
+        const prior = rows.filter(m => m.date <= dateKey).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+        const fallback = prior || rows.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+        return fallback ? { weight: parseFloat(fallback.weight), date: fallback.date } : null;
+    }
+
+    function bestLiftRecordUpTo(exerciseName, date, useRelative) {
+        const assisted = isAssistanceExercise(exerciseName);
+        let best = null;
+        (state.workoutHistory || []).forEach(w => {
+            if (!w.date || w.date > date) return;
+            const bw = useRelative ? getBodyweightForDate(w.date) : null;
+            (w.exercises || []).forEach(ex => {
+                if (ex.name !== exerciseName) return;
+                (ex.sets || []).forEach(s => {
+                    const kg = parseFloat(s.weight);
+                    if (!Number.isFinite(kg)) return;
+                    const value = useRelative && bw && bw.weight > 0 ? kg / bw.weight : kg;
+                    if (!best || (assisted ? value < best.value : value > best.value)) best = { value, raw: kg, date: w.date, bodyweight: bw && bw.weight };
+                });
+            });
+        });
+        return best;
+    }
+
     function loadProgressComparison() {
         const box = document.getElementById('cmp-results');
         const saveBtn = document.getElementById('cmp-save-btn');
@@ -1544,6 +1574,7 @@
                 });
             });
         } else {
+            const useRelative = !!document.getElementById('cmp-relative-toggle')?.checked;
             // Lifts: compare best weight for every exercise trained in the period
             const names = new Set();
             (state.workoutHistory || []).forEach(w => {
@@ -1551,15 +1582,17 @@
                 (w.exercises || []).forEach(ex => { if (ex.name) names.add(ex.name); });
             });
             names.forEach(name => {
-                const a = bestLiftUpTo(name, from);
-                const b = bestLiftUpTo(name, to);
-                if (b <= 0) return;                 // never lifted by the end date
-                if (a === b) return;                // no change — skip for a cleaner card
+                const ar = useRelative ? bestLiftRecordUpTo(name, from, true) : null;
+                const br = useRelative ? bestLiftRecordUpTo(name, to, true) : null;
+                const a = useRelative ? (ar ? ar.value : 0) : bestLiftUpTo(name, from);
+                const b = useRelative ? (br ? br.value : 0) : bestLiftUpTo(name, to);
+                if (b <= 0 || a === b) return;
                 progressRows.push({
-                    label: name, unit: 'kg',
+                    label: name, unit: useRelative ? '×BW' : 'kg',
                     before: a, after: b,
                     delta: Math.round((b - a) * 10) / 10,
-                    good: isAssistanceExercise(name) ? (b < a) : (b > a)
+                    good: isAssistanceExercise(name) ? (b < a) : (b > a),
+                    detail: useRelative ? `Lift ${br.raw}kg ÷ ${br.bodyweight || '?'}kg BW` : ''
                 });
             });
             // Biggest gains first
@@ -1594,6 +1627,7 @@
                         <span class="font-black">${r.after}${r.unit}</span>
                         <span class="${colour} font-black w-16 text-right">${sign}${r.delta}${r.unit}</span>
                     </div>
+                    ${r.detail ? `<div class="text-[10px] text-slate-400 mt-1 text-right">${escapeHtml(r.detail)}</div>` : ''}
                 </div>`;
         }).join('');
 
@@ -1942,20 +1976,30 @@
         }
 
         dataPoints.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        const useRelative = !!document.getElementById('exercise-progress-relative-toggle')?.checked;
+        if (useRelative) {
+            dataPoints.forEach(d => {
+                const bw = getBodyweightForDate(d.date);
+                d.bodyweight = bw && bw.weight;
+                if (d.bodyweight > 0) d.displayWeight = d.weight / d.bodyweight;
+            });
+        }
+        const plotted = dataPoints.filter(d => !useRelative || d.displayWeight > 0);
 
         // Show stats and chart sections
         document.getElementById('exercise-progress-empty').classList.add('hidden');
         document.getElementById('exercise-progress-stats').classList.remove('hidden');
         document.getElementById('exercise-progress-chart-container').classList.remove('hidden');
 
-        const currentMax = Math.max(...dataPoints.map(d => d.weight));
-        const startingWeight = dataPoints[0].weight;
+        const currentMax = Math.max(...plotted.map(d => useRelative ? d.displayWeight : d.weight));
+        const startingWeight = useRelative ? plotted[0].displayWeight : plotted[0].weight;
         const totalGain = currentMax - startingWeight;
         const workoutCount = dataPoints.length;
 
-        document.getElementById('exercise-current-max').textContent = currentMax + 'kg';
-        document.getElementById('exercise-starting-weight').textContent = startingWeight + 'kg';
-        document.getElementById('exercise-total-gain').textContent = (totalGain >= 0 ? '+' : '') + totalGain.toFixed(1) + 'kg';
+        const unit = useRelative ? '×BW' : 'kg';
+        document.getElementById('exercise-current-max').textContent = currentMax.toFixed(2) + unit;
+        document.getElementById('exercise-starting-weight').textContent = startingWeight.toFixed(2) + unit;
+        document.getElementById('exercise-total-gain').textContent = (totalGain >= 0 ? '+' : '') + totalGain.toFixed(2) + unit;
         document.getElementById('exercise-workout-count').textContent = workoutCount;
 
         // Render chart
@@ -1966,10 +2010,10 @@
         exerciseProgressChart = new Chart(canvas, {
             type: 'line',
             data: {
-                labels: dataPoints.map(d => new Date(d.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })),
+                labels: plotted.map(d => new Date(d.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })),
                 datasets: [{
-                    label: 'Max Weight (kg)',
-                    data: dataPoints.map(d => d.weight),
+                    label: useRelative ? 'Max weight per kg bodyweight' : 'Max Weight (kg)',
+                    data: plotted.map(d => useRelative ? d.displayWeight : d.weight),
                     borderColor: '#4f46e5',
                     backgroundColor: 'rgba(79, 70, 229, 0.1)',
                     borderWidth: 3,

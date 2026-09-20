@@ -188,6 +188,7 @@
                         <div class="absolute text-center">
                             <div id="dash-calories" class="text-4xl font-black text-slate-900">0</div>
                             <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Kcal Eaten</div>
+                            <div id="dash-calorie-target" class="text-xs text-indigo-600 font-bold mt-1">Target 2500 kcal</div>
                         </div>
                     </div>
                     <div class="grid grid-cols-3 w-full gap-4 mt-8 border-t border-slate-100 pt-6">
@@ -196,6 +197,7 @@
                         <div class="text-center"><div id="dash-fat" class="font-bold">0g</div><div class="text-[9px] uppercase text-slate-400">Fats</div></div>
                     </div>
                 </div>
+                <div id="daily-readiness-card" class="hidden glass-card rounded-3xl p-5 border border-indigo-100"></div>
 
                 <!-- Hydration Tracker -->
                 <div id="hydration-tracker" class="glass-card rounded-[2.5rem] p-6">
@@ -565,6 +567,8 @@
                     </div>
                 </div>
 
+                <div id="training-recovery-card" class="hidden glass-card rounded-3xl p-5 border border-amber-100"></div>
+
                 <!-- Coach's assigned plan — only shown to clients who have a coach -->
                 <div id="coach-plan-card" class="hidden glass-card p-6 rounded-[2.5rem]">
                     <div class="flex items-center gap-2 mb-1">
@@ -693,8 +697,9 @@
                     <div class="bg-white rounded-[32px] p-8 border border-slate-100 shadow-xl">
                         <div class="flex justify-between items-start">
                             <div>
-                                <div id="total-kcal" class="text-5xl font-black text-slate-900 mb-1">0</div>
+                            <div id="total-kcal" class="text-5xl font-black text-slate-900 mb-1">0</div>
                                 <div class="text-[10px] text-slate-400 font-black uppercase tracking-widest">Calories Today</div>
+                                <div id="nutrition-calorie-target" class="text-xs text-indigo-600 font-bold mt-1">Target 2500 kcal</div>
                             </div>
                             <div class="text-right">
                                 <div class="text-xl font-black text-blue-600 flex items-center gap-1 justify-end">
@@ -704,6 +709,7 @@
                             </div>
                         </div>
                     </div>
+                    <div id="nutrition-readiness-card" class="hidden"></div>
 
                     <div id="meal-sections"></div>
 
@@ -2590,6 +2596,7 @@
                     <option value="">Choose an exercise...</option>
                 </select>
             </div>
+            <label class="flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl cursor-pointer mb-5"><input type="checkbox" id="exercise-progress-relative-toggle" onchange="renderExerciseProgressChart()" class="w-5 h-5 accent-indigo-600 mt-0.5"><span><span class="block text-sm font-bold text-indigo-900">Show weight lifted per kg of bodyweight</span><span class="block text-[10px] text-indigo-600 mt-1">Uses the lift date, or your most recent available weight.</span></span></label>
 
             <div id="exercise-progress-stats" class="hidden mb-6">
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -2916,6 +2923,45 @@
         </div>
     </div>
 
+    <!-- DAILY READINESS CHECK — first open around 10am -->
+    <div id="daily-readiness-modal" class="modal-overlay" style="z-index:260;" role="dialog" aria-modal="true" aria-labelledby="daily-readiness-title">
+        <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-start gap-4 mb-5"><div><p class="text-[10px] font-black uppercase text-indigo-500 mb-1">Around 10am check-in</p><h3 id="daily-readiness-title" class="text-xl font-black">How are you feeling today?</h3></div><button onclick="closeDailyReadinessCheck(true)" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none" aria-label="Close readiness check">×</button></div>
+            <p class="text-sm text-slate-500 mb-5">Your answers tailor calories and training for today.</p>
+            <div class="space-y-3">
+                <label class="block text-xs font-black uppercase text-slate-400">Energy<select id="daily-readiness-energy" onchange="previewDailyReadiness()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl font-bold"><option value="">Select</option><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3">3 — Okay</option><option value="4">4 — Good</option><option value="5">5 — Excellent</option></select></label>
+                <label class="block text-xs font-black uppercase text-slate-400">Mood<select id="daily-readiness-mood" onchange="previewDailyReadiness()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl font-bold"><option value="">Select</option><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3">3 — Neutral</option><option value="4">4 — Good</option><option value="5">5 — Great</option></select></label>
+                <label class="block text-xs font-black uppercase text-slate-400">How you feel<select id="daily-readiness-feeling" onchange="previewDailyReadiness()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl font-bold"><option value="">Select</option><option value="1">1 — Poor</option><option value="2">2 — Struggling</option><option value="3">3 — Fine</option><option value="4">4 — Good</option><option value="5">5 — Great</option></select></label>
+                <label class="block text-xs font-black uppercase text-slate-400">Hunger<select id="daily-readiness-hunger" onchange="previewDailyReadiness()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl font-bold"><option value="">Select</option><option value="1">1 — Very low</option><option value="2">2 — Low</option><option value="3">3 — Normal</option><option value="4">4 — High</option><option value="5">5 — Very high</option></select></label>
+                <label class="block text-xs font-black uppercase text-slate-400">Fatigue<select id="daily-readiness-fatigue" onchange="previewDailyReadiness()" class="w-full mt-1 p-3 bg-slate-50 rounded-xl font-bold"><option value="">Select</option><option value="1">1 — Fresh</option><option value="2">2 — Mild</option><option value="3">3 — Moderate</option><option value="4">4 — High</option><option value="5">5 — Extreme</option></select></label>
+                <textarea id="daily-readiness-note" rows="2" maxlength="300" placeholder="Anything else to note? (optional)" class="w-full p-3 bg-slate-50 rounded-xl text-sm"></textarea>
+            </div>
+            <div id="readiness-preview" class="mt-4"></div>
+            <div class="grid grid-cols-2 gap-3 mt-5"><button onclick="closeDailyReadinessCheck(true)" class="p-4 bg-slate-100 rounded-2xl font-bold">Cancel</button><button onclick="saveDailyReadiness()" class="p-4 bg-indigo-600 text-white rounded-2xl font-bold">Save check-in</button></div>
+        </div>
+    </div>
+
+    <!-- SHIFT DETAIL PAGE — opened from the Nutrition > Shift buttons -->
+    <div id="shift-section-modal" class="modal-overlay" style="z-index:225;" role="dialog" aria-modal="true" aria-labelledby="shift-section-modal-title">
+        <div class="bg-white w-full max-w-2xl rounded-[40px] p-6 sm:p-8 max-h-[92vh] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-start gap-4 mb-4 flex-shrink-0">
+                <div class="min-w-0">
+                    <p id="shift-section-modal-date" class="text-[10px] font-black uppercase text-orange-500 mb-1"></p>
+                    <h3 id="shift-section-modal-title" class="text-xl font-black">Shift Guide</h3>
+                </div>
+                <button type="button" onclick="closeShiftSectionPopup()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none flex-shrink-0" aria-label="Close shift page and return to Nutrition Shift">×</button>
+            </div>
+
+            <div id="shift-section-modal-body" class="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1"></div>
+
+            <div class="pt-4 mt-4 border-t border-slate-100 flex-shrink-0">
+                <button id="shift-section-save-btn" type="button" onclick="saveShiftSectionPopup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">
+                    Save &amp; Close
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- SHIFT WORKER SETUP -->
     <div id="shift-setup-modal" class="modal-overlay" style="z-index:210;">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
@@ -3149,6 +3195,7 @@
                     </select>
                 </div>
             </div>
+            <label class="flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl cursor-pointer mb-5"><input type="checkbox" id="cmp-relative-toggle" onchange="loadProgressComparison()" class="w-5 h-5 accent-indigo-600 mt-0.5"><span><span class="block text-sm font-bold text-indigo-900">Compare weight per kg of bodyweight</span><span class="block text-[10px] text-indigo-600 mt-1">Falls back to your most recent weight when that day has no entry.</span></span></label>
 
             <!-- Live trend preview -->
             <canvas id="cmp-trend-canvas" class="hidden w-full rounded-2xl mb-3" style="max-height:280px;"></canvas>

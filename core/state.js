@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.9';
+    const VFIT_APP_VERSION = '2.1.0-beta.10';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -629,7 +629,7 @@
         ]);
         const recordFields = new Set([
             'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs',
+            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ]);
         if (preferRemote) {
@@ -2712,6 +2712,8 @@
     function refreshDueAlertBadgeSoon() {
     }
 
+    let activeShiftPopupSection = null;
+    let activeShiftPopupDateKey = null;
 
     function shiftP() {
         if (!state.shiftProfile) state.shiftProfile = JSON.parse(JSON.stringify(DEFAULT_STATE.shiftProfile));
@@ -2877,19 +2879,9 @@
                 </p>
             </div>`;
 
-        html += onShift
-            ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
-            : offDayMealHTML();
-
-        html += dietaryShiftFocusHTML(type);
-        html += shiftMealIdeasHTML(type, dateKey);
-        html += shiftTrainingHTML(onShift, isNight, isEarly);
-
-        const dietaryApproaches = dietaryProfile().approaches || [];
-        if ((sp.goal === 'fat_loss' && sp.useFasting) || dietaryApproaches.includes('intermittent_fasting')) html += fastingGuidanceHTML(onShift, type);
-
-        html += shiftFoodIdeasHTML(isNight && onShift, dateKey);
-        html += shiftScienceHTML();
+        // Keep the Shift landing page compact. Every former accordion is now a
+        // button that opens the complete guide in its own popup page.
+        html += shiftSectionButtonsHTML(type, dateKey, dateLabel, shift);
 
         html += `
             <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
@@ -2899,11 +2891,629 @@
         return html;
     }
 
+    function shiftMealTimingTitle(type) {
+        return {
+            night: 'Meal Timing — Working Night',
+            early: 'Meal Timing — Working Early',
+            day: 'Meal Timing — Working Day',
+            off: 'Meal Timing — Rest / Off Day'
+        }[type] || 'Meal Timing';
+    }
+
+    function shiftSectionButtonHTML(section, icon, title, description) {
+        return `
+            <button type="button" onclick="openShiftSectionPopup('${section}')" class="w-full glass-card p-5 rounded-2xl flex items-center gap-4 text-left hover:shadow-lg transition-all active:scale-[0.99]">
+                <span class="w-12 h-12 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center text-2xl flex-shrink-0" aria-hidden="true">${icon}</span>
+                <span class="flex-1 min-w-0">
+                    <span class="font-black text-sm block">${title}</span>
+                    <span class="text-xs text-slate-400 mt-1 block">${description}</span>
+                </span>
+                <i data-lucide="chevron-right" class="w-5 h-5 text-orange-500 flex-shrink-0"></i>
+            </button>`;
+    }
+
+    function shiftSectionButtonsHTML(type, dateKey, dateLabel, shift) {
+        const sp = shiftP();
+        const profile = dietaryProfile();
+        const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+        const recipeCount = mealTypes.reduce((sum, mealType) => sum + shiftMealIdeasFor(type, mealType).length, 0);
+        const dietaryApproaches = profile.approaches || [];
+        const fastingEnabled = (sp.goal === 'fat_loss' && sp.useFasting) || dietaryApproaches.includes('intermittent_fasting');
+        const shiftLabel = { night: 'night shift', early: 'early shift', day: 'day shift', off: 'rest day' }[type] || 'selected day';
+        let buttons = '';
+
+        buttons += shiftSectionButtonHTML('meals', '🍽️', 'Meal Timing', `${dateLabel} · ${shiftLabel}`);
+        buttons += shiftSectionButtonHTML('dietary', '🎯', 'Personalised Dietary Focus', profile.completed ? `${dietaryPatternLabel(profile.pattern)} priorities matched to this shift` : 'Set your dietary preferences and requirements');
+        buttons += shiftSectionButtonHTML('planner', '📖', 'Personalised Meal Planner', `${recipeCount} compatible recipes for this day`);
+        buttons += shiftSectionButtonHTML('training', '🏋️', 'Training Plan', `${sp.goal === 'fat_loss' ? 'Fat-loss' : 'muscle-gain'} advice matched to ${shiftLabel}`);
+        if (fastingEnabled) {
+            buttons += shiftSectionButtonHTML('fasting', '⏱️', 'Intermittent-Fasting Guidance', `Safe, practical timing for this ${shiftLabel}`);
+        }
+        buttons += shiftSectionButtonHTML('food', '🥗', `${dietaryPatternLabel(profile.pattern)} Protein Ideas`, 'Shift-friendly foods, preparation and your saved meals');
+        buttons += shiftSectionButtonHTML('science', '🧠', 'The Science', 'Circadian rhythms, the SCN and timing cues');
+
+        return `
+            <div class="space-y-3" data-shift-section-buttons="${dateKey}">
+                <div class="px-1">
+                    <h3 class="text-lg font-black">Open a Shift Section</h3>
+                    <p class="text-xs text-slate-400 mt-1">Tap a button to open the full page. Use Save &amp; Close at the bottom when finished.</p>
+                </div>
+                ${buttons}
+            </div>`;
+    }
+
+    function getShiftSectionPopupContent(section, requestedDateKey) {
+        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDateKey || '')) ? requestedDateKey : localDateKey();
+        const shift = getShiftForDate(dateKey);
+        const type = ['night', 'early', 'day'].includes(shift.type) ? shift.type : 'off';
+        const onShift = type !== 'off';
+        const isNight = type === 'night';
+        const isEarly = type === 'early';
+        const profile = dietaryProfile();
+        const date = new Date(dateKey + 'T12:00:00');
+        const dateLabel = date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+        if (section === 'meals') {
+            return {
+                title: shiftMealTimingTitle(type),
+                dateLabel,
+                content: onShift
+                    ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
+                    : offDayMealHTML()
+            };
+        }
+        if (section === 'dietary') {
+            return { title: 'Your Personalised Dietary Focus', dateLabel, content: dietaryShiftFocusHTML(type) };
+        }
+        if (section === 'planner') {
+            return { title: 'Personalised Meal Planner', dateLabel, content: shiftMealIdeasHTML(type, dateKey) };
+        }
+        if (section === 'training') {
+            return {
+                title: `Training Plan — ${shiftP().goal === 'fat_loss' ? 'Fat Loss' : 'Muscle Gain'}`,
+                dateLabel,
+                content: shiftTrainingHTML(onShift, isNight, isEarly)
+            };
+        }
+        if (section === 'fasting') {
+            return { title: 'Intermittent-Fasting Shift Guidance', dateLabel, content: fastingGuidanceHTML(onShift, type) };
+        }
+        if (section === 'food') {
+            return {
+                title: `${dietaryPatternLabel(profile.pattern)} Protein Ideas`,
+                dateLabel,
+                content: shiftFoodIdeasHTML(isNight && onShift, dateKey)
+            };
+        }
+        if (section === 'science') {
+            return { title: 'The Science (Why This Works)', dateLabel, content: shiftScienceHTML() };
+        }
+        return null;
+    }
+
+    function openShiftSectionPopup(section) {
+        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : localDateKey();
+        const page = getShiftSectionPopupContent(section, dateKey);
+        const modal = document.getElementById('shift-section-modal');
+        const title = document.getElementById('shift-section-modal-title');
+        const date = document.getElementById('shift-section-modal-date');
+        const body = document.getElementById('shift-section-modal-body');
+        if (!page || !modal || !title || !date || !body) return;
+
+        if (section === 'fasting') {
+            const sp = shiftP();
+            const approaches = dietaryProfile().approaches || [];
+            if (!((sp.goal === 'fat_loss' && sp.useFasting) || approaches.includes('intermittent_fasting'))) {
+                showToast('Enable intermittent fasting in your dietary plan first');
+                return;
+            }
+        }
+
+        activeShiftPopupSection = section;
+        activeShiftPopupDateKey = dateKey;
+        title.textContent = page.title;
+        date.textContent = page.dateLabel;
+        body.innerHTML = page.content;
+        body.scrollTop = 0;
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        ensureAccessibleDom(modal);
+        refreshIcons();
+    }
+
+    function closeShiftSectionPopup(returnToShift) {
+        const modal = document.getElementById('shift-section-modal');
+        if (modal) modal.style.display = 'none';
+        document.body.style.overflow = '';
+        activeShiftPopupSection = null;
+        activeShiftPopupDateKey = null;
+
+        if (returnToShift !== false) {
+            switchTab('nutrition');
+            setNutritionTab('shift');
+        }
+    }
+
+    function saveShiftSectionPopup() {
+        const page = activeShiftPopupSection
+            ? getShiftSectionPopupContent(activeShiftPopupSection, activeShiftPopupDateKey)
+            : null;
+        saveState();
+        closeShiftSectionPopup();
+        showToast(`${page ? page.title : 'Shift section'} saved`);
+    }
+
+    function openShiftDiaryFromPopup() {
+        closeShiftSectionPopup(false);
+        switchTab('nutrition');
+        setNutritionTab('diary');
+    }
+
     function openShiftRotaFromNutrition() {
         if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
     }
 
 
+    // DAILY READINESS + RECOVERY DAY
+    // ==========================================================================
+
+    const READINESS_PROMPT_HOUR = 10;
+    const RECOVERY_VOLUME_MULTIPLIER = 0.60;
+    const RECOVERY_LOAD_MULTIPLIER = 0.85;
+    let dailyReadinessTimer = null;
+    let dailyReadinessRetryTimer = null;
+    let dailyReadinessListenersReady = false;
+
+    function readinessDateKey(value) {
+        if (value instanceof Date) return localDateKey(value);
+        if (!value) return localDateKey();
+        return String(value).slice(0, 10);
+    }
+
+    function readinessRecordForDate(dateKey) {
+        const key = readinessDateKey(dateKey);
+        const records = state.dailyReadiness || {};
+        return records[key] || null;
+    }
+
+    function readinessRecordTime(record) {
+        if (!record) return 0;
+        return Date.parse(record.completedAt || record.skippedAt || '') || 0;
+    }
+
+    function mergeLatestReadinessFromCloud(record) {
+        if (!record || !record.date) return;
+        const dateKey = readinessDateKey(record.date);
+        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+        const local = state.dailyReadiness[dateKey];
+        if (!local || readinessRecordTime(record) >= readinessRecordTime(local)) {
+            state.dailyReadiness[dateKey] = Object.assign({}, record, { date: dateKey });
+            saveState();
+        }
+    }
+
+    async function syncLatestReadinessToCloud(record) {
+        if (!currentUser || !record) return;
+        try {
+            await db.collection('users').doc(currentUser.uid).update({
+                latestReadiness: record,
+                readinessUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            firebaseUserData.latestReadiness = record;
+        } catch (error) {
+            // The local plan remains authoritative offline and will still work.
+            console.warn('Could not sync daily readiness:', error);
+        }
+    }
+
+    /** The normal goal remains untouched; only a completed daily plan can override it. */
+    function getDailyCalorieTarget(dateKey) {
+        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
+        const record = readinessRecordForDate(dateKey);
+        if (record && record.status === 'completed' && parseInt(record.recommendedCalories, 10) > 0) {
+            return parseInt(record.recommendedCalories, 10);
+        }
+        return baseline;
+    }
+
+    function getRecoveryPlanForDate(dateKey) {
+        const record = readinessRecordForDate(dateKey);
+        return (record && record.status === 'completed' && record.recovery) ? record : null;
+    }
+
+    function recoveryAdjustedWeight(weight, exerciseName, recoveryPlan) {
+        const kg = parseFloat(weight);
+        if (isNaN(kg) || !recoveryPlan) return isNaN(kg) ? null : kg;
+        let adjusted;
+        if (isAssistanceExercise(exerciseName)) {
+            // Assistance is inverted: more assistance means less bodyweight moved.
+            // When bodyweight is known, reduce the actual moved load by the same
+            // percentage; otherwise use a conservative increase in assistance.
+            const bodyweight = getBodyweightForDate(selectedWorkoutDateKey());
+            adjusted = bodyweight && kg <= bodyweight.weight
+                ? bodyweight.weight - ((bodyweight.weight - kg) * recoveryPlan.loadMultiplier)
+                : kg * (2 - recoveryPlan.loadMultiplier);
+        } else {
+            adjusted = kg * recoveryPlan.loadMultiplier;
+        }
+        return Math.max(0, Math.round(adjusted * 2) / 2);
+    }
+
+    function selectedWorkoutDateKey() {
+        const picker = document.getElementById('workout-date-picker');
+        return readinessDateKey(window.selectedWorkoutDate || (picker && picker.value) || localDateKey());
+    }
+
+    function readDailyReadinessForm() {
+        const numberValue = id => {
+            const el = document.getElementById(id);
+            return el && el.value !== '' ? parseInt(el.value, 10) : null;
+        };
+        const note = document.getElementById('daily-readiness-note');
+        return {
+            energy: numberValue('daily-readiness-energy'),
+            mood: numberValue('daily-readiness-mood'),
+            feeling: numberValue('daily-readiness-feeling'),
+            hunger: numberValue('daily-readiness-hunger'),
+            fatigue: numberValue('daily-readiness-fatigue'),
+            note: note ? note.value.trim().slice(0, 300) : ''
+        };
+    }
+
+    function readinessAnswersComplete(answers) {
+        return ['energy', 'mood', 'feeling', 'hunger', 'fatigue']
+            .every(key => Number.isInteger(answers[key]) && answers[key] >= 1 && answers[key] <= 5);
+    }
+
+    function buildDailyReadinessPlan(answers) {
+        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
+        const maintenance = calculateMaintenanceCalories();
+        const recovery = answers.energy <= 2 && answers.hunger >= 4 && answers.fatigue >= 4;
+        // Halfway between the normal target and maintenance gives meaningful extra
+        // recovery fuel without replacing the user's long-term goal.
+        const recommendedCalories = recovery && maintenance
+            ? Math.round((baseline + maintenance) / 2)
+            : baseline;
+
+        let nutritionMessage;
+        let trainingMessage;
+        if (recovery) {
+            nutritionMessage = maintenance
+                ? `Today's target moves from ${baseline.toLocaleString()} to ${recommendedCalories.toLocaleString()} kcal — halfway toward your estimated ${maintenance.toLocaleString()} kcal maintenance. Prioritise protein, fluids, carbohydrates and regular meals.`
+                : `Recovery is active. Your target stays at ${baseline.toLocaleString()} kcal until maintenance can be calculated; complete About You and log a bodyweight to unlock the tailored recovery target.`;
+            trainingMessage = 'Use about 60% of normal training volume and 85% of normal load. Keep repetitions controlled and stop well before failure.';
+        } else {
+            const nutritionParts = [`Keep today's normal ${baseline.toLocaleString()} kcal target.`];
+            if (answers.hunger >= 4) nutritionParts.push('Build meals around protein, fibre and high-volume foods to manage hunger.');
+            if (answers.energy <= 2) nutritionParts.push('Place more of today’s carbohydrates around training and keep fluids up.');
+            if (answers.mood <= 2 || answers.feeling <= 2) nutritionParts.push('Keep meals simple and regular rather than relying on restriction.');
+            if (nutritionParts.length === 1) nutritionParts.push('Keep protein consistent and fuel training as planned.');
+            nutritionMessage = nutritionParts.join(' ');
+            trainingMessage = answers.fatigue >= 4
+                ? 'Recovery mode was not triggered, but fatigue is high. Train conservatively and stop if performance or technique drops.'
+                : 'Normal training is available today; adjust effort if your warm-up feels unusually difficult.';
+        }
+
+        return {
+            recovery,
+            baselineCalories: baseline,
+            maintenanceCalories: maintenance || null,
+            recommendedCalories,
+            volumeMultiplier: recovery ? RECOVERY_VOLUME_MULTIPLIER : 1,
+            loadMultiplier: recovery ? RECOVERY_LOAD_MULTIPLIER : 1,
+            nutritionMessage,
+            trainingMessage
+        };
+    }
+
+    function readinessPlanPreviewHTML(plan) {
+        if (plan.recovery) {
+            return `
+                <div class="flex items-start gap-3">
+                    <i data-lucide="battery-medium" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
+                    <div>
+                        <p class="font-black text-amber-900">Recovery day will be activated</p>
+                        <p class="text-xs text-amber-800 mt-1">${plan.nutritionMessage}</p>
+                        <p class="text-xs text-amber-800 mt-2">${plan.trainingMessage}</p>
+                    </div>
+                </div>`;
+        }
+        return `
+            <div class="flex items-start gap-3">
+                <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <p class="font-black text-emerald-900">Normal plan</p>
+                    <p class="text-xs text-emerald-800 mt-1">${plan.nutritionMessage}</p>
+                    <p class="text-xs text-emerald-800 mt-2">${plan.trainingMessage}</p>
+                </div>
+            </div>`;
+    }
+
+    function previewDailyReadiness() {
+        const preview = document.getElementById('readiness-preview');
+        if (!preview) return;
+        const answers = readDailyReadinessForm();
+        if (!readinessAnswersComplete(answers)) {
+            preview.classList.add('hidden');
+            preview.innerHTML = '';
+            return;
+        }
+        const plan = buildDailyReadinessPlan(answers);
+        preview.className = `mt-5 p-4 rounded-2xl border text-sm ${plan.recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+        preview.innerHTML = readinessPlanPreviewHTML(plan);
+        refreshIcons();
+    }
+
+    function openDailyReadinessCheck() {
+        const modal = document.getElementById('daily-readiness-modal');
+        if (!modal) return;
+        const dateKey = localDateKey();
+        const record = readinessRecordForDate(dateKey);
+        window._dailyReadinessDate = dateKey;
+
+        ['energy', 'mood', 'feeling', 'hunger', 'fatigue'].forEach(key => {
+            const el = document.getElementById('readiness-' + key);
+            if (el) el.value = record && record.status === 'completed' ? String(record[key] || '') : '';
+        });
+        const note = document.getElementById('daily-readiness-note');
+        if (note) note.value = record && record.status === 'completed' ? (record.note || '') : '';
+        const preview = document.getElementById('readiness-preview');
+        if (preview) { preview.classList.add('hidden'); preview.innerHTML = ''; }
+
+        modal.style.display = 'flex';
+        previewDailyReadiness();
+        refreshIcons();
+    }
+
+    function closeDailyReadinessCheck(markSkipped) {
+        const modal = document.getElementById('daily-readiness-modal');
+        if (modal) modal.style.display = 'none';
+        if (!markSkipped) return;
+
+        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
+        const existing = readinessRecordForDate(dateKey);
+        // Closing a previously completed check-in is just Cancel; it never erases it.
+        if (!existing || existing.status !== 'completed') {
+            if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+            state.dailyReadiness[dateKey] = {
+                status: 'skipped',
+                date: dateKey,
+                skippedAt: new Date().toISOString()
+            };
+            saveState();
+            syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
+            renderDailyReadinessCards();
+            showToast('Today’s check-in skipped — you can complete it from the dashboard');
+        }
+    }
+
+    function saveDailyReadiness() {
+        const answers = readDailyReadinessForm();
+        if (!readinessAnswersComplete(answers)) {
+            showToast('Answer all five readiness questions');
+            return;
+        }
+
+        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
+        const plan = buildDailyReadinessPlan(answers);
+        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
+        state.dailyReadiness[dateKey] = Object.assign({
+            status: 'completed',
+            date: dateKey,
+            completedAt: new Date().toISOString()
+        }, answers, plan);
+
+        saveState();
+        syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
+        closeDailyReadinessCheck(false);
+        renderDashboard();
+        renderDiary();
+        renderDailyReadinessCards();
+        pushMemberDataToCloud();
+        showToast(plan.recovery
+            ? `Recovery day active · ${plan.recommendedCalories.toLocaleString()} kcal · lighter training`
+            : `Readiness saved · ${plan.recommendedCalories.toLocaleString()} kcal target`);
+    }
+
+    function isAnotherModalOpen(excludedId) {
+        return Array.from(document.querySelectorAll('.modal-overlay')).some(modal => {
+            if (modal.id === excludedId) return false;
+            return window.getComputedStyle(modal).display !== 'none';
+        });
+    }
+
+    function maybeShowDailyReadiness() {
+        if (!currentUser) return;
+        const now = new Date();
+        if (now.getHours() < READINESS_PROMPT_HOUR) return;
+        const readinessModal = document.getElementById('daily-readiness-modal');
+        if (readinessModal && window.getComputedStyle(readinessModal).display !== 'none') return;
+        const record = readinessRecordForDate(localDateKey(now));
+        if (record && (record.status === 'completed' || record.status === 'skipped')) return;
+
+        if (isAnotherModalOpen('daily-readiness-modal')) {
+            clearTimeout(dailyReadinessRetryTimer);
+            dailyReadinessRetryTimer = setTimeout(maybeShowDailyReadiness, 30000);
+            return;
+        }
+        openDailyReadinessCheck();
+    }
+
+    function handleReadinessVisibility() {
+        if (document.visibilityState === 'visible') maybeShowDailyReadiness();
+    }
+
+    function scheduleNextReadinessPrompt() {
+        clearTimeout(dailyReadinessTimer);
+        const now = new Date();
+        const tenToday = new Date(now);
+        tenToday.setHours(READINESS_PROMPT_HOUR, 0, 0, 0);
+        const nextTen = new Date(tenToday);
+
+        if (now >= tenToday) {
+            setTimeout(maybeShowDailyReadiness, 1200);
+            nextTen.setDate(nextTen.getDate() + 1);
+        }
+
+        dailyReadinessTimer = setTimeout(() => {
+            maybeShowDailyReadiness();
+            scheduleNextReadinessPrompt();
+        }, Math.max(1000, nextTen.getTime() - now.getTime()));
+    }
+
+    function setupDailyReadinessPrompt() {
+        scheduleNextReadinessPrompt();
+        if (!dailyReadinessListenersReady) {
+            document.addEventListener('visibilitychange', handleReadinessVisibility);
+            window.addEventListener('focus', maybeShowDailyReadiness);
+            dailyReadinessListenersReady = true;
+        }
+        renderDailyReadinessCards();
+    }
+
+    function teardownDailyReadinessPrompt() {
+        clearTimeout(dailyReadinessTimer);
+        clearTimeout(dailyReadinessRetryTimer);
+        dailyReadinessTimer = null;
+        dailyReadinessRetryTimer = null;
+        if (dailyReadinessListenersReady) {
+            document.removeEventListener('visibilitychange', handleReadinessVisibility);
+            window.removeEventListener('focus', maybeShowDailyReadiness);
+            dailyReadinessListenersReady = false;
+        }
+        const modal = document.getElementById('daily-readiness-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    function renderDailyReadinessCards() {
+        const todayKey = localDateKey();
+        const todayRecord = readinessRecordForDate(todayKey);
+        const dashCard = document.getElementById('daily-readiness-card');
+
+        if (dashCard) {
+            const afterTen = new Date().getHours() >= READINESS_PROMPT_HOUR;
+            if (todayRecord && todayRecord.status === 'completed') {
+                const recovery = !!todayRecord.recovery;
+                dashCard.className = `glass-card rounded-[2.5rem] p-6 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+                dashCard.innerHTML = `
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-3 min-w-0">
+                            <div class="w-11 h-11 ${recovery ? 'bg-amber-500' : 'bg-emerald-500'} text-white rounded-2xl flex items-center justify-center flex-shrink-0">
+                                <i data-lucide="${recovery ? 'battery-medium' : 'battery-charging'}" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery day active' : 'Ready for the normal plan'}</p>
+                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">Energy ${todayRecord.energy}/5 · Mood ${todayRecord.mood}/5 · Hunger ${todayRecord.hunger}/5 · Fatigue ${todayRecord.fatigue}/5</p>
+                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-2"><b>${getDailyCalorieTarget(todayKey).toLocaleString()} kcal</b> today${recovery ? ' · 60% volume · 85% load' : ''}</p>
+                            </div>
+                        </div>
+                        <button onclick="openDailyReadinessCheck()" class="text-xs font-black underline ${recovery ? 'text-amber-700' : 'text-emerald-700'} flex-shrink-0">Update</button>
+                    </div>`;
+            } else if (afterTen) {
+                const skipped = todayRecord && todayRecord.status === 'skipped';
+                dashCard.className = 'glass-card rounded-[2.5rem] p-6 border-2 bg-indigo-50 border-indigo-100';
+                dashCard.innerHTML = `
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <p class="font-black text-indigo-900">${skipped ? 'Today’s check-in was skipped' : 'Daily readiness check'}</p>
+                            <p class="text-xs text-indigo-600 mt-1">Check energy, mood, hunger and fatigue to tailor today’s plan.</p>
+                        </div>
+                        <button onclick="openDailyReadinessCheck()" class="bg-indigo-600 text-white px-4 py-3 rounded-xl text-xs font-black flex-shrink-0">Check in</button>
+                    </div>`;
+            } else {
+                dashCard.classList.add('hidden');
+                dashCard.innerHTML = '';
+            }
+        }
+
+        const dashTarget = document.getElementById('dash-calorie-target');
+        if (dashTarget) dashTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()}`;
+
+        const nutritionTarget = document.getElementById('nutrition-calorie-target');
+        if (nutritionTarget) nutritionTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()} kcal`;
+
+        const nutritionCard = document.getElementById('nutrition-readiness-card');
+        if (nutritionCard) {
+            const record = readinessRecordForDate(state.viewDate);
+            if (record && record.status === 'completed') {
+                const recovery = !!record.recovery;
+                nutritionCard.className = `rounded-[2rem] p-5 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
+                nutritionCard.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <i data-lucide="${recovery ? 'utensils' : 'salad'}" class="w-5 h-5 ${recovery ? 'text-amber-600' : 'text-emerald-600'} flex-shrink-0 mt-0.5"></i>
+                        <div>
+                            <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery nutrition' : 'Today’s nutrition plan'}</p>
+                            <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">${record.nutritionMessage}</p>
+                        </div>
+                    </div>`;
+            } else {
+                nutritionCard.classList.add('hidden');
+                nutritionCard.innerHTML = '';
+            }
+        }
+
+        const trainingCard = document.getElementById('training-recovery-card');
+        if (trainingCard) {
+            const workoutDate = selectedWorkoutDateKey();
+            const recovery = getRecoveryPlanForDate(workoutDate);
+            if (recovery) {
+                trainingCard.className = 'rounded-[2rem] p-5 border-2 border-amber-200 bg-amber-50';
+                trainingCard.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <i data-lucide="shield" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
+                        <div>
+                            <p class="font-black text-amber-900">Recovery training · ${Math.round(recovery.volumeMultiplier * 100)}% volume · ${Math.round(recovery.loadMultiplier * 100)}% load</p>
+                            <p class="text-xs text-amber-800 mt-1">AI-generated sessions use fewer exercises and working-weight suggestions are reduced. ${recovery.trainingMessage}</p>
+                        </div>
+                    </div>`;
+            } else {
+                trainingCard.classList.add('hidden');
+                trainingCard.innerHTML = '';
+            }
+        }
+        refreshIcons();
+    }
+
+    // ==========================================================================
+    // DASHBOARD
+    // ==========================================================================
+
+    function renderDashboardReadinessLegacy() {
+        const todayMeals = state.dailyMeals.filter(m => m.date === state.viewDate);
+        const totalCals = todayMeals.reduce((sum, m) => sum + (m.calories || 0), 0);
+        const totalProtein = todayMeals.reduce((sum, m) => sum + (m.protein || 0), 0);
+        const totalCarbs = todayMeals.reduce((sum, m) => sum + (m.carbs || 0), 0);
+        const totalFat = todayMeals.reduce((sum, m) => sum + (m.fat || 0), 0);
+
+        const dashCals = document.getElementById('dash-calories');
+        if (dashCals) dashCals.innerText = Math.round(totalCals);
+
+        const dashProtein = document.getElementById('dash-protein');
+        if (dashProtein) dashProtein.innerText = Math.round(totalProtein) + 'g';
+
+        // FIXED: use actual carbs/fat totals from logged meals (not made-up percentages)
+        const dashCarbs = document.getElementById('dash-carbs');
+        if (dashCarbs) dashCarbs.innerText = Math.round(totalCarbs) + 'g';
+
+        const dashFat = document.getElementById('dash-fat');
+        if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
+
+        const calorieGoal = getDailyCalorieTarget(state.viewDate);
+        const progress = Math.min((totalCals / calorieGoal) * 534, 534);
+        const progressEl = document.getElementById('calorie-progress');
+        if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;
+
+        const water = (state.waterLogs && state.waterLogs[state.viewDate]) || 0;
+        const waterGoal = (state.goals && state.goals.water) ? state.goals.water : 2500;
+        const waterCountEl = document.getElementById('water-count');
+        if (waterCountEl) waterCountEl.innerText = `${(water / 1000).toFixed(2)} / ${(waterGoal / 1000).toFixed(1)}L`;
+        const waterBar = document.getElementById('water-progress-bar');
+        if (waterBar) waterBar.style.width = Math.min(100, (water / waterGoal) * 100) + '%';
+
+        const steps = (state.stepsLogs && state.stepsLogs[state.viewDate]) || 0;
+        const stepsGoal = (state.goals && state.goals.steps) ? state.goals.steps : 10000;
+        const stepsCountEl = document.getElementById('steps-count');
+    }
     const DIETARY_PATTERN_LABELS = Object.freeze({
         balanced: 'Balanced / no specific diet',
         vegan: 'Vegan',
@@ -3095,15 +3705,14 @@
             </div>`;
         }
         const lines = dietaryShiftFocusLines(type, profile);
-        return `<details open class="bg-slate-900 border border-orange-500 text-white rounded-[2rem] p-5">
-            <summary class="font-black cursor-pointer">Your Personalised Dietary Focus</summary>
-            <div class="mt-3">
+        return `<div class="bg-slate-900 border border-orange-500 text-white rounded-[2rem] p-5">
+            <div>
                 <div class="flex flex-wrap gap-1.5 mb-3">${dietaryProfileBadgesHTML(profile)}</div>
                 <ul class="space-y-2">${lines.map(line => `<li class="flex items-start gap-2 text-xs text-slate-200"><span class="text-orange-400 font-black">•</span><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
                 ${profile.notes ? `<div class="mt-3 bg-white/10 border border-white/10 p-3 rounded-xl"><p class="text-[10px] font-black uppercase text-orange-300">Your instructions</p><p class="text-xs text-slate-200 mt-1">${escapeHtml(profile.notes)}</p></div>` : ''}
                 <button onclick="openDietaryProfile()" class="mt-3 text-xs font-black text-orange-300 underline">Update dietary plan</button>
             </div>
-        </details>`;
+        </div>`;
     }
 
     function renderDietaryProfileSummary() {
@@ -3492,7 +4101,7 @@
     function shiftMealCategoryHTML(type, mealType, dateKey) {
         const icons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
         const optionCount = shiftMealIdeasFor(type, mealType).length;
-        return `<details class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><summary class="font-black capitalize cursor-pointer">${icons[mealType]} ${mealType} · ${optionCount} compatible choice${optionCount === 1 ? '' : 's'}</summary><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></details>`;
+        return `<section class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><h4 class="font-black capitalize">${icons[mealType]} ${mealType} · ${optionCount} compatible choice${optionCount === 1 ? '' : 's'}</h4><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></section>`;
     }
 
     function shiftMealIdeasHTML(type, dateKey) {
@@ -3500,12 +4109,11 @@
         const total = mealTypes.reduce((sum, mealType) => sum + shiftMealIdeasFor(type, mealType).length, 0);
         const profile = dietaryProfile();
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]" data-shift-meal-ideas="${type}" open>
-                <summary class="text-lg font-black cursor-pointer">Personalised Meal Planner · ${total} Recipes</summary>
-                <div class="mt-4"><div class="flex justify-between items-start gap-3 mb-4"><div><p class="text-xs text-slate-500">Choices reflect ${escapeHtml(dietaryPatternLabel(profile.pattern).toLowerCase())}${profile.requirements.length ? ' and selected exclusions' : ''}. Open any recipe to see every compatible meal, ingredients and step-by-step instructions.</p><div class="flex flex-wrap gap-1.5 mt-2">${profile.completed ? dietaryProfileBadgesHTML(profile) : '<span class="text-[10px] font-black text-orange-700">Complete Dietary Plan in Coaching for personalisation</span>'}</div></div><button onclick="setNutritionTab('diary')" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button></div>
+            <div data-shift-meal-ideas="${type}">
+                <div><div class="flex justify-between items-start gap-3 mb-4"><div><p class="text-xs text-slate-500">Choices reflect ${escapeHtml(dietaryPatternLabel(profile.pattern).toLowerCase())}${profile.requirements.length ? ' and selected exclusions' : ''}. Open any recipe to see every compatible meal, ingredients and step-by-step instructions.</p><div class="flex flex-wrap gap-1.5 mt-2">${profile.completed ? dietaryProfileBadgesHTML(profile) : '<span class="text-[10px] font-black text-orange-700">Complete Dietary Plan in Coaching for personalisation</span>'}</div></div><button onclick="openShiftDiaryFromPopup()" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button></div>
                 <div class="space-y-3">${mealTypes.map(mealType => shiftMealCategoryHTML(type, mealType, dateKey)).join('')}</div>
                 <p class="text-[10px] text-slate-400 mt-3">Nutrition values are estimates per suggested portion. Check labels, allergens, certification and cooking temperatures yourself.</p></div>
-            </details>`;
+            </div>`;
     }
 
     function inferredShiftMealIngredients(idea) {
@@ -3757,15 +4365,14 @@
         const start = hmToMin((shift && shift.start) || sp.shiftStart);
         const end = hmToMin((shift && shift.end) || sp.shiftEnd);
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Meal Timing — Working Night</summary><div class="mt-4">
+            <div>
                 <p class="text-xs text-slate-400 mb-4">The goal: eat your main food before/early in the shift, keep the deep-night hours light, and don't go to bed on a full stomach.</p>
                 ${mealRow(minToHM(start - 120), 'Anchor meal (before shift)', 'Your biggest, most balanced meal ~2h before starting. Lean protein + complex carbs + veg for steady 4–6h energy — this is what stops the 3am vending-machine trap.', 'main')}
                 ${mealRow(minToHM(start + 180), 'Mid-shift protein snack', 'A protein-forward snack ~3–4h in. Greek yogurt, cottage cheese, boiled eggs, or a lean-protein wrap. Keeps you full without a sugar crash.', 'light')}
                 ${mealRow('12am–6am', 'Biological night — keep minimal', 'Try to avoid a full meal in these hours: this is when your body handles food worst (higher glucose & fat in the blood). If you must eat, keep it small and protein/veg based, not sugary or heavy.', 'avoid')}
                 ${mealRow(minToHM(end), 'Post-shift: light only', 'A small, easy-to-digest meal at most. Finish eating at least ~1h before sleep so it doesn\'t wreck your sleep quality.', 'light')}
-                ${mealRow('Daytime', 'Sleep', 'Protect your sleep window. Dark, cool, quiet room. Sleep is where fat-loss and muscle-building actually happen.', 'sleep')}</div>
-            </details>`;
+                ${mealRow('Daytime', 'Sleep', 'Protect your sleep window. Dark, cool, quiet room. Sleep is where fat-loss and muscle-building actually happen.', 'sleep')}
+            </div>`;
     }
 
     function dayShiftMealHTML(shift) {
@@ -3773,14 +4380,13 @@
         const start = hmToMin((shift && shift.start) || sp.shiftStart);
         const end = hmToMin((shift && shift.end) || sp.shiftEnd);
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Meal Timing — Working Day</summary><div class="mt-4">
+            <div>
                 <p class="text-xs text-slate-400 mb-4">Daytime shifts are more circadian-friendly. Front-load your calories earlier and keep the evening lighter.</p>
                 ${mealRow(minToHM(start - 60), 'Breakfast', 'A solid protein + carb breakfast within ~an hour of waking. Insulin sensitivity is highest earlier in the day.', 'main')}
                 ${mealRow('Midday', 'Lunch — main meal', 'Make lunch your largest meal where you can. Protein, complex carbs, veg.', 'main')}
                 ${mealRow(minToHM(end), 'Dinner — lighter & earlier', 'Aim to finish your main evening eating before ~9pm. Late, large dinners are linked to worse metabolic outcomes.', 'light')}
-                ${mealRow('After 9pm', 'Wind down', 'Avoid late heavy meals and sugary snacks. A small protein snack is fine if genuinely hungry.', 'avoid')}</div>
-            </details>`;
+                ${mealRow('After 9pm', 'Wind down', 'Avoid late heavy meals and sugary snacks. A small protein snack is fine if genuinely hungry.', 'avoid')}
+            </div>`;
     }
 
     function earlyShiftMealHTML(shift) {
@@ -3788,26 +4394,24 @@
         const start = hmToMin((shift && shift.start) || sp.shiftStart);
         const end = hmToMin((shift && shift.end) || sp.shiftEnd);
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Meal Timing — Working Early</summary><div class="mt-4">
+            <div>
                 <p class="text-xs text-slate-400 mb-4">Protect sleep by preparing breakfast and shift food in advance, then place your main meal after work rather than skipping through the morning.</p>
                 ${mealRow(minToHM(start - 45), 'Pre-shift breakfast', 'Keep it quick but balanced: protein plus slow-release carbs. Prepare it the night before so the early start does not become a missed meal.', 'main')}
                 ${mealRow(minToHM(start + 180), 'Mid-shift meal or snack', 'Use a packed protein-forward option with fruit or wholegrain carbs to keep energy steadier through the early shift.', 'light')}
                 ${mealRow(minToHM(end + 30), 'Post-shift main meal', 'Have your largest balanced meal soon after work, while there is still plenty of daytime left for digestion and recovery.', 'main')}
-                ${mealRow('~6–7pm', 'Lighter evening meal', 'Keep dinner lighter and finish early enough to protect the earlier bedtime your next shift needs.', 'light')}</div>
-            </details>`;
+                ${mealRow('~6–7pm', 'Lighter evening meal', 'Keep dinner lighter and finish early enough to protect the earlier bedtime your next shift needs.', 'light')}
+            </div>`;
     }
 
     function offDayMealHTML() {
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Meal Timing — Rest / Off Day</summary><div class="mt-4">
+            <div>
                 <p class="text-xs text-slate-400 mb-4">Use rest days to nudge your body clock back toward daytime eating — it helps recovery and metabolic health.</p>
                 ${mealRow('On waking', 'Breakfast', 'Eat within ~an hour of waking to anchor your body clock to daytime. Protein + carbs.', 'main')}
                 ${mealRow('Midday', 'Lunch — main meal', 'Largest meal of the day around midday when your metabolism is best set up for it.', 'main')}
                 ${mealRow('~6–7pm', 'Early dinner', 'Finish your main eating earlier in the evening. Aim to stop before ~9pm.', 'light')}
-                ${mealRow('Late', 'Minimise late eating', 'Keep the late-evening hours light. This re-trains your system after nights.', 'avoid')}</div>
-            </details>`;
+                ${mealRow('Late', 'Minimise late eating', 'Keep the late-evening hours light. This re-trains your system after nights.', 'avoid')}
+            </div>`;
     }
 
     function shiftTrainingHTML(onShift, isNight, isEarly) {
@@ -3839,11 +4443,10 @@
         }
 
         return `
-            <details class="glass-card p-6 rounded-[2.5rem]">
-                <summary class="text-lg font-black cursor-pointer">Training Plan — ${fatLoss ? 'Fat Loss' : 'Muscle Gain'}</summary><div class="mt-4">
+            <div>
                 <p class="text-xs text-slate-400 mb-4">Timed to your circadian phase, not the clock on the wall.</p>
-                ${inner}</div>
-            </details>`;
+                ${inner}
+            </div>`;
     }
 
     function trainTip(title, desc, tone) {
@@ -3861,16 +4464,15 @@
 function fastingGuidanceHTML(onShift, shiftType) {
     const isNight = onShift && shiftType === 'night';
     return `
-        <details class="glass-card p-6 rounded-[2.5rem] border-2 border-dashed border-indigo-200">
-            <summary class="text-lg font-black cursor-pointer">Intermittent-Fasting Shift Guidance</summary><div class="mt-4">
+        <div class="border-2 border-dashed border-indigo-200 rounded-2xl p-4">
             <p class="text-xs text-slate-500 mb-4">Your saved plan uses intermittent fasting. VFIT changes the emphasis by shift instead of applying one rigid clock window every day.</p>
             ${isNight
                 ? `<div class="p-3 bg-amber-50 border border-amber-200 rounded-2xl mb-3"><p class="text-sm font-bold text-amber-900">Night shift: alertness and safety come first</p><p class="text-xs text-amber-800 mt-1">Do not force a fast through work if it causes dizziness, poor concentration, unusual fatigue or impaired performance. A practical option is to anchor the eating window after waking and through the early part of the shift.</p></div>`
                 : onShift
                     ? mealRow('This shift', 'Keep the window practical', 'Place the eating window around the main work break and the training or recovery meal. Do not sacrifice fluids or adequate protein to hit a clock target.', 'light')
                     : mealRow('Off day', 'Return the window to daytime', 'Use a consistent daytime window if it feels sustainable, while still meeting protein, energy, fibre and hydration needs.', 'main')}
-            <p class="text-[11px] text-slate-400 mt-2">Fasting is not suitable for everyone. Get appropriate clinical advice first if you have diabetes or another health condition, take medication affected by food timing, are pregnant, or have a history of disordered eating. Stop if you feel unwell.</p></div>
-        </details>`;
+            <p class="text-[11px] text-slate-400 mt-2">Fasting is not suitable for everyone. Get appropriate clinical advice first if you have diabetes or another health condition, take medication affected by food timing, are pregnant, or have a history of disordered eating. Stop if you feel unwell.</p>
+        </div>`;
 }
 
     function createdShiftFoodIdeasHTML(dateKey) {
@@ -3942,8 +4544,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         mealMatchesDietaryRequirements({ name, note, allergens: String(allergens || '').split('|').filter(Boolean) }, profile)
     );
     return `
-        <details class="glass-card p-6 rounded-[2.5rem]">
-            <summary class="text-lg font-black cursor-pointer">${escapeHtml(dietaryPatternLabel(profile.pattern))} Protein Ideas</summary><div class="mt-4">
+        <div>
             <p class="text-xs text-slate-400 mb-4">${emphasiseNight
                 ? 'Prepare protein-forward choices before a night shift so your deepest-night break does not depend on vending-machine food.'
                 : 'A deliberate protein source at each main meal supports recovery and helps make the plan more filling.'}</p>
@@ -3953,8 +4554,8 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             ${createdShiftFoodIdeasHTML(dateKey)}
             <div class="mt-3 p-3 bg-slate-50 rounded-2xl">
                 <p class="text-xs text-slate-500"><b>Shift prep:</b> portion food before work, carry fluids and keep a verified backup meal available. Check every product against your saved requirements.</p>
-            </div></div>
-        </details>`;
+            </div>
+        </div>`;
 }
 
     function foodIdea(name, note) {
@@ -3967,16 +4568,13 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
 
     function shiftScienceHTML() {
         return `
-            <details class="glass-card rounded-[2.5rem] p-6">
-                <summary class="text-lg font-black cursor-pointer">The science (why this works)</summary>
-                <div class="space-y-3 text-sm text-slate-600 mt-4">
-                    <p><b>Your master clock — the SCN.</b> Deep in your brain (the hypothalamus) sits the suprachiasmatic nucleus, or SCN. It's your body's master clock, and it's set mainly by <b>light</b>. It tells your body when to be alert, when to release melatonin for sleep, and when your metabolism is primed for food.</p>
-                    <p><b>Zeitgebers — "time-givers".</b> Besides light, your body takes timing cues from <b>food, activity and temperature</b>. These are called zeitgebers (German for "time-givers"). Your gut and muscles have their own "peripheral clocks" that respond to when you eat and train — not just to light.</p>
-                    <p><b>Why shift work is hard.</b> On nights, your SCN still thinks it's night (because of the light/dark cycle), but you're eating and working. This <b>desynchronises</b> your master clock from your gut and muscle clocks. Eating at 3am means digesting food when your body is metabolically set to sleep — which is why the same meal raises blood sugar and fat more at night than in the day.</p>
-                    <p><b>What we do about it.</b> We use the zeitgebers you <i>can</i> control — food timing and training timing — to reduce that mismatch: concentrate eating when your body is more aligned, keep the deep-night hours light, and place training near your true strength peak (a few hours after waking, when core temperature is up).</p>
-                    <p class="text-xs text-slate-400">This is a simplified summary of active research. The science is still developing and individual responses vary — another reason to work with your GP.</p>
-                </div>
-            </details>`;
+            <div class="space-y-3 text-sm text-slate-600">
+                <p><b>Your master clock — the SCN.</b> Deep in your brain (the hypothalamus) sits the suprachiasmatic nucleus, or SCN. It's your body's master clock, and it's set mainly by <b>light</b>. It tells your body when to be alert, when to release melatonin for sleep, and when your metabolism is primed for food.</p>
+                <p><b>Zeitgebers — "time-givers".</b> Besides light, your body takes timing cues from <b>food, activity and temperature</b>. These are called zeitgebers (German for "time-givers"). Your gut and muscles have their own "peripheral clocks" that respond to when you eat and train — not just to light.</p>
+                <p><b>Why shift work is hard.</b> On nights, your SCN still thinks it's night (because of the light/dark cycle), but you're eating and working. This <b>desynchronises</b> your master clock from your gut and muscle clocks. Eating at 3am means digesting food when your body is metabolically set to sleep — which is why the same meal raises blood sugar and fat more at night than in the day.</p>
+                <p><b>What we do about it.</b> We use the zeitgebers you <i>can</i> control — food timing and training timing — to reduce that mismatch: concentrate eating when your body is more aligned, keep the deep-night hours light, and place training near your true strength peak (a few hours after waking, when core temperature is up).</p>
+                <p class="text-xs text-slate-400">This is a simplified summary of active research. The science is still developing and individual responses vary — another reason to work with your GP.</p>
+            </div>`;
     }
 
     // Only appears when the client actually has a coach.
@@ -4305,6 +4903,10 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         checkIns: [],
         coachConversations: [],
         readinessLogs: {},
+        // One completed daily nutrition/training readiness plan per local date.
+        // This is separate from the Coaching Hub's longer readiness score so
+        // the 10am check-in can tailor today's calories and training safely.
+        dailyReadiness: {},
         coachingTargets: {
             workoutsPerWeek: 3,
             calorieTolerancePercent: 10,
@@ -4502,7 +5104,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         });
         const recordFields = [
             'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs',
+            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ];
         recordFields.forEach(key => {

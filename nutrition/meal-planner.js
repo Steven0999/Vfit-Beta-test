@@ -49,6 +49,9 @@
         if (totalKcalEl) totalKcalEl.innerText = Math.round(totalCals);
         const totalProteinEl = document.getElementById('total-protein');
         if (totalProteinEl) totalProteinEl.innerText = totalProtein.toFixed(1);
+        const target = typeof getDailyCalorieTarget === 'function' ? getDailyCalorieTarget(state.viewDate) : ((state.goals && state.goals.calories) || 2500);
+        const targetEl = document.getElementById('nutrition-calorie-target');
+        if (targetEl) targetEl.textContent = `Target ${Math.round(target)} kcal`;
 
         const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
         const mealIcons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
@@ -93,6 +96,7 @@
         }).join('');
 
         renderNutritionHistory();
+        if (typeof renderDailyReadinessCards === 'function') renderDailyReadinessCards();
         refreshIcons();
     }
 
