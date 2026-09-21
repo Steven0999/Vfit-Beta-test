@@ -421,11 +421,14 @@
         } else if (currentFoodFilter === 'myfoods') {
             const customs = (state.customFoods || []).slice();
             if (customs.length === 0) {
-                resultsList.innerHTML = emptyState('database', 'Your food database is empty', 'Add a food with its portion weight and nutrition values to find it here.');
+                const canEditDatabase = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
+                resultsList.innerHTML = emptyState('database', 'The VFIT food database is empty', canEditDatabase
+                    ? 'Add a food with its portion weight and nutrition values to make it available.'
+                    : 'The owner or an approved editor can add the first food.');
             } else {
                 renderResultCards(customs.map(c => ({ ...c, _source: 'custom', isCustom: true })));
             }
-            if (hint) hint.textContent = 'Your personal food database · tap any item for its full popup';
+            if (hint) hint.textContent = 'VFIT food database · tap any item for its full popup';
         } else if (currentFoodFilter === 'high-protein') {
             const recents = getRecentFoods(50).filter(r => (r.protein || 0) >= 15);
             if (recents.length === 0) {
@@ -544,7 +547,7 @@
 
             if (item._source === 'recent' || item._source === 'custom' || item.isCustom) {
                 name = item.name;
-                brand = item._source === 'recent' ? 'Recently logged' : (item.brand || item.store || 'My Food');
+                brand = item._source === 'recent' ? 'Recently logged' : (item.brand || item.store || 'VFIT Database');
                 image = item.image || '';
                 cals = item.calories || 0;
                 protein = item.protein || 0;
@@ -808,23 +811,26 @@
             renderPagination();
         } else if (offErrored) {
             // Both online sources genuinely failed — this is the real "connection" case.
-            // But the user can still add manually, so make that the call to action.
+            // Approved database editors also get the manual-entry fallback.
+            const canEditDatabase = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
             resultsList.innerHTML = `
                 <div class="text-center py-10">
                     <div class="w-16 h-16 mx-auto mb-4 bg-amber-50 rounded-2xl flex items-center justify-center">
                         <i data-lucide="wifi-off" class="w-8 h-8 text-amber-500"></i>
                     </div>
                     <p class="font-bold text-slate-600 mb-1">Couldn't reach Open Food Facts</p>
-                    <p class="text-xs text-slate-400 mb-4">The search servers may be busy. Try again in a moment,<br>switch region, or add the food manually.</p>
+                    <p class="text-xs text-slate-400 mb-4">The search servers may be busy. Try again in a moment${canEditDatabase ? ',<br>or add the food manually.' : '.'}</p>
                     <div class="flex gap-2 justify-center">
                         <button onclick="retryFoodSearch()" class="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700">Try Again</button>
-                        <button onclick="openManualFoodEntry()" class="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-slate-800">Add Manually</button>
+                        ${canEditDatabase ? '<button onclick="openManualFoodEntry()" class="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-slate-800">Add Manually</button>' : ''}
                     </div>
                 </div>`;
         } else {
             // Sources responded fine, there just aren't any matches for this term.
             resultsList.innerHTML = emptyState('search-x', 'No results found',
-                'Try a different search term or region, or add this food manually below.');
+                (typeof canManageFoodDatabase === 'function' && canManageFoodDatabase())
+                    ? 'Try a different search term, or add this food manually below.'
+                    : 'Try a different food name, brand or barcode.');
         }
         refreshIcons();
     }
@@ -1199,6 +1205,8 @@
         }
         const databaseLabel = document.getElementById('popup-database-action-label');
         if (databaseLabel) databaseLabel.textContent = currentFoodItem.databaseItem ? 'Edit Database Food' : 'Save to Food Database';
+        const databaseAction = document.getElementById('popup-database-action');
+        if (databaseAction) databaseAction.classList.toggle('hidden', typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase());
 
         document.getElementById('popup-amount').value = 1;
         currentAmountType = currentFoodItem.isCustom ? 'portion' : 'portion';
@@ -1401,6 +1409,10 @@
     }
 
     function openManualFoodEntry(foodId) {
+        if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
+            showToast('The food database is read only. Only the owner and approved editors can make changes.', 5500);
+            return;
+        }
         const databaseModal = document.getElementById('food-database-modal');
         reopenFoodDatabaseAfterEdit = !!(databaseModal && databaseModal.style.display === 'flex');
         if (reopenFoodDatabaseAfterEdit) databaseModal.style.display = 'none';
@@ -1544,7 +1556,11 @@
         preview.textContent = `${serving} = ${Math.round(grams * 10) / 10}g · ${Math.round(perPortion.calories)} kcal, ${perPortion.protein.toFixed(1)}g protein · Per 100g: ${Math.round(per100g.calories)} kcal, ${per100g.protein.toFixed(1)}g protein`;
     }
 
-    function saveManualFood() {
+    async function saveManualFood() {
+        if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
+            showToast('Food database editor access is required');
+            return;
+        }
         const name = document.getElementById('manual-food-name').value.trim();
         if (!name) { showToast('Please enter a food name'); return; }
         const servingGrams = nutritionNumber(document.getElementById('manual-food-serving-grams').value);
@@ -1567,7 +1583,7 @@
         const brand = document.getElementById('manual-food-store-input').value.trim();
 
         const food = Object.assign({}, existing, {
-            id: existing.id || ('cf-' + now),
+            id: existing.id || ('cf-' + now + '-' + Math.random().toString(36).slice(2, 8)),
             name,
             brand,
             store: brand,
@@ -1592,16 +1608,34 @@
             updatedAt: now
         });
 
-        if (existingIndex >= 0) state.customFoods[existingIndex] = food;
-        else state.customFoods.unshift(food);
-        saveState();
-        closeManualFoodEntry();
-        renderFilterContent();
-        showToast(existingIndex >= 0 ? 'Database food updated ✓' : 'Saved to your food database ✓');
+        const saveButton = document.getElementById('manual-food-save-button');
+        if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Saving…'; }
+        try {
+            await saveSharedFoodDatabaseItem(food);
+            closeManualFoodEntry();
+            renderFilterContent();
+            showToast(existingIndex >= 0 ? 'Database food updated ✓' : 'Saved to the VFIT food database ✓');
+        } catch (error) {
+            console.error('Food database save failed:', error);
+            const readOnly = error && error.message === 'FOOD_DATABASE_READ_ONLY';
+            const offline = error && error.message === 'FOOD_DATABASE_OFFLINE';
+            showToast(readOnly
+                ? 'Only the owner and approved editors can save database foods'
+                : (offline ? 'Go online to change the shared food database' : 'Could not save the database food — check access and try again'), 6000);
+        } finally {
+            if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.textContent = existingIndex >= 0 ? 'Save Changes' : 'Save to Food Database';
+            }
+        }
     }
 
     function saveCurrentFoodToDatabase() {
         if (!currentFoodItem) return;
+        if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
+            showToast('The food database is read only for this account');
+            return;
+        }
         const databaseId = currentFoodItem.databaseId || (currentFoodItem.databaseItem ? currentFoodItem.id : '');
         if (databaseId) {
             closeFoodPopup();
@@ -1644,6 +1678,7 @@
         if (!modal) return;
         if (!preserveSearch && search) search.value = '';
         modal.style.display = 'flex';
+        if (typeof updateFoodDatabasePermissionUI === 'function') updateFoodDatabasePermissionUI();
         renderFoodDatabase();
         if (search) setTimeout(() => search.focus(), 0);
         refreshIcons();
@@ -1661,6 +1696,7 @@
         const query = String((document.getElementById('food-database-search') || {}).value || '').trim();
         const allFoods = Array.isArray(state.customFoods) ? state.customFoods : [];
         const foods = allFoods.filter(food => foodDatabaseMatchesQuery(food, query));
+        const canManage = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
         if (count) count.textContent = query
             ? `${foods.length} of ${allFoods.length} saved foods`
             : `${allFoods.length} saved food${allFoods.length === 1 ? '' : 's'}`;
@@ -1670,9 +1706,9 @@
                 ? emptyState('search-x', 'No database match', 'Try the food name, brand, category or full barcode.')
                 : `<div class="text-center py-12">
                     <div class="w-16 h-16 mx-auto mb-4 bg-orange-50 rounded-2xl flex items-center justify-center"><i data-lucide="database" class="w-8 h-8 text-orange-500"></i></div>
-                    <p class="font-black text-slate-700 mb-1">Build your own food database</p>
-                    <p class="text-xs text-slate-400 mb-4">Save exact portion weights and full nutrition, then find them instantly.</p>
-                    <button onclick="openManualFoodEntry()" class="bg-orange-600 text-white px-5 py-3 rounded-xl font-black text-sm">Add Your First Food</button>
+                    <p class="font-black text-slate-700 mb-1">${canManage ? 'Build the VFIT food database' : 'No database foods yet'}</p>
+                    <p class="text-xs text-slate-400 mb-4">${canManage ? 'Save exact portion weights and full nutrition, then everyone can find them instantly.' : 'The owner or an approved editor can add the first food.'}</p>
+                    ${canManage ? '<button onclick="openManualFoodEntry()" class="bg-orange-600 text-white px-5 py-3 rounded-xl font-black text-sm">Add Your First Food</button>' : ''}
                 </div>`;
             refreshIcons();
             return;
@@ -1694,10 +1730,10 @@
                         <div class="text-[11px] text-slate-400 truncate">${escapeHtml(brand)} · ${escapeHtml(portion)}${servingGrams > 0 ? ` · ${Math.round(servingGrams * 10) / 10}g` : ''}</div>
                         <div class="text-xs mt-1"><span class="font-black text-indigo-600">${Math.round(nutritionNumber(food.calories))} kcal</span><span class="font-bold text-emerald-600 ml-3">${nutritionNumber(food.protein).toFixed(1)}g protein</span></div>
                     </button>
-                    <div class="flex gap-1 flex-shrink-0">
+                    ${canManage ? `<div class="flex gap-1 flex-shrink-0">
                         <button onclick="editDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center" aria-label="Edit ${escapeHtml(food.name || 'food')}"><i data-lucide="pencil" class="w-4 h-4"></i></button>
                         <button onclick="deleteDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-red-50 text-red-500 flex items-center justify-center" aria-label="Delete ${escapeHtml(food.name || 'food')}"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                    </div>
+                    </div>` : ''}
                 </div>
             </div>`;
         }).join('');
@@ -1712,16 +1748,30 @@
     }
 
     function editDatabaseFood(foodId) {
+        if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
+            showToast('Food database editor access is required');
+            return;
+        }
         openManualFoodEntry(foodId);
     }
 
-    function deleteDatabaseFood(foodId) {
+    async function deleteDatabaseFood(foodId) {
+        if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
+            showToast('Only the owner and approved editors can delete database foods');
+            return;
+        }
         const food = (state.customFoods || []).find(item => String(item.id) === String(foodId));
         if (!food) return;
         if (!window.confirm(`Delete “${food.name || 'this food'}” from your database?`)) return;
-        state.customFoods = state.customFoods.filter(item => String(item.id) !== String(foodId));
-        saveState();
-        renderFoodDatabase();
-        renderFilterContent();
-        showToast('Food removed from database');
+        try {
+            await deleteSharedFoodDatabaseItem(foodId);
+            renderFoodDatabase();
+            renderFilterContent();
+            showToast('Food removed from the shared database');
+        } catch (error) {
+            console.error('Food database delete failed:', error);
+            showToast(error && error.message === 'FOOD_DATABASE_OFFLINE'
+                ? 'Go online to change the shared food database'
+                : 'Could not delete this food — check your editor access', 6000);
+        }
     }

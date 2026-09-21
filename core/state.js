@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.12';
+    const VFIT_APP_VERSION = '2.1.0-beta.13';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -166,6 +166,11 @@
             } else {
                 banner.classList.add('hidden');
             }
+            if (announceOnline && currentUser && !sharedFoodDatabaseUnsubscribe) {
+                resolveFoodDatabaseAccess(currentUser)
+                    .then(() => loadSharedFoodDatabase())
+                    .catch(error => console.warn('Food database reconnect sync pending:', error));
+            }
         } else {
             banner.textContent = 'Offline — changes are saved on this device';
             banner.className = 'bg-amber-500 text-black px-4 py-2 rounded-full text-xs font-black shadow-xl';
@@ -236,6 +241,9 @@
     let firebaseUserData = {};
     let currentUserRole = 'member'; // resolved each login from the coach-email allowlist
     let currentUserIsOwner = false; // resolved from the private admins/{uid} record
+    let currentUserCanManageFoodDatabase = false;
+    let sharedFoodDatabaseUnsubscribe = null;
+    let foodDatabaseEditorsUnsubscribe = null;
     let viewingClientData = null;
     let authSessionGeneration = 0;
 
@@ -257,6 +265,201 @@
             if (currentUser && currentUser.uid === user.uid) currentUserIsOwner = false;
             return false;
         }
+    }
+
+    function canManageFoodDatabase() {
+        return Boolean(currentUser && (isOwner() || currentUserCanManageFoodDatabase));
+    }
+
+    function updateFoodDatabasePermissionUI() {
+        const canManage = canManageFoodDatabase();
+        const addButton = document.getElementById('food-database-add-button');
+        if (addButton) addButton.classList.toggle('hidden', !canManage);
+        const manualButton = document.getElementById('food-manual-entry-button');
+        if (manualButton) manualButton.classList.toggle('hidden', !canManage);
+        const accessLabel = document.getElementById('food-database-access-label');
+        if (accessLabel) {
+            accessLabel.textContent = canManage ? 'Editor access' : 'Read only';
+            accessLabel.className = canManage
+                ? 'text-[10px] font-black uppercase text-emerald-600'
+                : 'text-[10px] font-black uppercase text-slate-400';
+        }
+        const popupAction = document.getElementById('popup-database-action');
+        if (popupAction) popupAction.classList.toggle('hidden', !canManage);
+        if (typeof renderFoodDatabase === 'function') {
+            const modal = document.getElementById('food-database-modal');
+            if (modal && modal.style.display === 'flex') renderFoodDatabase();
+        }
+    }
+
+    async function resolveFoodDatabaseAccess(user) {
+        if (!user) {
+            currentUserCanManageFoodDatabase = false;
+            updateFoodDatabasePermissionUI();
+            return false;
+        }
+        if (isOwner()) {
+            currentUserCanManageFoodDatabase = true;
+            updateFoodDatabasePermissionUI();
+            return true;
+        }
+        try {
+            const doc = await db.collection('config').doc('foodDatabaseEditors').get();
+            const uids = doc.exists && Array.isArray(doc.data().uids) ? doc.data().uids : [];
+            currentUserCanManageFoodDatabase = uids.some(uid => String(uid) === String(user.uid));
+        } catch (error) {
+            console.warn('Food database access could not be verified:', error);
+            currentUserCanManageFoodDatabase = false;
+        }
+        updateFoodDatabasePermissionUI();
+        return currentUserCanManageFoodDatabase;
+    }
+
+    function stopSharedFoodDatabaseSync() {
+        if (typeof sharedFoodDatabaseUnsubscribe === 'function') sharedFoodDatabaseUnsubscribe();
+        if (typeof foodDatabaseEditorsUnsubscribe === 'function') foodDatabaseEditorsUnsubscribe();
+        sharedFoodDatabaseUnsubscribe = null;
+        foodDatabaseEditorsUnsubscribe = null;
+    }
+
+    function sharedFoodNumber(value, max) {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? Math.min(number, max || 1000000) : 0;
+    }
+
+    function normaliseSharedFoodDatabaseItem(input, fallbackId) {
+        const food = isPlainRecord(input) ? input : {};
+        const rawId = String(food.id || fallbackId || ('cf-' + Date.now()));
+        const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120) || ('cf-' + Date.now());
+        const servingGrams = sharedFoodNumber(food.servingGrams || 100, 100000);
+        const per100Input = isPlainRecord(food.per100g) ? food.per100g : {};
+        const portionFactor = servingGrams > 0 ? 100 / servingGrams : 1;
+        const readPer100 = key => sharedFoodNumber(
+            per100Input[key] !== undefined ? per100Input[key] : sharedFoodNumber(food[key]) * portionFactor
+        );
+        const sodiumMg = sharedFoodNumber(food.sodiumMg !== undefined ? food.sodiumMg : sharedFoodNumber(food.sodium) * 1000);
+        const per100g = {
+            calories: readPer100('calories'),
+            protein: readPer100('protein'),
+            carbs: readPer100('carbs'),
+            fat: readPer100('fat'),
+            fiber: readPer100('fiber'),
+            sugar: readPer100('sugar'),
+            satFat: readPer100('satFat'),
+            sodiumMg: sharedFoodNumber(per100Input.sodiumMg !== undefined ? per100Input.sodiumMg : sodiumMg * portionFactor),
+            cholesterol: readPer100('cholesterol')
+        };
+        const allowedCategories = new Set(['general', 'protein', 'carbohydrate', 'fruit-veg', 'dairy', 'snack', 'drink', 'meal']);
+        const category = allowedCategories.has(food.category) ? food.category : 'general';
+        const createdAt = sharedFoodNumber(food.createdAt) || Date.now();
+        const updatedAt = Math.max(createdAt, sharedFoodNumber(food.updatedAt) || createdAt);
+        return {
+            id,
+            name: String(food.name || 'Food').trim().slice(0, 160) || 'Food',
+            brand: String(food.brand || food.store || '').trim().slice(0, 160),
+            store: String(food.store || food.brand || '').trim().slice(0, 160),
+            category,
+            barcode: String(food.barcode || '').replace(/\D/g, '').slice(0, 32),
+            image: safeImageUrl(food.image || '').slice(0, 300000),
+            calories: sharedFoodNumber(food.calories),
+            protein: sharedFoodNumber(food.protein),
+            carbs: sharedFoodNumber(food.carbs),
+            fat: sharedFoodNumber(food.fat),
+            fiber: sharedFoodNumber(food.fiber),
+            sugar: sharedFoodNumber(food.sugar),
+            satFat: sharedFoodNumber(food.satFat),
+            sodiumMg,
+            sodium: sodiumMg / 1000,
+            cholesterol: sharedFoodNumber(food.cholesterol),
+            serving: String(food.serving || '1 portion').trim().slice(0, 80) || '1 portion',
+            servingGrams: servingGrams || 100,
+            per100g,
+            source: 'personal-database',
+            createdAt,
+            updatedAt
+        };
+    }
+
+    function applySharedFoodDatabaseSnapshot(snapshot) {
+        const foods = [];
+        snapshot.forEach(doc => foods.push(normaliseSharedFoodDatabaseItem(doc.data(), doc.id)));
+        foods.sort((a, b) => a.name.localeCompare(b.name));
+        state.customFoods = foods;
+        saveState({ skipCloud: true, preserveUpdatedAt: true });
+        if (typeof renderFilterContent === 'function') renderFilterContent();
+        if (typeof renderFoodDatabase === 'function') {
+            const modal = document.getElementById('food-database-modal');
+            if (modal && modal.style.display === 'flex') renderFoodDatabase();
+        }
+    }
+
+    async function migrateOwnerFoodDatabase(localFoods) {
+        const foods = (Array.isArray(localFoods) ? localFoods : []).slice(0, 1000)
+            .map(food => normaliseSharedFoodDatabaseItem(food));
+        for (let start = 0; start < foods.length; start += 20) {
+            const batch = db.batch();
+            foods.slice(start, start + 20).forEach(food => {
+                batch.set(db.collection('foodDatabase').doc(food.id), food);
+            });
+            await batch.commit();
+        }
+        return foods;
+    }
+
+    function startSharedFoodDatabaseListeners() {
+        stopSharedFoodDatabaseSync();
+        if (!currentUser) return;
+        sharedFoodDatabaseUnsubscribe = db.collection('foodDatabase').limit(1000).onSnapshot(
+            applySharedFoodDatabaseSnapshot,
+            error => console.warn('Food database live sync paused:', error)
+        );
+        foodDatabaseEditorsUnsubscribe = db.collection('config').doc('foodDatabaseEditors').onSnapshot(doc => {
+            const uids = doc.exists && Array.isArray(doc.data().uids) ? doc.data().uids : [];
+            currentUserCanManageFoodDatabase = isOwner() || uids.some(uid => String(uid) === String(currentUser && currentUser.uid));
+            updateFoodDatabasePermissionUI();
+        }, error => console.warn('Food database permission sync paused:', error));
+    }
+
+    async function loadSharedFoodDatabase() {
+        if (!currentUser) return false;
+        const cachedFoods = Array.isArray(state.customFoods) ? state.customFoods.slice() : [];
+        try {
+            let snapshot = await db.collection('foodDatabase').limit(1000).get();
+            if (snapshot.empty && isOwner() && cachedFoods.length > 0) {
+                await migrateOwnerFoodDatabase(cachedFoods);
+                snapshot = await db.collection('foodDatabase').limit(1000).get();
+            }
+            applySharedFoodDatabaseSnapshot(snapshot);
+            startSharedFoodDatabaseListeners();
+            return true;
+        } catch (error) {
+            console.warn('Using the cached food database until secure sync is available:', error);
+            updateFoodDatabasePermissionUI();
+            return false;
+        }
+    }
+
+    async function saveSharedFoodDatabaseItem(food) {
+        if (!canManageFoodDatabase()) throw new Error('FOOD_DATABASE_READ_ONLY');
+        if (!currentUser || !navigator.onLine) throw new Error('FOOD_DATABASE_OFFLINE');
+        const normalised = normaliseSharedFoodDatabaseItem(food);
+        await db.collection('foodDatabase').doc(normalised.id).set(normalised);
+        const existingIndex = (state.customFoods || []).findIndex(item => String(item.id) === normalised.id);
+        if (existingIndex >= 0) state.customFoods[existingIndex] = normalised;
+        else state.customFoods.unshift(normalised);
+        saveState({ skipCloud: true });
+        return normalised;
+    }
+
+    async function deleteSharedFoodDatabaseItem(foodId) {
+        if (!canManageFoodDatabase()) throw new Error('FOOD_DATABASE_READ_ONLY');
+        if (!currentUser || !navigator.onLine) throw new Error('FOOD_DATABASE_OFFLINE');
+        const id = String(foodId || '').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120);
+        if (!id) throw new Error('FOOD_DATABASE_INVALID_ID');
+        await db.collection('foodDatabase').doc(id).delete();
+        state.customFoods = (state.customFoods || []).filter(item => String(item.id) !== id);
+        saveState({ skipCloud: true });
+        return true;
     }
 
     function requireCoachAccess() {
@@ -309,7 +512,7 @@
      * Build the admin card HTML. Parametrised by element ids so it can be shown
      * in more than one place (member profile and coach dashboard).
      */
-    function ownerAdminHTML(inputId, listId) {
+    function ownerAdminHTML(inputId, listId, foodEditorListId) {
         return `
             <div class="flex items-center gap-2 mb-3">
                 <i data-lucide="shield-check" class="w-5 h-5 text-indigo-600"></i>
@@ -322,6 +525,16 @@
             </div>
             <div id="${listId}" class="space-y-2">
                 <p class="text-sm text-slate-400 text-center py-2">Loading...</p>
+            </div>
+            <div class="border-t border-slate-200 mt-6 pt-5">
+                <div class="flex items-center gap-2 mb-2">
+                    <i data-lucide="database" class="w-5 h-5 text-orange-600"></i>
+                    <h3 class="text-lg font-black">Food Database Permissions</h3>
+                </div>
+                <p class="text-xs text-slate-400 mb-3">Everyone can search and use foods. Only you and the people you allow below can add, edit or delete database items.</p>
+                <div id="${foodEditorListId}" class="space-y-2 max-h-80 overflow-y-auto pr-1">
+                    <p class="text-sm text-slate-400 text-center py-2">Loading registered users...</p>
+                </div>
             </div>`;
     }
 
@@ -334,9 +547,12 @@
         if (!container) return;
         if (!isOwner()) { container.style.display = 'none'; container.innerHTML = ''; return; }
         container.style.display = 'block';
-        container.innerHTML = ownerAdminHTML('admin-email-profile', 'admin-list-profile');
+        container.innerHTML = ownerAdminHTML('admin-email-profile', 'admin-list-profile', 'food-editor-list-profile');
         refreshIcons();
-        await loadCoachEmailList('admin-list-profile');
+        await Promise.all([
+            loadCoachEmailList('admin-list-profile'),
+            loadFoodDatabaseEditorList('food-editor-list-profile')
+        ]);
     }
 
     async function loadCoachEmailList(listId) {
@@ -397,6 +613,80 @@
         } catch (e) {
             console.error('Error removing coach email:', e);
             showToast('Could not remove — check rules');
+        }
+    }
+
+    async function loadFoodDatabaseEditorList(listId) {
+        const el = document.getElementById(listId);
+        if (!el || !isOwner()) return;
+        try {
+            const [configDoc, directorySnapshot] = await Promise.all([
+                db.collection('config').doc('foodDatabaseEditors').get(),
+                db.collection('directory').limit(200).get()
+            ]);
+            const selected = new Set(
+                configDoc.exists && Array.isArray(configDoc.data().uids)
+                    ? configDoc.data().uids.map(uid => String(uid))
+                    : []
+            );
+            const people = [];
+            directorySnapshot.forEach(doc => {
+                if (currentUser && doc.id === currentUser.uid) return;
+                const data = doc.data() || {};
+                people.push({
+                    uid: doc.id,
+                    name: String(data.name || 'VFIT user').slice(0, 120),
+                    email: String(data.email || '').slice(0, 254),
+                    role: data.role === 'coach' ? 'Coach' : 'Member'
+                });
+            });
+            const listedUids = new Set(people.map(person => person.uid));
+            selected.forEach(uid => {
+                if ((!currentUser || uid !== currentUser.uid) && !listedUids.has(uid)) {
+                    people.push({ uid, name: 'Unavailable account', email: uid, role: 'Saved UID' });
+                }
+            });
+            people.sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email));
+            if (people.length === 0) {
+                el.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No other registered users are available yet.</p>';
+                return;
+            }
+            el.innerHTML = people.map(person => {
+                const allowed = selected.has(person.uid);
+                const uid = escapeJsString(person.uid);
+                const targetList = escapeJsString(listId);
+                return `<div class="flex items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl">
+                    <div class="min-w-0">
+                        <p class="text-sm font-bold truncate">${escapeHtml(person.name)}</p>
+                        <p class="text-[11px] text-slate-400 truncate">${escapeHtml(person.email || person.uid)} · ${person.role}</p>
+                    </div>
+                    <button onclick="setFoodDatabaseEditorAccess('${uid}',${allowed ? 'false' : 'true'},'${targetList}')" class="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-black ${allowed ? 'bg-rose-50 text-rose-600' : 'bg-emerald-600 text-white'}">
+                        ${allowed ? 'Remove' : 'Allow'}
+                    </button>
+                </div>`;
+            }).join('');
+            refreshIcons();
+        } catch (error) {
+            console.error('Error loading food database editors:', error);
+            el.innerHTML = '<p class="text-sm text-rose-500 text-center py-2">Could not load database permissions — check the Firebase rules are published.</p>';
+        }
+    }
+
+    async function setFoodDatabaseEditorAccess(uid, allowed, listId) {
+        if (!isOwner()) { showToast('Owner access only'); return; }
+        const safeUid = String(uid || '').trim().slice(0, 128);
+        if (!safeUid || safeUid === (currentUser && currentUser.uid)) return;
+        try {
+            await db.collection('config').doc('foodDatabaseEditors').set({
+                uids: allowed
+                    ? firebase.firestore.FieldValue.arrayUnion(safeUid)
+                    : firebase.firestore.FieldValue.arrayRemove(safeUid)
+            }, { merge: true });
+            showToast(allowed ? 'Food database editor access granted ✓' : 'Food database editor access removed');
+            await loadFoodDatabaseEditorList(listId);
+        } catch (error) {
+            console.error('Error updating food database editor:', error);
+            showToast('Could not update food database access — check the published rules', 5500);
         }
     }
 
@@ -1067,9 +1357,12 @@
             const adminBox = document.getElementById('owner-admin-section-coach');
             if (adminBox) {
                 adminBox.style.display = 'block';
-                adminBox.innerHTML = ownerAdminHTML('admin-email-coach', 'admin-list-coach');
+                adminBox.innerHTML = ownerAdminHTML('admin-email-coach', 'admin-list-coach', 'food-editor-list-coach');
                 refreshIcons();
-                await loadCoachEmailList('admin-list-coach');
+                await Promise.all([
+                    loadCoachEmailList('admin-list-coach'),
+                    loadFoodDatabaseEditorList('food-editor-list-coach')
+                ]);
             }
         }
     }
@@ -4853,7 +5146,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         nutritionHistory: [],
         metricsHistory: [],
         createdMeals: [],
-        customFoods: [],
+        customFoods: [], // offline cache of the owner-managed shared food database
         barcodeFoods: [],
         // Seven-day shift-aware planner and its persistent manual/scanned shopping items.
         weeklyMealPlan: {},

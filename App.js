@@ -9,10 +9,12 @@
 
         if (!user) {
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
+            stopSharedFoodDatabaseSync();
             currentUser = null;
             firebaseUserData = {};
             currentUserRole = 'member';
             currentUserIsOwner = false;
+            currentUserCanManageFoodDatabase = false;
             accountMembership = { tier: 'free', status: 'inactive' };
             viewingClientData = null;
             cloudDirty = false;
@@ -33,8 +35,10 @@
             return;
         }
 
+        stopSharedFoodDatabaseSync();
         currentUser = user;
         currentUserIsOwner = false;
+        currentUserCanManageFoodDatabase = false;
         if (authScreen) authScreen.style.display = 'none';
         // Keep the application hidden until device and cloud data are reconciled.
         // That prevents a blank/default dashboard flashing and then overwriting
@@ -44,6 +48,10 @@
         await resolveOwnerAccess(user);
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
         await loadFirebaseUserData();
+        if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
+        await resolveFoodDatabaseAccess(user);
+        if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
+        await loadSharedFoodDatabase();
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
 
         // A saved snapshot may contain whichever historical day the member last

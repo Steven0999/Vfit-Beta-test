@@ -16,6 +16,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
     }
 
+    function foodDatabaseEditor() {
+      return owner()
+        || (
+          signedIn()
+          && exists(/databases/$(database)/documents/config/foodDatabaseEditors)
+          && get(/databases/$(database)/documents/config/foodDatabaseEditors).data.uids is list
+          && request.auth.uid
+            in get(/databases/$(database)/documents/config/foodDatabaseEditors).data.uids
+        );
+    }
+
     function approvedCoach() {
       return signedIn()
         && request.auth.token.email is string
@@ -35,6 +46,15 @@ service cloud.firestore {
       allow create, update, delete: if owner();
     }
 
+    match /config/foodDatabaseEditors {
+      allow read: if signedIn();
+      allow create, update: if owner()
+        && request.resource.data.keys().hasOnly(['uids'])
+        && request.resource.data.uids is list
+        && request.resource.data.uids.size() <= 200;
+      allow delete: if owner();
+    }
+
     // Admin identities are provisioned only through the Firebase Console or
     // Admin SDK. A signed-in user may check only their own access record.
     match /admins/{uid} {
@@ -45,7 +65,7 @@ service cloud.firestore {
     // A deliberately small lookup document lets approved coaches find a member
     // by email without exposing that member's health, workout or nutrition data.
     match /directory/{uid} {
-      allow read: if owns(uid) || approvedCoach();
+      allow read: if owns(uid) || approvedCoach() || owner();
       allow create, update: if owns(uid)
         && request.resource.data.uid == uid
         && request.resource.data.email == request.auth.token.email
@@ -58,6 +78,71 @@ service cloud.firestore {
           || (approvedCoach() && request.resource.data.role == 'coach')
         );
       allow delete: if false;
+    }
+
+    function validFoodNutrition(data) {
+      return data is map
+        && data.keys().hasOnly([
+          'calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar',
+          'satFat', 'sodiumMg', 'cholesterol'
+        ])
+        && data.calories is number && data.calories >= 0 && data.calories <= 1000000
+        && data.protein is number && data.protein >= 0 && data.protein <= 1000000
+        && data.carbs is number && data.carbs >= 0 && data.carbs <= 1000000
+        && data.fat is number && data.fat >= 0 && data.fat <= 1000000
+        && data.fiber is number && data.fiber >= 0 && data.fiber <= 1000000
+        && data.sugar is number && data.sugar >= 0 && data.sugar <= 1000000
+        && data.satFat is number && data.satFat >= 0 && data.satFat <= 1000000
+        && data.sodiumMg is number && data.sodiumMg >= 0 && data.sodiumMg <= 1000000
+        && data.cholesterol is number && data.cholesterol >= 0 && data.cholesterol <= 1000000;
+    }
+
+    function validFoodDatabaseItem(foodId, data) {
+      return data.keys().hasOnly([
+          'id', 'name', 'brand', 'store', 'category', 'barcode', 'image',
+          'calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar',
+          'satFat', 'sodiumMg', 'sodium', 'cholesterol', 'serving',
+          'servingGrams', 'per100g', 'source', 'createdAt', 'updatedAt'
+        ])
+        && data.id == foodId
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && data.brand is string && data.brand.size() <= 160
+        && data.store is string && data.store.size() <= 160
+        && data.category in [
+          'general', 'protein', 'carbohydrate', 'fruit-veg',
+          'dairy', 'snack', 'drink', 'meal'
+        ]
+        && data.barcode is string && data.barcode.size() <= 32
+        && (data.barcode == '' || data.barcode.matches('^[0-9]{1,32}$'))
+        && data.image is string && data.image.size() <= 300000
+        && data.calories is number && data.calories >= 0 && data.calories <= 1000000
+        && data.protein is number && data.protein >= 0 && data.protein <= 1000000
+        && data.carbs is number && data.carbs >= 0 && data.carbs <= 1000000
+        && data.fat is number && data.fat >= 0 && data.fat <= 1000000
+        && data.fiber is number && data.fiber >= 0 && data.fiber <= 1000000
+        && data.sugar is number && data.sugar >= 0 && data.sugar <= 1000000
+        && data.satFat is number && data.satFat >= 0 && data.satFat <= 1000000
+        && data.sodiumMg is number && data.sodiumMg >= 0 && data.sodiumMg <= 1000000
+        && data.sodium is number && data.sodium >= 0 && data.sodium <= 1000000
+        && data.cholesterol is number && data.cholesterol >= 0 && data.cholesterol <= 1000000
+        && data.serving is string && data.serving.size() >= 1 && data.serving.size() <= 80
+        && data.servingGrams is number && data.servingGrams > 0 && data.servingGrams <= 100000
+        && validFoodNutrition(data.per100g)
+        && data.source == 'personal-database'
+        && data.createdAt is number && data.createdAt > 0
+        && data.updatedAt is number && data.updatedAt >= data.createdAt;
+    }
+
+    // The shared catalogue is readable by every signed-in VFIT user. Only the
+    // provisioned owner and owner-selected UIDs can change its contents.
+    match /foodDatabase/{foodId} {
+      allow read: if signedIn();
+      allow create: if foodDatabaseEditor()
+        && validFoodDatabaseItem(foodId, request.resource.data);
+      allow update: if foodDatabaseEditor()
+        && validFoodDatabaseItem(foodId, request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if foodDatabaseEditor();
     }
 
     match /users/{uid} {
