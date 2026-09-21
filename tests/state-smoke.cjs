@@ -204,7 +204,12 @@ const expose = `
   plannerWeekStart,
   plannerWeekDates,
   plannerShiftType,
+  plannerMealIdeas,
+  shoppingListPlannerMealIdeas,
+  createdMealPlannerIdeas,
+  diaryPlannerMealIdeas,
   plannerMealSelection,
+  weeklyPlannerDayTotals,
   coachPlanDocumentId,
   coachPlanMealIdeas,
   progressPhotoReference,
@@ -290,8 +295,8 @@ const safetyRecord = app.structuredMealSafety(standardVeganBreakfasts[0]);
 assert.equal(safetyRecord.source, 'curated-built-in-recipe-record');
 assert.ok(Array.isArray(safetyRecord.allergens));
 
-// Seven-day planning starts on Monday, follows rota overrides and stores a
-// compatible meal selection in the normal account state.
+// Seven-day planning starts on Monday, follows rota overrides and only uses
+// saved shopping-list ingredients, Create Meal entries or previous diary meals.
 assert.equal(app.plannerWeekStart('2026-09-03'), '2026-08-31');
 assert.equal(app.plannerWeekDates('2026-09-03').length, 7);
 const plannerState = app.defaultState();
@@ -300,12 +305,62 @@ plannerState.dietaryProfile = {
 };
 plannerState.shiftProfile.enabled = true;
 plannerState.shiftProfile.rota['2026-09-03'] = { type: 'night', start: '20:00', end: '08:00' };
+plannerState.createdMeals = [{
+  id: 'created-breakfast',
+  name: 'Saved tofu breakfast',
+  calories: 430,
+  protein: 32,
+  carbs: 44,
+  fat: 15,
+  fiber: 9,
+  defaultMealType: 'breakfast',
+  ingredients: [{ name: 'Firm tofu', grams: 180 }, { name: 'Wholegrain wrap', grams: 70 }],
+  createdAt: '2026-09-02T12:00:00.000Z'
+}];
+plannerState.nutritionHistory = [{
+  date: '2026-09-01',
+  meals: [{
+    id: 'diary-breakfast',
+    name: 'Logged soy yogurt bowl',
+    mealType: 'breakfast',
+    calories: 390,
+    protein: 29,
+    carbs: 42,
+    fat: 12,
+    fiber: 8,
+    ingredients: ['Soy yogurt', 'Berries']
+  }]
+}];
+plannerState.shoppingItems = standardVeganBreakfasts[0].ingredients.map((name, index) => ({
+  id: 'shopping-' + index,
+  name,
+  quantity: '1'
+}));
 app.setState(plannerState);
 assert.equal(app.plannerShiftType('2026-09-03'), 'night');
+const allowedBreakfasts = Array.from(app.plannerMealIdeas('2026-09-03', 'breakfast'));
+assert.ok(allowedBreakfasts.some(idea => idea.createdMealSource));
+assert.ok(allowedBreakfasts.some(idea => idea.diarySource));
+assert.ok(allowedBreakfasts.some(idea => idea.shoppingListSource));
+assert.ok(allowedBreakfasts.every(idea => idea.createdMealSource || idea.diarySource || idea.shoppingListSource));
 const plannedMeal = app.plannerMealSelection('2026-09-03', 'breakfast');
-assert.ok(plannedMeal.idea.id.startsWith('vegan-'));
-assert.equal(plannedMeal.idea.portionAdjusted, true);
+assert.ok(plannedMeal.idea.createdMealSource || plannedMeal.idea.diarySource || plannedMeal.idea.shoppingListSource);
 assert.equal(app.getState().weeklyMealPlan['2026-09-03'].meals.breakfast.recipeId, plannedMeal.idea.id);
+const plannedDayTotals = app.weeklyPlannerDayTotals('2026-09-03');
+const selectedDayIdeas = ['breakfast', 'lunch', 'dinner', 'snack']
+  .map(mealType => app.plannerMealSelection('2026-09-03', mealType).idea)
+  .filter(Boolean);
+assert.equal(plannedDayTotals.calories, selectedDayIdeas.reduce((sum, idea) => sum + (Number(idea.calories) || 0), 0));
+assert.equal(plannedDayTotals.protein, selectedDayIdeas.reduce((sum, idea) => sum + (Number(idea.protein) || 0), 0));
+
+const emptyPlannerState = app.defaultState();
+emptyPlannerState.dietaryProfile = plannerState.dietaryProfile;
+emptyPlannerState.shiftProfile = plannerState.shiftProfile;
+app.setState(emptyPlannerState);
+assert.equal(app.plannerMealIdeas('2026-09-03', 'breakfast').length, 0);
+assert.equal(app.plannerMealSelection('2026-09-03', 'breakfast').idea, null);
+
+app.setState(plannerState);
 
 const clientSnapshot = { dietaryProfile: plannerState.dietaryProfile, shiftProfile: plannerState.shiftProfile };
 const coachIdeas = Array.from(app.coachPlanMealIdeas(clientSnapshot, '2026-09-03', 'breakfast'));
