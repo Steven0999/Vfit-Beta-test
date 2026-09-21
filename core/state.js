@@ -1,5994 +1,3322 @@
-    // ==========================================================================
-    // APP FOUNDATION ‚Äî versioning, safe rendering and resilient UI helpers
-    // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.13';
-    const VFIT_STATE_SCHEMA_VERSION = 8;
-    const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
-    const RUNTIME_CONFIG = Object.freeze(Object.assign({
-        functionsRegion: 'europe-west2',
-        appCheckSiteKey: '',
-        fcmVapidKey: '',
-        paymentsEnabled: false,
-        pushEnabled: false,
-        privacyVersion: '2026-09-14'
-    }, window.VFIT_CONFIG || {}));
-    const LEGACY_STATE_KEY = 'fittrack_state';
-    const STATE_KEY_PREFIX = 'vfit_state_v2:';
-    const STATE_BACKUP_PREFIX = 'vfit_state_backup_v2:';
-    const LEGACY_MIGRATION_KEY = 'vfit_legacy_state_migrated_uid';
-
-    let iconRefreshPending = false;
-    let accessibilityRefreshPending = false;
-    let networkStatusTimer = null;
-    let missingChartNoticeShown = false;
-
-    /** Device-local YYYY-MM-DD key used before state is initialised. */
-    function localDateKey(value) {
-        const date = value instanceof Date ? value : new Date(value || Date.now());
-        const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-        return local.toISOString().slice(0, 10);
-    }
-
-    /** Batch Lucide's expensive full-document scan and tolerate first-load offline mode. */
-    function refreshIcons() {
-        if (iconRefreshPending) return;
-        iconRefreshPending = true;
-        const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
-        schedule(() => {
-            iconRefreshPending = false;
-            try {
-                if (window.lucide && typeof window.lucide.createIcons === 'function') {
-                    window.lucide.createIcons();
-                }
-            } catch (error) {
-                console.warn('Icon refresh skipped:', error);
-            }
-        });
-    }
-
-    function escapeJsString(value) {
-        return String(value == null ? '' : value)
-            .replace(/\\/g, '\\\\')
-            .replace(/'/g, "\\'")
-            .replace(/"/g, '\\x22')
-            .replace(/</g, '\\x3C')
-            .replace(/>/g, '\\x3E')
-            .replace(/&/g, '\\x26')
-            .replace(/\r/g, '\\r')
-            .replace(/\n/g, '\\n')
-            .replace(/\u2028/g, '\\u2028')
-            .replace(/\u2029/g, '\\u2029');
-    }
-
-    function safeJsonForInline(value) {
-        const json = JSON.stringify(value);
-        if (json === undefined) return 'null';
-        return json
-            .replace(/&/g, '\\u0026')
-            .replace(/</g, '\\u003c')
-            .replace(/>/g, '\\u003e')
-            .replace(/'/g, '\\u0027');
-    }
-
-    /** Allow only image schemes browsers can display safely in this app. */
-    function safeImageUrl(value) {
-        if (!value) return '';
-        const raw = String(value).trim();
-        if (/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(raw)) return raw;
-        if (/^blob:/i.test(raw)) return raw;
-        try {
-            const url = new URL(raw, window.location.href);
-            return (url.protocol === 'https:' || url.protocol === 'http:') ? url.href : '';
-        } catch (error) {
-            return '';
-        }
-    }
-
-    function safeInvoke(label, callback) {
-        try {
-            return callback();
-        } catch (error) {
-            console.error(label + ' failed:', error);
-            showToast('That screen hit a problem. Your saved data is safe.', 5000);
-            return undefined;
-        }
-    }
-
-    function chartLibraryReady(canvas) {
-        if (typeof window.Chart === 'function') return true;
-        if (canvas) canvas.setAttribute('aria-label', 'Chart unavailable until the app has loaded once while online');
-        if (!missingChartNoticeShown) {
-            missingChartNoticeShown = true;
-            showToast('Charts will be available after VFIT loads once while online', 6000);
-        }
-        return false;
-    }
-
-    /** Add safe defaults to static and dynamically-rendered controls. */
-    function ensureAccessibleDom(root) {
-        const scope = root && root.querySelectorAll ? root : document;
-        scope.querySelectorAll('button:not([type])').forEach(button => { button.type = 'button'; });
-        scope.querySelectorAll('img:not([alt])').forEach(img => { img.alt = ''; });
-        scope.querySelectorAll('img').forEach(img => {
-            if (!img.hasAttribute('decoding')) img.decoding = 'async';
-        });
-        scope.querySelectorAll('.modal-overlay').forEach(modal => {
-            modal.setAttribute('role', 'dialog');
-            modal.setAttribute('aria-modal', 'true');
-            if (!modal.hasAttribute('aria-label') && !modal.hasAttribute('aria-labelledby')) {
-                const heading = modal.querySelector('h1, h2, h3');
-                if (heading) {
-                    if (!heading.id) heading.id = `${modal.id || 'vfit-modal'}-title`;
-                    modal.setAttribute('aria-labelledby', heading.id);
-                } else {
-                    modal.setAttribute('aria-label', 'VFIT dialog');
-                }
-            }
-        });
-        scope.querySelectorAll('input:not([aria-label]):not([aria-labelledby]), select:not([aria-label]):not([aria-labelledby]), textarea:not([aria-label]):not([aria-labelledby])').forEach(control => {
-            if (control.labels && control.labels.length > 0) return;
-            const label = control.getAttribute('placeholder') || control.id.replace(/[-_]/g, ' ') || 'Input';
-            control.setAttribute('aria-label', label);
-        });
-        scope.querySelectorAll('[onclick]:not(button):not(a):not(input):not(select):not(textarea)').forEach(control => {
-            if (!control.hasAttribute('role')) control.setAttribute('role', 'button');
-            if (!control.hasAttribute('tabindex')) control.tabIndex = 0;
-            if (control.dataset.keyboardClick === 'true') return;
-            control.dataset.keyboardClick = 'true';
-            control.addEventListener('keydown', event => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    control.click();
-                }
-            });
-        });
-    }
-
-    function scheduleAccessibleDomRefresh() {
-        if (accessibilityRefreshPending) return;
-        accessibilityRefreshPending = true;
-        const schedule = window.requestIdleCallback || ((fn) => setTimeout(fn, 80));
-        schedule(() => {
-            accessibilityRefreshPending = false;
-            ensureAccessibleDom(document);
-        }, { timeout: 500 });
-    }
-
-    function updateNetworkStatus(announceOnline) {
-        const banner = document.getElementById('network-status');
-        if (!banner) return;
-        clearTimeout(networkStatusTimer);
-        if (navigator.onLine) {
-            banner.textContent = 'Back online ‚Äî syncing saved changes';
-            banner.className = 'bg-emerald-500 text-black px-4 py-2 rounded-full text-xs font-black shadow-xl';
-            if (announceOnline) {
-                networkStatusTimer = setTimeout(() => banner.classList.add('hidden'), 3000);
-            } else {
-                banner.classList.add('hidden');
-            }
-            if (announceOnline && currentUser && !sharedFoodDatabaseUnsubscribe) {
-                resolveFoodDatabaseAccess(currentUser)
-                    .then(() => loadSharedFoodDatabase())
-                    .catch(error => console.warn('Food database reconnect sync pending:', error));
-            }
-        } else {
-            banner.textContent = 'Offline ‚Äî changes are saved on this device';
-            banner.className = 'bg-amber-500 text-black px-4 py-2 rounded-full text-xs font-black shadow-xl';
-        }
-        updateDataSyncStatus();
-    }
-
-    // ==========================================================================
-    // FIREBASE CONFIGURATION
-    // ==========================================================================
-    const firebaseConfig = {
-        apiKey: "AIzaSyA9H9hmvfrQmc2wIwnS2jCPLgdmXBquQXM",
-        authDomain: "vfit-app-pro.firebaseapp.com",
-        projectId: "vfit-app-pro",
-        storageBucket: "vfit-app-pro.firebasestorage.app",
-        messagingSenderId: "815730068689",
-        appId: "1:815730068689:web:0c6587d7dbe62b0f3c09f0",
-        measurementId: "G-74L12X0NE8"
-    };
-
-    const firebaseApp = firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-    let functionsApi = null;
-    let messagingApi = null;
-    let appCheckReady = false;
-    let foregroundMessagingBound = false;
-    let accountMembership = { tier: 'free', status: 'inactive' };
-
-    if (typeof firebase.functions === 'function') {
-        try { functionsApi = firebase.functions(RUNTIME_CONFIG.functionsRegion); }
-        catch (error) { console.warn('Cloud actions unavailable:', error); }
-    }
-
-    if (RUNTIME_CONFIG.appCheckSiteKey && typeof firebase.appCheck === 'function') {
-        try {
-            const provider = new firebase.appCheck.ReCaptchaEnterpriseProvider(RUNTIME_CONFIG.appCheckSiteKey);
-            firebase.appCheck().activate(provider, true);
-            appCheckReady = true;
-        } catch (error) {
-            console.warn('Firebase App Check is not ready:', error);
-        }
-    }
-
-    function getBackendCallable(name) {
-        if (!functionsApi || typeof functionsApi.httpsCallable !== 'function') return null;
-        try { return functionsApi.httpsCallable(name); }
-        catch (error) { return null; }
-    }
-
-    // Make sign-in survive an Android browser/app restart. Firebase defaults to
-    // local persistence on web, but setting it explicitly avoids inherited
-    // session-only behaviour from an earlier build.
-    const authPersistenceReady = auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-        .catch(error => console.warn('Could not enable persistent sign-in:', error));
-
-    // ==========================================================================
-    // USDA FOODDATA CENTRAL API KEY
-    // ==========================================================================
-    // Get your own free key at: https://fdc.nal.usda.gov/api-key-signup.html
-    // It arrives by email instantly. Paste it between the quotes below,
-    // replacing DEMO_KEY. The DEMO_KEY works but is heavily rate-limited
-    // (shared across everyone), so food search may intermittently fail until
-    // you add your own key.
-    const USDA_API_KEY = "DEMO_KEY";
-
-    let currentUser = null;
-    let firebaseUserData = {};
-    let currentUserRole = 'member'; // resolved each login from the coach-email allowlist
-    let currentUserIsOwner = false; // resolved from the private admins/{uid} record
-    let currentUserCanManageFoodDatabase = false;
-    let sharedFoodDatabaseUnsubscribe = null;
-    let foodDatabaseEditorsUnsubscribe = null;
-    let viewingClientData = null;
-    let authSessionGeneration = 0;
-
-    function isOwner() {
-        return Boolean(currentUser && currentUserIsOwner);
-    }
-
-    // Owner access is keyed to Firebase Auth UID instead of an email address.
-    // The admins record is created server-side and cannot be changed by clients.
-    async function resolveOwnerAccess(user) {
-        if (!user) return false;
-        try {
-            const doc = await db.collection('admins').doc(user.uid).get();
-            const allowed = doc.exists && doc.data()?.active === true;
-            if (currentUser && currentUser.uid === user.uid) currentUserIsOwner = allowed;
-            return allowed;
-        } catch (error) {
-            console.warn('Owner access could not be verified:', error);
-            if (currentUser && currentUser.uid === user.uid) currentUserIsOwner = false;
-            return false;
-        }
-    }
-
-    function canManageFoodDatabase() {
-        return Boolean(currentUser && (isOwner() || currentUserCanManageFoodDatabase));
-    }
-
-    function updateFoodDatabasePermissionUI() {
-        const canManage = canManageFoodDatabase();
-        const addButton = document.getElementById('food-database-add-button');
-        if (addButton) addButton.classList.toggle('hidden', !canManage);
-        const manualButton = document.getElementById('food-manual-entry-button');
-        if (manualButton) manualButton.classList.toggle('hidden', !canManage);
-        const accessLabel = document.getElementById('food-database-access-label');
-        if (accessLabel) {
-            accessLabel.textContent = canManage ? 'Editor access' : 'Read only';
-            accessLabel.className = canManage
-                ? 'text-[10px] font-black uppercase text-emerald-600'
-                : 'text-[10px] font-black uppercase text-slate-400';
-        }
-        const popupAction = document.getElementById('popup-database-action');
-        if (popupAction) popupAction.classList.toggle('hidden', !canManage);
-        if (typeof renderFoodDatabase === 'function') {
-            const modal = document.getElementById('food-database-modal');
-            if (modal && modal.style.display === 'flex') renderFoodDatabase();
-        }
-    }
-
-    async function resolveFoodDatabaseAccess(user) {
-        if (!user) {
-            currentUserCanManageFoodDatabase = false;
-            updateFoodDatabasePermissionUI();
-            return false;
-        }
-        if (isOwner()) {
-            currentUserCanManageFoodDatabase = true;
-            updateFoodDatabasePermissionUI();
-            return true;
-        }
-        try {
-            const doc = await db.collection('config').doc('foodDatabaseEditors').get();
-            const uids = doc.exists && Array.isArray(doc.data().uids) ? doc.data().uids : [];
-            currentUserCanManageFoodDatabase = uids.some(uid => String(uid) === String(user.uid));
-        } catch (error) {
-            console.warn('Food database access could not be verified:', error);
-            currentUserCanManageFoodDatabase = false;
-        }
-        updateFoodDatabasePermissionUI();
-        return currentUserCanManageFoodDatabase;
-    }
-
-    function stopSharedFoodDatabaseSync() {
-        if (typeof sharedFoodDatabaseUnsubscribe === 'function') sharedFoodDatabaseUnsubscribe();
-        if (typeof foodDatabaseEditorsUnsubscribe === 'function') foodDatabaseEditorsUnsubscribe();
-        sharedFoodDatabaseUnsubscribe = null;
-        foodDatabaseEditorsUnsubscribe = null;
-    }
-
-    function sharedFoodNumber(value, max) {
-        const number = Number(value);
-        return Number.isFinite(number) && number >= 0 ? Math.min(number, max || 1000000) : 0;
-    }
-
-    function normaliseSharedFoodDatabaseItem(input, fallbackId) {
-        const food = isPlainRecord(input) ? input : {};
-        const rawId = String(food.id || fallbackId || ('cf-' + Date.now()));
-        const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120) || ('cf-' + Date.now());
-        const servingGrams = sharedFoodNumber(food.servingGrams || 100, 100000);
-        const per100Input = isPlainRecord(food.per100g) ? food.per100g : {};
-        const portionFactor = servingGrams > 0 ? 100 / servingGrams : 1;
-        const readPer100 = key => sharedFoodNumber(
-            per100Input[key] !== undefined ? per100Input[key] : sharedFoodNumber(food[key]) * portionFactor
-        );
-        const sodiumMg = sharedFoodNumber(food.sodiumMg !== undefined ? food.sodiumMg : sharedFoodNumber(food.sodium) * 1000);
-        const per100g = {
-            calories: readPer100('calories'),
-            protein: readPer100('protein'),
-            carbs: readPer100('carbs'),
-            fat: readPer100('fat'),
-            fiber: readPer100('fiber'),
-            sugar: readPer100('sugar'),
-            satFat: readPer100('satFat'),
-            sodiumMg: sharedFoodNumber(per100Input.sodiumMg !== undefined ? per100Input.sodiumMg : sodiumMg * portionFactor),
-            cholesterol: readPer100('cholesterol')
-        };
-        const allowedCategories = new Set(['general', 'protein', 'carbohydrate', 'fruit-veg', 'dairy', 'snack', 'drink', 'meal']);
-        const category = allowedCategories.has(food.category) ? food.category : 'general';
-        const createdAt = sharedFoodNumber(food.createdAt) || Date.now();
-        const updatedAt = Math.max(createdAt, sharedFoodNumber(food.updatedAt) || createdAt);
-        return {
-            id,
-            name: String(food.name || 'Food').trim().slice(0, 160) || 'Food',
-            brand: String(food.brand || food.store || '').trim().slice(0, 160),
-            store: String(food.store || food.brand || '').trim().slice(0, 160),
-            category,
-            barcode: String(food.barcode || '').replace(/\D/g, '').slice(0, 32),
-            image: safeImageUrl(food.image || '').slice(0, 300000),
-            calories: sharedFoodNumber(food.calories),
-            protein: sharedFoodNumber(food.protein),
-            carbs: sharedFoodNumber(food.carbs),
-            fat: sharedFoodNumber(food.fat),
-            fiber: sharedFoodNumber(food.fiber),
-            sugar: sharedFoodNumber(food.sugar),
-            satFat: sharedFoodNumber(food.satFat),
-            sodiumMg,
-            sodium: sodiumMg / 1000,
-            cholesterol: sharedFoodNumber(food.cholesterol),
-            serving: String(food.serving || '1 portion').trim().slice(0, 80) || '1 portion',
-            servingGrams: servingGrams || 100,
-            per100g,
-            source: 'personal-database',
-            createdAt,
-            updatedAt
-        };
-    }
-
-    function applySharedFoodDatabaseSnapshot(snapshot) {
-        const foods = [];
-        snapshot.forEach(doc => foods.push(normaliseSharedFoodDatabaseItem(doc.data(), doc.id)));
-        foods.sort((a, b) => a.name.localeCompare(b.name));
-        state.customFoods = foods;
-        saveState({ skipCloud: true, preserveUpdatedAt: true });
-        if (typeof renderFilterContent === 'function') renderFilterContent();
-        if (typeof renderFoodDatabase === 'function') {
-            const modal = document.getElementById('food-database-modal');
-            if (modal && modal.style.display === 'flex') renderFoodDatabase();
-        }
-    }
-
-    async function migrateOwnerFoodDatabase(localFoods) {
-        const foods = (Array.isArray(localFoods) ? localFoods : []).slice(0, 1000)
-            .map(food => normaliseSharedFoodDatabaseItem(food));
-        for (let start = 0; start < foods.length; start += 20) {
-            const batch = db.batch();
-            foods.slice(start, start + 20).forEach(food => {
-                batch.set(db.collection('foodDatabase').doc(food.id), food);
-            });
-            await batch.commit();
-        }
-        return foods;
-    }
-
-    function startSharedFoodDatabaseListeners() {
-        stopSharedFoodDatabaseSync();
-        if (!currentUser) return;
-        sharedFoodDatabaseUnsubscribe = db.collection('foodDatabase').limit(1000).onSnapshot(
-            applySharedFoodDatabaseSnapshot,
-            error => console.warn('Food database live sync paused:', error)
-        );
-        foodDatabaseEditorsUnsubscribe = db.collection('config').doc('foodDatabaseEditors').onSnapshot(doc => {
-            const uids = doc.exists && Array.isArray(doc.data().uids) ? doc.data().uids : [];
-            currentUserCanManageFoodDatabase = isOwner() || uids.some(uid => String(uid) === String(currentUser && currentUser.uid));
-            updateFoodDatabasePermissionUI();
-        }, error => console.warn('Food database permission sync paused:', error));
-    }
-
-    async function loadSharedFoodDatabase() {
-        if (!currentUser) return false;
-        const cachedFoods = Array.isArray(state.customFoods) ? state.customFoods.slice() : [];
-        try {
-            let snapshot = await db.collection('foodDatabase').limit(1000).get();
-            if (snapshot.empty && isOwner() && cachedFoods.length > 0) {
-                await migrateOwnerFoodDatabase(cachedFoods);
-                snapshot = await db.collection('foodDatabase').limit(1000).get();
-            }
-            applySharedFoodDatabaseSnapshot(snapshot);
-            startSharedFoodDatabaseListeners();
-            return true;
-        } catch (error) {
-            console.warn('Using the cached food database until secure sync is available:', error);
-            updateFoodDatabasePermissionUI();
-            return false;
-        }
-    }
-
-    async function saveSharedFoodDatabaseItem(food) {
-        if (!canManageFoodDatabase()) throw new Error('FOOD_DATABASE_READ_ONLY');
-        if (!currentUser || !navigator.onLine) throw new Error('FOOD_DATABASE_OFFLINE');
-        const normalised = normaliseSharedFoodDatabaseItem(food);
-        await db.collection('foodDatabase').doc(normalised.id).set(normalised);
-        const existingIndex = (state.customFoods || []).findIndex(item => String(item.id) === normalised.id);
-        if (existingIndex >= 0) state.customFoods[existingIndex] = normalised;
-        else state.customFoods.unshift(normalised);
-        saveState({ skipCloud: true });
-        return normalised;
-    }
-
-    async function deleteSharedFoodDatabaseItem(foodId) {
-        if (!canManageFoodDatabase()) throw new Error('FOOD_DATABASE_READ_ONLY');
-        if (!currentUser || !navigator.onLine) throw new Error('FOOD_DATABASE_OFFLINE');
-        const id = String(foodId || '').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 120);
-        if (!id) throw new Error('FOOD_DATABASE_INVALID_ID');
-        await db.collection('foodDatabase').doc(id).delete();
-        state.customFoods = (state.customFoods || []).filter(item => String(item.id) !== id);
-        saveState({ skipCloud: true });
-        return true;
-    }
-
-    function requireCoachAccess() {
-        if (currentUser && currentUserRole === 'coach') return true;
-        showToast('Coach access only');
-        return false;
-    }
-
-    async function syncUserDirectory(user, role, name) {
-        if (!user) return false;
-        try {
-            await db.collection('directory').doc(user.uid).set({
-                uid: user.uid,
-                name: String(name || user.displayName || 'User').slice(0, 120),
-                email: user.email || '',
-                emailLower: (user.email || '').toLowerCase(),
-                role: role === 'coach' ? 'coach' : 'member',
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-            return true;
-        } catch (error) {
-            // Older Firebase rules may not know about the directory collection yet.
-            console.warn('User directory sync pending:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Coach status is determined by an allowlist of approved emails the owner
-     * manages, stored at config/coachEmails (field: emails = array of strings).
-     * Returns true if the given email is on the list (case-insensitive).
-     */
-    async function isApprovedCoach(email) {
-        if (!email) return false;
-        try {
-            const doc = await db.collection('config').doc('coachEmails').get();
-            if (!doc.exists) return false;
-            const data = doc.data() || {};
-            const list = Array.isArray(data.emails) ? data.emails.map(e => e.toString().trim().toLowerCase()) : [];
-            return list.includes(email.trim().toLowerCase());
-        } catch (e) {
-            console.error('Error checking coach allowlist:', e);
-            return false;
-        }
-    }
-
-    // ---------- OWNER ADMIN: manage the coach-email allowlist ----------
-
-    /**
-     * Build the admin card HTML. Parametrised by element ids so it can be shown
-     * in more than one place (member profile and coach dashboard).
-     */
-    function ownerAdminHTML(inputId, listId, foodEditorListId) {
-        return `
-            <div class="flex items-center gap-2 mb-3">
-                <i data-lucide="shield-check" class="w-5 h-5 text-indigo-600"></i>
-                <h3 class="text-lg font-black">Coach Access Admin</h3>
-            </div>
-            <p class="text-xs text-slate-400 mb-3">Approve which emails can log in as coaches. A change takes effect the next time that person signs in. Remove an email to drop them back to a member.</p>
-            <div class="flex gap-2 mb-3">
-                <input id="${inputId}" type="email" maxlength="254" placeholder="email@example.com" autocomplete="off" class="flex-1 p-3 bg-slate-50 rounded-xl border-2 border-transparent focus:border-indigo-500 outline-none font-medium" onkeydown="if(event.key==='Enter')addCoachEmail('${inputId}','${listId}')">
-                <button onclick="addCoachEmail('${inputId}','${listId}')" class="bg-indigo-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-indigo-700">Add</button>
-            </div>
-            <div id="${listId}" class="space-y-2">
-                <p class="text-sm text-slate-400 text-center py-2">Loading...</p>
-            </div>
-            <div class="border-t border-slate-200 mt-6 pt-5">
-                <div class="flex items-center gap-2 mb-2">
-                    <i data-lucide="database" class="w-5 h-5 text-orange-600"></i>
-                    <h3 class="text-lg font-black">Food Database Permissions</h3>
-                </div>
-                <p class="text-xs text-slate-400 mb-3">Everyone can search and use foods. Only you and the people you allow below can add, edit or delete database items.</p>
-                <div id="${foodEditorListId}" class="space-y-2 max-h-80 overflow-y-auto pr-1">
-                    <p class="text-sm text-slate-400 text-center py-2">Loading registered users...</p>
-                </div>
-            </div>`;
-    }
-
-    /**
-     * Render the admin space into the member-profile container, but ONLY for the
-     * owner account. Everyone else sees nothing.
-     */
-    async function renderOwnerAdmin() {
-        const container = document.getElementById('owner-admin-section');
-        if (!container) return;
-        if (!isOwner()) { container.style.display = 'none'; container.innerHTML = ''; return; }
-        container.style.display = 'block';
-        container.innerHTML = ownerAdminHTML('admin-email-profile', 'admin-list-profile', 'food-editor-list-profile');
-        refreshIcons();
-        await Promise.all([
-            loadCoachEmailList('admin-list-profile'),
-            loadFoodDatabaseEditorList('food-editor-list-profile')
-        ]);
-    }
-
-    async function loadCoachEmailList(listId) {
-        const el = document.getElementById(listId);
-        if (!el) return;
-        try {
-            const doc = await db.collection('config').doc('coachEmails').get();
-            const emails = (doc.exists && Array.isArray(doc.data().emails)) ? doc.data().emails : [];
-            if (emails.length === 0) {
-                el.innerHTML = '<p class="text-sm text-slate-400 text-center py-2">No coach emails approved yet. Add one above.</p>';
-                return;
-            }
-            el.innerHTML = emails.map(e => {
-                const safe = escapeHtml(e);
-                const arg = escapeJsString(e);
-                return `
-                    <div class="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
-                        <span class="text-sm font-medium truncate">${safe}</span>
-                        <button onclick="removeCoachEmail('${arg}','${listId}')" class="text-rose-500 text-xs font-bold hover:text-rose-600 flex-shrink-0 ml-2">Remove</button>
-                    </div>`;
-            }).join('');
-            refreshIcons();
-        } catch (e) {
-            console.error('Error loading coach email list:', e);
-            el.innerHTML = '<p class="text-sm text-rose-500 text-center py-2">Could not load list ‚Äî check you are the owner and rules are published.</p>';
-        }
-    }
-
-    async function addCoachEmail(inputId, listId) {
-        if (!isOwner()) { showToast('Owner access only'); return; }
-        const input = document.getElementById(inputId);
-        const email = (input.value || '').trim().toLowerCase().slice(0, 254);
-        if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)) {
-            showToast('Enter a valid email'); return;
-        }
-        try {
-            // set+merge with arrayUnion creates the doc if it doesn't exist yet
-            await db.collection('config').doc('coachEmails').set({
-                emails: firebase.firestore.FieldValue.arrayUnion(email)
-            }, { merge: true });
-            input.value = '';
-            showToast('Approved ' + email + ' as a coach ‚úì');
-            await loadCoachEmailList(listId);
-        } catch (e) {
-            console.error('Error adding coach email:', e);
-            showToast('Could not add ‚Äî only the owner can edit this (check rules)');
-        }
-    }
-
-    async function removeCoachEmail(email, listId) {
-        if (!isOwner()) { showToast('Owner access only'); return; }
-        try {
-            await db.collection('config').doc('coachEmails').update({
-                emails: firebase.firestore.FieldValue.arrayRemove(email)
-            });
-            showToast('Removed ' + email);
-            await loadCoachEmailList(listId);
-        } catch (e) {
-            console.error('Error removing coach email:', e);
-            showToast('Could not remove ‚Äî check rules');
-        }
-    }
-
-    async function loadFoodDatabaseEditorList(listId) {
-        const el = document.getElementById(listId);
-        if (!el || !isOwner()) return;
-        try {
-            const [configDoc, directorySnapshot] = await Promise.all([
-                db.collection('config').doc('foodDatabaseEditors').get(),
-                db.collection('directory').limit(200).get()
-            ]);
-            const selected = new Set(
-                configDoc.exists && Array.isArray(configDoc.data().uids)
-                    ? configDoc.data().uids.map(uid => String(uid))
-                    : []
-            );
-            const people = [];
-            directorySnapshot.forEach(doc => {
-                if (currentUser && doc.id === currentUser.uid) return;
-                const data = doc.data() || {};
-                people.push({
-                    uid: doc.id,
-                    name: String(data.name || 'VFIT user').slice(0, 120),
-                    email: String(data.email || '').slice(0, 254),
-                    role: data.role === 'coach' ? 'Coach' : 'Member'
-                });
-            });
-            const listedUids = new Set(people.map(person => person.uid));
-            selected.forEach(uid => {
-                if ((!currentUser || uid !== currentUser.uid) && !listedUids.has(uid)) {
-                    people.push({ uid, name: 'Unavailable account', email: uid, role: 'Saved UID' });
-                }
-            });
-            people.sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email));
-            if (people.length === 0) {
-                el.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No other registered users are available yet.</p>';
-                return;
-            }
-            el.innerHTML = people.map(person => {
-                const allowed = selected.has(person.uid);
-                const uid = escapeJsString(person.uid);
-                const targetList = escapeJsString(listId);
-                return `<div class="flex items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl">
-                    <div class="min-w-0">
-                        <p class="text-sm font-bold truncate">${escapeHtml(person.name)}</p>
-                        <p class="text-[11px] text-slate-400 truncate">${escapeHtml(person.email || person.uid)} ¬∑ ${person.role}</p>
-                    </div>
-                    <button onclick="setFoodDatabaseEditorAccess('${uid}',${allowed ? 'false' : 'true'},'${targetList}')" class="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-black ${allowed ? 'bg-rose-50 text-rose-600' : 'bg-emerald-600 text-white'}">
-                        ${allowed ? 'Remove' : 'Allow'}
-                    </button>
-                </div>`;
-            }).join('');
-            refreshIcons();
-        } catch (error) {
-            console.error('Error loading food database editors:', error);
-            el.innerHTML = '<p class="text-sm text-rose-500 text-center py-2">Could not load database permissions ‚Äî check the Firebase rules are published.</p>';
-        }
-    }
-
-    async function setFoodDatabaseEditorAccess(uid, allowed, listId) {
-        if (!isOwner()) { showToast('Owner access only'); return; }
-        const safeUid = String(uid || '').trim().slice(0, 128);
-        if (!safeUid || safeUid === (currentUser && currentUser.uid)) return;
-        try {
-            await db.collection('config').doc('foodDatabaseEditors').set({
-                uids: allowed
-                    ? firebase.firestore.FieldValue.arrayUnion(safeUid)
-                    : firebase.firestore.FieldValue.arrayRemove(safeUid)
-            }, { merge: true });
-            showToast(allowed ? 'Food database editor access granted ‚úì' : 'Food database editor access removed');
-            await loadFoodDatabaseEditorList(listId);
-        } catch (error) {
-            console.error('Error updating food database editor:', error);
-            showToast('Could not update food database access ‚Äî check the published rules', 5500);
-        }
-    }
-
-    // ==========================================================================
-    // AUTH FORM HELPERS
-    // ==========================================================================
-
-    function showLogin() {
-        document.getElementById('login-form').classList.remove('hidden');
-        document.getElementById('register-form').classList.add('hidden');
-        document.getElementById('forgot-password-form').classList.add('hidden');
-        setTimeout(() => document.getElementById('login-email')?.focus(), 0);
-    }
-
-    function showRegister() {
-        document.getElementById('login-form').classList.add('hidden');
-        document.getElementById('register-form').classList.remove('hidden');
-        document.getElementById('forgot-password-form').classList.add('hidden');
-        setTimeout(() => document.getElementById('register-name')?.focus(), 0);
-    }
-
-    function showForgotPassword() {
-        document.getElementById('login-form').classList.add('hidden');
-        document.getElementById('register-form').classList.add('hidden');
-        document.getElementById('forgot-password-form').classList.remove('hidden');
-        setTimeout(() => document.getElementById('forgot-email')?.focus(), 0);
-    }
-
-    // ==========================================================================
-    // AUTH FUNCTIONS
-    // ==========================================================================
-
-    let authRequestInFlight = false;
-
-    function setAuthBusy(formId, busy, busyLabel) {
-        authRequestInFlight = busy;
-        document.querySelectorAll('[data-auth-submit]').forEach(button => {
-            button.disabled = busy;
-        });
-        const button = document.querySelector(`#${formId} [data-auth-submit]`);
-        if (!button) return;
-        if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent.trim();
-        button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
-        button.setAttribute('aria-busy', busy ? 'true' : 'false');
-    }
-
-    function friendlyAuthError(error, fallback) {
-        const messages = {
-            'auth/email-already-in-use': 'That email already has an account',
-            'auth/invalid-email': 'Enter a valid email address',
-            'auth/invalid-credential': 'Invalid email or password',
-            'auth/wrong-password': 'Invalid email or password',
-            'auth/user-not-found': 'Invalid email or password',
-            'auth/too-many-requests': 'Too many attempts ‚Äî wait a moment and try again',
-            'auth/network-request-failed': 'No connection ‚Äî check your internet and try again',
-            'auth/weak-password': 'Choose a stronger password with at least 6 characters'
-        };
-        return messages[error && error.code] || fallback;
-    }
-
-    async function registerUser() {
-        if (authRequestInFlight) return;
-        const name = document.getElementById('register-name').value.trim();
-        const email = document.getElementById('register-email').value.trim().toLowerCase();
-        const password = document.getElementById('register-password').value;
-        const confirm = document.getElementById('register-confirm').value;
-        const privacyConsent = document.getElementById('register-privacy-consent');
-
-        if (!name) { showToast('Please enter your name'); return; }
-        if (!email || !password) { showToast('Please fill all fields'); return; }
-        if (password.length < 6) { showToast('Password must be at least 6 characters'); return; }
-        if (password !== confirm) { showToast('Passwords do not match'); return; }
-        if (!privacyConsent || !privacyConsent.checked) { showToast('Please review and accept the privacy details'); return; }
-
-        // Everyone signs up as a member. Coach status is granted by the owner's
-        // email allowlist and applied automatically on login ‚Äî so if this email
-        // is approved, the account becomes a coach the moment they sign in.
-        setAuthBusy('register-form', true, 'Creating Account‚Ä¶');
-        try {
-            await authPersistenceReady;
-            const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-            const user = userCredential.user;
-            await user.updateProfile({ displayName: name });
-
-            await db.collection('users').doc(user.uid).set({
-                name: name,
-                email: email,
-                role: 'member',
-                emailLower: email.toLowerCase(), // for case-insensitive lookup when linking
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                calorieGoal: 2500,
-                workouts: [],
-                meals: [],
-                metrics: [],
-                coachUid: null,
-                coachName: null,
-                clientUids: [],
-                pendingRequests: [],
-                // Exercise database is account-level, so it follows the user across devices
-                customExercises: [],
-                barcodeFoods: [],
-                disabledExercises: { gym: [], home: [] },
-                privacy: {
-                    noticeVersion: RUNTIME_CONFIG.privacyVersion,
-                    acknowledgedAt: firebase.firestore.FieldValue.serverTimestamp()
-                }
-            });
-            await syncUserDirectory(user, 'member', name);
-
-            try { await user.sendEmailVerification(); }
-            catch (verificationError) { console.warn('Verification email could not be sent yet:', verificationError); }
-
-            showToast('Account created ‚Äî check your email to verify it üéâ', 6000);
-        } catch (error) {
-            console.error('Registration error:', error);
-            showToast(friendlyAuthError(error, 'Could not create the account ‚Äî try again'), 5000);
-        } finally {
-            setAuthBusy('register-form', false, '');
-        }
-    }
-
-    async function loginUser() {
-        if (authRequestInFlight) return;
-        const email = document.getElementById('login-email').value.trim().toLowerCase();
-        const password = document.getElementById('login-password').value;
-        if (!email || !password) { showToast('Please enter email and password'); return; }
-        setAuthBusy('login-form', true, 'Signing In‚Ä¶');
-        try {
-            await authPersistenceReady;
-            await auth.signInWithEmailAndPassword(email, password);
-            showToast('Welcome back! üí™');
-        } catch (error) {
-            console.error('Login error:', error);
-            showToast(friendlyAuthError(error, 'Sign-in failed ‚Äî try again'), 5000);
-        } finally {
-            setAuthBusy('login-form', false, '');
-        }
-    }
-
-    async function resetPassword() {
-        if (authRequestInFlight) return;
-        const email = document.getElementById('forgot-email').value.trim().toLowerCase();
-        if (!email) { showToast('Please enter your email'); return; }
-        setAuthBusy('forgot-password-form', true, 'Sending‚Ä¶');
-        try {
-            await auth.sendPasswordResetEmail(email);
-            showToast('Password reset email sent! Check your inbox.');
-            showLogin();
-        } catch (error) {
-            console.error('Reset error:', error);
-            showToast(friendlyAuthError(error, 'Could not send the reset email'), 5000);
-        } finally {
-            setAuthBusy('forgot-password-form', false, '');
-        }
-    }
-
-    async function logoutUser() {
-        if (confirm('Are you sure you want to sign out?')) {
-            try {
-                // Make one best-effort final cloud save, but never wipe the user's
-                // device data if the phone is offline or Firebase is unavailable.
-                await Promise.race([
-                    flushCloudSync({ silent: true }),
-                    new Promise(resolve => setTimeout(resolve, 2500))
-                ]);
-                await auth.signOut();
-                showToast('Signed out successfully');
-                state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-            } catch (error) {
-                console.error('Logout error:', error);
-                showToast('Logout failed');
-            }
-        }
-    }
-
-    function valueTime(value) {
-        if (!value) return 0;
-        if (typeof value.toMillis === 'function') return value.toMillis();
-        if (typeof value.toDate === 'function') return value.toDate().getTime();
-        const time = new Date(value).getTime();
-        return Number.isFinite(time) ? time : 0;
-    }
-
-    function mergeUniqueItems(localItems, remoteItems, keyForItem, preferRemote, combine) {
-        const local = Array.isArray(localItems) ? localItems : [];
-        const remote = Array.isArray(remoteItems) ? remoteItems : [];
-        const preferred = preferRemote ? remote : local;
-        const secondary = preferRemote ? local : remote;
-        const result = new Map();
-        const put = (item, index, source) => {
-            if (!item || typeof item !== 'object') return;
-            const key = String(keyForItem(item, index) || source + ':' + index);
-            if (result.has(key) && combine) result.set(key, combine(result.get(key), item, source));
-            else result.set(key, deepClone(item));
-        };
-        secondary.forEach((item, index) => put(item, index, 'secondary'));
-        preferred.forEach((item, index) => put(item, index, 'preferred'));
-
-        // Keep the preferred device's ordering, then append anything found only
-        // on the other device. This avoids reorder churn on every cloud sync.
-        const ordered = [];
-        const used = new Set();
-        preferred.concat(secondary).forEach((item, index) => {
-            if (!item || typeof item !== 'object') return;
-            const source = index < preferred.length ? 'preferred' : 'secondary';
-            const localIndex = index < preferred.length ? index : index - preferred.length;
-            const key = String(keyForItem(item, localIndex) || source + ':' + localIndex);
-            if (!used.has(key) && result.has(key)) {
-                used.add(key);
-                ordered.push(result.get(key));
-            }
-        });
-        return ordered;
-    }
-
-    /** Reconcile two complete/partial snapshots without discarding either history. */
-    function mergeStateSnapshots(localInput, remoteInput) {
-        const local = normalizeState(localInput);
-        const remoteRaw = isPlainRecord(remoteInput) ? remoteInput : {};
-        const remote = normalizeState(remoteRaw);
-        const localTime = valueTime(local.meta && local.meta.updatedAt);
-        const remoteTime = valueTime((remoteRaw.meta && remoteRaw.meta.updatedAt) || remoteRaw.updatedAt);
-        const preferRemote = remoteTime > localTime;
-        const merged = normalizeState(local);
-
-        const arrayFields = new Set([
-            'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
-            'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns', 'coachConversations'
-        ]);
-        const recordFields = new Set([
-            'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
-            'weeklyMealPlan', 'shoppingChecks'
-        ]);
-        if (preferRemote) {
-            Object.keys(DEFAULT_STATE).forEach(key => {
-                if (!arrayFields.has(key) && !recordFields.has(key) && key !== 'disabledExercises' && key !== 'activeWorkout' &&
-                    Object.prototype.hasOwnProperty.call(remoteRaw, key)) {
-                    merged[key] = deepClone(remote[key]);
-                }
-            });
-        }
-
-        const itemKey = (item, index) => item.id || item.createdAt || item.date || `${item.name || item.focus || 'item'}:${index}`;
-        const mealKey = (item, index) => item.id || `${item.date || ''}:${item.mealType || item.type || ''}:${item.createdAt || item.name || index}`;
-        const workoutKey = (item, index) => item.id || `${item.date || ''}:${item.startTime || item.completedAt || ''}:${item.focus || item.name || index}`;
-        const metricKey = (item, index) => item.date || item.id || `metric:${index}`;
-        const namedKey = (item, index) => item.id || item.barcode || String(item.name || index).trim().toLowerCase();
-
-        merged.dailyMeals = mergeUniqueItems(local.dailyMeals, remote.dailyMeals, mealKey, preferRemote);
-        merged.workoutHistory = mergeUniqueItems(local.workoutHistory, remote.workoutHistory, workoutKey, preferRemote);
-        merged.nutritionHistory = mergeUniqueItems(local.nutritionHistory, remote.nutritionHistory, metricKey, preferRemote);
-        merged.createdMeals = mergeUniqueItems(local.createdMeals, remote.createdMeals, namedKey, preferRemote);
-        merged.customFoods = mergeUniqueItems(local.customFoods, remote.customFoods, namedKey, preferRemote);
-        const barcodeKey = (item, index) => {
-            const code = String(item && (item.scannedBarcode || item.barcode) || '').replace(/[^0-9]/g, '');
-            return (code ? (code.length <= 14 ? code.padStart(14, '0') : code) : '') || `barcode:${index}`;
-        };
-        merged.barcodeFoods = mergeUniqueItems(local.barcodeFoods, remote.barcodeFoods, barcodeKey, preferRemote);
-        const shoppingKey = (item, index) => item && (item.id || item.barcode || String(item.name || index).trim().toLowerCase());
-        merged.shoppingItems = mergeUniqueItems(local.shoppingItems, remote.shoppingItems, shoppingKey, preferRemote);
-        merged.habits = mergeUniqueItems(local.habits, remote.habits, itemKey, preferRemote);
-        merged.userGoals = mergeUniqueItems(local.userGoals, remote.userGoals, itemKey, preferRemote);
-        merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
-        merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
-        merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
-        merged.coachConversations = mergeUniqueItems(local.coachConversations, remote.coachConversations, itemKey, preferRemote);
-        merged.metricsHistory = mergeUniqueItems(
-            local.metricsHistory,
-            remote.metricsHistory,
-            metricKey,
-            preferRemote,
-            (older, newer) => {
-                const combined = Object.assign({}, older, newer);
-                // Progress photos intentionally remain device-local, so a cloud
-                // record can never erase them during reconciliation.
-                const localMetric = local.metricsHistory.find(item => metricKey(item) === metricKey(combined));
-                if (localMetric && localMetric.photos) combined.photos = deepClone(localMetric.photos);
-                return combined;
-            }
-        );
-
-        recordFields.forEach(key => {
-            const older = preferRemote ? local[key] : remote[key];
-            const newer = preferRemote ? remote[key] : local[key];
-            merged[key] = Object.assign({}, older || {}, newer || {});
-        });
-        merged.disabledExercises = {
-            gym: Array.from(new Set([...(local.disabledExercises.gym || []), ...(remote.disabledExercises.gym || [])])),
-            home: Array.from(new Set([...(local.disabledExercises.home || []), ...(remote.disabledExercises.home || [])]))
-        };
-        // An in-progress workout on this phone wins because its form fields and
-        // timer are tied to the current browser session.
-        merged.activeWorkout = local.activeWorkout || remote.activeWorkout || null;
-        merged.meta = Object.assign({}, merged.meta, {
-            schemaVersion: VFIT_STATE_SCHEMA_VERSION,
-            updatedAt: new Date(Math.max(localTime, remoteTime, Date.now())).toISOString()
-        });
-        return normalizeState(merged);
-    }
-
-    function buildCloudSnapshot() {
-        let snapshot = stateWithoutLocalImages(normalizeState(state));
-        let json = JSON.stringify(snapshot);
-        // A Firestore document has a hard size limit. This only trims the cloud
-        // mirror; the complete device save and exports remain untouched.
-        if (new Blob([json]).size > 850000) {
-            snapshot.workoutHistory = (snapshot.workoutHistory || []).slice(0, 250);
-            snapshot.nutritionHistory = (snapshot.nutritionHistory || []).slice(0, 365);
-            snapshot.dailyMeals = (snapshot.dailyMeals || []).slice(-1200);
-            snapshot.cardioLogs = (snapshot.cardioLogs || []).slice(0, 500);
-            snapshot.checkIns = (snapshot.checkIns || []).slice(0, 104);
-            snapshot.coachConversations = (snapshot.coachConversations || []).slice(0, 30).map(conversation => Object.assign({}, conversation, {
-                messages: (conversation.messages || []).slice(-12).map(message => Object.assign({}, message, {
-                    text: String(message.text || '').slice(0, 600)
-                }))
-            }));
-            snapshot.meta.cloudTrimmed = true;
-            json = JSON.stringify(snapshot);
-        }
-        if (new Blob([json]).size > 950000) {
-            throw new Error('Cloud snapshot is too large. Export a backup and remove unusually large custom entries.');
-        }
-        return snapshot;
-    }
-
-    function updateDataSyncStatus() {
-        const status = document.getElementById('data-sync-status');
-        const version = document.getElementById('vfit-version');
-        if (version) version.textContent = `VFIT ${VFIT_APP_VERSION}`;
-        if (!status) return;
-        if (!currentUser) {
-            status.textContent = 'Sign in to enable account sync';
-        } else if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
-            status.textContent = 'Cloud health-data sync is off ‚Äî saved on this device';
-        } else if (!navigator.onLine) {
-            status.textContent = 'Offline ‚Äî changes are saved on this device';
-        } else if (cloudSyncPromise) {
-            status.textContent = 'Syncing securely‚Ä¶';
-        } else if (cloudSyncError || cloudDirty) {
-            status.textContent = 'Saved on device ‚Äî cloud sync pending';
-        } else if (state.meta && state.meta.lastCloudSyncAt) {
-            const when = new Date(state.meta.lastCloudSyncAt);
-            status.textContent = `Cloud synced ${when.toLocaleString()}`;
-        } else {
-            status.textContent = 'Saved on device ‚Äî ready to sync';
-        }
-    }
-
-    function scheduleCloudSnapshotSync(delay) {
-        if (!currentUser) return;
-        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
-            cloudDirty = false;
-            updateDataSyncStatus();
-            return;
-        }
-        cloudDirty = true;
-        updateDataSyncStatus();
-        clearTimeout(cloudSyncTimer);
-        if (!navigator.onLine) return;
-        cloudSyncTimer = setTimeout(() => flushCloudSync({ silent: true }), Number.isFinite(delay) ? delay : 1600);
-    }
-
-    async function writeCloudSnapshot() {
-        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
-            cloudDirty = false;
-            updateDataSyncStatus();
-            return false;
-        }
-        if (!currentUser || !navigator.onLine) {
-            cloudDirty = !!currentUser;
-            updateDataSyncStatus();
-            return false;
-        }
-        if (cloudSyncPromise) return cloudSyncPromise;
-        const uid = currentUser.uid;
-        cloudDirty = false;
-        cloudSyncError = null;
-        updateDataSyncStatus();
-        cloudSyncPromise = (async () => {
-            const snapshot = buildCloudSnapshot();
-            await db.collection('users').doc(uid).set({
-                name: currentUser.displayName || (firebaseUserData && firebaseUserData.name) || 'User',
-                email: currentUser.email || '',
-                emailLower: (currentUser.email || '').toLowerCase(),
-                calorieGoal: state.goals.calories,
-                customExercises: state.customExercises || [],
-                barcodeFoods: state.barcodeFoods || [],
-                disabledExercises: state.disabledExercises || { gym: [], home: [] },
-                dataSnapshot: snapshot,
-                snapshotSchemaVersion: VFIT_STATE_SCHEMA_VERSION,
-                snapshotUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                lastSync: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-            if (currentUser && currentUser.uid === uid) {
-                state.meta.lastCloudSyncAt = new Date().toISOString();
-                saveState({ skipCloud: true, preserveUpdatedAt: true });
-            }
-            return true;
-        })().catch(error => {
-            cloudDirty = true;
-            cloudSyncError = error;
-            console.warn('Cloud sync pending:', error);
-            return false;
-        }).finally(() => {
-            cloudSyncPromise = null;
-            updateDataSyncStatus();
-            if (cloudDirty && currentUser && navigator.onLine) scheduleCloudSnapshotSync(5000);
-        });
-        return cloudSyncPromise;
-    }
-
-    async function flushCloudSync(options) {
-        const config = options || {};
-        clearTimeout(cloudSyncTimer);
-        cloudSyncTimer = null;
-        if (!currentUser) return false;
-        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
-            cloudDirty = false;
-            updateDataSyncStatus();
-            if (!config.silent) showToast('Cloud health-data sync is off in Privacy Centre', 5000);
-            return false;
-        }
-        cloudDirty = true;
-        const success = await writeCloudSnapshot();
-        if (!config.silent) showToast(success ? 'Synced to cloud ‚òÅÔ∏è' : 'Saved on device ‚Äî cloud sync will retry', 5000);
-        return success;
-    }
-
-    async function syncToCloud() {
-        if (!currentUser) { showToast('Sign in to sync'); return false; }
-        if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
-            showToast('Cloud health-data sync is off in Privacy Centre', 5000);
-            updateDataSyncStatus();
-            return false;
-        }
-        if (!navigator.onLine) {
-            cloudDirty = true;
-            updateDataSyncStatus();
-            showToast('Offline ‚Äî changes are safely saved on this device', 5000);
-            return false;
-        }
-        return flushCloudSync({ silent: false });
-    }
-
-    function syncToFirebase() {
-        scheduleCloudSnapshotSync();
-    }
-
-    // Load the account document, reconcile its full snapshot with this device,
-    // and only then allow a new cloud write.
-    async function loadFirebaseUserData() {
-        if (!currentUser) return false;
-        const uid = currentUser.uid;
-        const userRef = db.collection('users').doc(uid);
-        let exists = false;
-        try {
-            const doc = await userRef.get();
-            if (!currentUser || currentUser.uid !== uid) return false;
-            exists = doc.exists;
-            firebaseUserData = doc.exists ? (doc.data() || {}) : {};
-            accountMembership = isPlainRecord(firebaseUserData.membership)
-                ? Object.assign({ tier: 'free', status: 'inactive' }, firebaseUserData.membership)
-                : { tier: 'free', status: 'inactive' };
-            if (doc.exists) {
-                const remoteSnapshot = isPlainRecord(firebaseUserData.dataSnapshot)
-                    ? deepClone(firebaseUserData.dataSnapshot)
-                    : {};
-                if (!remoteSnapshot.goals && firebaseUserData.calorieGoal) {
-                    remoteSnapshot.goals = { calories: firebaseUserData.calorieGoal };
-                }
-                if (!remoteSnapshot.customExercises && Array.isArray(firebaseUserData.customExercises)) {
-                    remoteSnapshot.customExercises = firebaseUserData.customExercises;
-                }
-                if (!remoteSnapshot.disabledExercises && firebaseUserData.disabledExercises) {
-                    remoteSnapshot.disabledExercises = firebaseUserData.disabledExercises;
-                }
-                if (!remoteSnapshot.barcodeFoods && Array.isArray(firebaseUserData.barcodeFoods)) {
-                    remoteSnapshot.barcodeFoods = firebaseUserData.barcodeFoods;
-                }
-                if (!remoteSnapshot.meta) remoteSnapshot.meta = {};
-                if (!remoteSnapshot.meta.updatedAt && firebaseUserData.snapshotUpdatedAt) {
-                    const cloudTime = valueTime(firebaseUserData.snapshotUpdatedAt);
-                    if (cloudTime) remoteSnapshot.meta.updatedAt = new Date(cloudTime).toISOString();
-                }
-                if (Object.keys(remoteSnapshot).length > 1) state = mergeStateSnapshots(state, remoteSnapshot);
-                if (isPlainRecord(firebaseUserData.privacy)) {
-                    state.privacySettings = Object.assign({}, state.privacySettings, firebaseUserData.privacy);
-                }
-                applyExercisePrefsFromCloud(state);
-            }
-
-            const approved = await isApprovedCoach(currentUser.email);
-            if (!currentUser || currentUser.uid !== uid) return false;
-            currentUserRole = approved ? 'coach' : 'member';
-            const baseProfile = {
-                name: currentUser.displayName || firebaseUserData.name || 'User',
-                email: currentUser.email || '',
-                emailLower: (currentUser.email || '').toLowerCase(),
-                role: currentUserRole,
-                calorieGoal: state.goals.calories || 2500
-            };
-            if (!exists) {
-                Object.assign(baseProfile, {
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    workouts: [], meals: [], metrics: [], coachUid: null,
-                    coachName: null, clientUids: [], pendingRequests: []
-                });
-            }
-            await userRef.set(baseProfile, { merge: true });
-            await syncUserDirectory(currentUser, currentUserRole, baseProfile.name);
-            firebaseUserData = Object.assign({}, firebaseUserData, baseProfile);
-            state.meta.lastCloudSyncAt = new Date().toISOString();
-            saveState({ skipCloud: true, preserveUpdatedAt: true, forceBackup: true });
-            cloudSyncError = null;
-            return true;
-        } catch (error) {
-            cloudSyncError = error;
-            console.warn('Using device data; Firebase is currently unavailable:', error);
-            saveState({ skipCloud: true, preserveUpdatedAt: true });
-            updateDataSyncStatus();
-            return false;
-        }
-    }
-
-    // ==========================================================================
-    // ACCOUNT-LEVEL EXERCISE PREFERENCES (custom exercises + disabled equipment)
-    // ==========================================================================
-    // These are tied to the ACCOUNT, not the device, so your gym equipment setup
-    // and your own exercises follow you to any phone/computer you sign in on.
-    // Applies to members AND coaches.
-
-    /**
-     * Save the user's custom exercises and disabled-equipment lists to their
-     * Firestore user doc. Debounced so rapid toggling doesn't hammer the network.
-     */
-    let exercisePrefsSyncTimer = null;
-    function syncExercisePrefs() {
-        if (!currentUser) return;
-        clearTimeout(exercisePrefsSyncTimer);
-        exercisePrefsSyncTimer = setTimeout(() => scheduleCloudSnapshotSync(0), 700);
-    }
-
-    /**
-     * Pull the account's exercise preferences from Firestore on login and apply
-     * them locally. The cloud copy is the source of truth, so signing in on a new
-     * device brings your equipment setup and custom exercises with you.
-     */
-    function applyExercisePrefsFromCloud(data) {
-        if (!data) return;
-        if (Array.isArray(data.customExercises)) {
-            state.customExercises = data.customExercises;
-            // Re-register the muscles each custom exercise targets so swap,
-            // volume tracking and demand-ordering understand them.
-            state.customExercises.forEach(ce => {
-                if (ce && ce.name && Array.isArray(ce.muscles) && ce.muscles.length > 0) {
-                    EXERCISE_TO_MUSCLES[ce.name] = ce.muscles.slice();
-                }
-            });
-        }
-        if (data.disabledExercises) {
-            state.disabledExercises = {
-                gym: Array.isArray(data.disabledExercises.gym) ? data.disabledExercises.gym : [],
-                home: Array.isArray(data.disabledExercises.home) ? data.disabledExercises.home : []
-            };
-        }
-    }
-
-    // ==========================================================================
-    // COACH / MEMBER SYSTEM
-    // ==========================================================================
-    // Members publish a photo-free snapshot of their training/nutrition data so
-    // a linked coach can read it (read-only). Roles are resolved on each login.
-    // Linking is consent-based: a coach sends a request by email, the member approves.
-    // Notes are a two-way conversation. For a coach to READ a member's doc, your
-    // Firestore security rules must permit it (rules provided separately).
-
-    async function pushMemberDataToCloud() {
-        if (!currentUser || currentUserRole !== 'member') return false;
-        return flushCloudSync({ silent: true });
-    }
-
-    // ---------- COACH SECTION (burger-menu overlay) ----------
-
-    /**
-     * Show/hide the "Coach Section" entry in the burger menu based on role.
-     * Only coaches see it; members never do.
-     */
-    function renderCoachMenuEntry() {
-        const entry = document.getElementById('coach-menu-entry');
-        if (!entry) return;
-        entry.style.display = (currentUserRole === 'coach') ? 'flex' : 'none';
-    }
-
-    /**
-     * Open the coach section as a full-screen overlay on top of the normal app,
-     * so a coach can manage clients + messages without leaving member features.
-     */
-    function openCoachSection() {
-        if (currentUserRole !== 'coach') { showToast('Coach access only'); return; }
-        let coachView = document.getElementById('coach-view');
-        if (!coachView) {
-            coachView = document.createElement('div');
-            coachView.id = 'coach-view';
-            document.body.appendChild(coachView);
-        }
-        // Full-screen scrollable overlay
-        coachView.className = 'fixed inset-0 z-[120] bg-slate-50 overflow-y-auto';
-        coachView.style.display = 'block';
-        viewingClientData = null;
-        renderCoachDashboard();
-    }
-
-    function closeCoachSection() {
-        const coachView = document.getElementById('coach-view');
-        if (coachView) coachView.style.display = 'none';
-        viewingClientData = null;
-    }
-
-    async function renderCoachDashboard() {
-        if (!requireCoachAccess()) return;
-        const coachView = document.getElementById('coach-view');
-        if (!coachView) return;
-
-        coachView.innerHTML = `
-            <div class="max-w-xl mx-auto p-4 sm:p-6 space-y-6">
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <div class="flex items-center justify-between mb-2">
-                    <div>
-                        <h2 class="text-2xl font-black">Coach Section</h2>
-                        <p class="text-sm text-slate-400">${escapeHtml(firebaseUserData.name || 'Coach')}</p>
-                    </div>
-                    <button onclick="closeCoachSection()" class="w-11 h-11 bg-slate-100 rounded-full flex items-center justify-center hover:bg-slate-200" aria-label="Close">
-                        <i data-lucide="x" class="w-6 h-6"></i>
-                    </button>
-                </div>
-                <button onclick="closeCoachSection()" class="mt-2 flex items-center gap-2 text-indigo-600 font-bold text-sm">
-                    <i data-lucide="arrow-left" class="w-4 h-4"></i> Back to my app
-                </button>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-3">Add a Client</h3>
-                <p class="text-xs text-slate-400 mb-3">Enter your client's email to send a connection request. They approve it in their app.</p>
-                <div class="flex gap-2">
-                    <input id="add-client-email" type="email" maxlength="254" autocomplete="email" placeholder="client@email.com" class="flex-1 p-3 bg-slate-50 rounded-xl border-2 border-transparent focus:border-indigo-500 outline-none font-medium">
-                    <button onclick="sendClientRequest()" class="bg-indigo-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-indigo-700">Send</button>
-                </div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-4">My Clients</h3>
-                <div id="coach-client-list" class="space-y-3">
-                    <p class="text-sm text-slate-400 text-center py-4">Loading clients...</p>
-                </div>
-            </div>
-
-            <!-- Coach Access Admin (owner only) -->
-            <div id="owner-admin-section-coach" class="glass-card rounded-[2.5rem] p-6" style="display:none;"></div>
-            </div>
-        `;
-        refreshIcons();
-        await loadCoachClients();
-
-        // If the owner is themselves a coach, surface the admin space here too.
-        if (isOwner()) {
-            const adminBox = document.getElementById('owner-admin-section-coach');
-            if (adminBox) {
-                adminBox.style.display = 'block';
-                adminBox.innerHTML = ownerAdminHTML('admin-email-coach', 'admin-list-coach', 'food-editor-list-coach');
-                refreshIcons();
-                await Promise.all([
-                    loadCoachEmailList('admin-list-coach'),
-                    loadFoodDatabaseEditorList('food-editor-list-coach')
-                ]);
-            }
-        }
-    }
-
-    async function loadCoachClients() {
-        if (!requireCoachAccess()) return;
-        const listEl = document.getElementById('coach-client-list');
-        if (!listEl) return;
-        try {
-            // Find every member who has THIS coach set as their coachUid. This is
-            // the source of truth for the client list ‚Äî members set their own
-            // coachUid when they approve, and each user only ever writes their own
-            // doc, so nothing is blocked by the security rules.
-            const snap = await db.collection('users').where('coachUid', '==', currentUser.uid).limit(50).get();
-
-            if (snap.empty) {
-                listEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">No clients yet. Add one above by email ‚Äî once they approve, they\'ll appear here.</p>';
-                return;
-            }
-
-            const cards = [];
-            snap.forEach(cDoc => {
-                const c = cDoc.data();
-                const uid = cDoc.id;
-                const updated = c.dataSnapshot && c.dataSnapshot.updatedAt
-                    ? new Date(c.dataSnapshot.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-                    : 'no data yet';
-                cards.push(`
-                    <div onclick="openClientDetail('${escapeJsString(uid)}')" class="bg-slate-50 p-4 rounded-2xl cursor-pointer hover:bg-slate-100 flex items-center gap-3">
-                        <div class="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black flex-shrink-0">
-                            ${escapeHtml((c.name || 'U').charAt(0).toUpperCase())}
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <p class="font-bold truncate">${escapeHtml(c.name || 'Unknown')}</p>
-                            <p class="text-xs text-slate-400 truncate">${escapeHtml(c.email || '')}</p>
-                            <p class="text-[10px] text-slate-400">Updated: ${escapeHtml(updated)}</p>
-                        </div>
-                        <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400 flex-shrink-0"></i>
-                    </div>`);
-            });
-            listEl.innerHTML = cards.join('');
-            refreshIcons();
-        } catch (error) {
-            console.error('Error loading clients:', error);
-            listEl.innerHTML = '<p class="text-sm text-rose-500 text-center py-4">Could not load clients. Check your Firestore rules are published.</p>';
-        }
-    }
-
-    async function sendClientRequest() {
-        if (!requireCoachAccess()) return;
-        const emailInput = document.getElementById('add-client-email');
-        const email = (emailInput.value || '').trim().toLowerCase();
-        if (!email) { showToast('Enter a client email'); return; }
-        if (email === (currentUser.email || '').toLowerCase()) { showToast("You can't add yourself"); return; }
-        try {
-            let targetDoc = null;
-            let member = {};
-            try {
-                const directorySnap = await db.collection('directory').where('emailLower', '==', email).limit(1).get();
-                if (!directorySnap.empty) {
-                    targetDoc = directorySnap.docs[0];
-                    member = targetDoc.data() || {};
-                }
-            } catch (directoryError) {
-                console.warn('Secure directory lookup unavailable; trying legacy lookup:', directoryError);
-            }
-            // Transitional fallback for accounts that have not signed in since the
-            // secure directory was introduced. Hardened rules will deny this query,
-            // while the directory route above continues to work.
-            if (!targetDoc) {
-                const legacySnap = await db.collection('users').where('emailLower', '==', email).limit(1).get();
-                if (!legacySnap.empty) {
-                    targetDoc = legacySnap.docs[0];
-                    member = targetDoc.data() || {};
-                }
-            }
-            if (!targetDoc) { showToast('No member found with that email'); return; }
-            if (member.role === 'coach') { showToast('That account is a coach, not a member'); return; }
-            if (member.coachUid === currentUser.uid) { showToast('Already your client'); return; }
-            const existing = (member.pendingRequests || []).some(request => request.fromUid === currentUser.uid);
-            if (existing) { showToast('Request already sent'); return; }
-            await db.collection('users').doc(targetDoc.id).update({
-                pendingRequests: firebase.firestore.FieldValue.arrayUnion({
-                    fromUid: currentUser.uid,
-                    fromName: firebaseUserData.name || currentUser.displayName || 'Coach',
-                    fromEmail: currentUser.email || ''
-                })
-            });
-            showToast('Request sent to ' + (member.name || email) + ' ‚úì');
-            emailInput.value = '';
-        } catch (error) {
-            console.error('Error sending request:', error);
-            showToast('Send failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    async function openClientDetail(uid) {
-        if (!requireCoachAccess()) return;
-        try {
-            const cDoc = await db.collection('users').doc(uid).get();
-            if (!cDoc.exists) { showToast('Client not found'); return; }
-            const c = cDoc.data();
-            // Collaboration fields live beside dataSnapshot so coaches can update
-            // only those fields under the hardened Firestore rules. Combine them
-            // for the read-only client view without moving or deleting either copy.
-            const clientSnapshot = isPlainRecord(c.dataSnapshot) ? deepClone(c.dataSnapshot) : {};
-            clientSnapshot.assignedWorkouts = Array.isArray(c.assignedWorkouts)
-                ? deepClone(c.assignedWorkouts)
-                : (Array.isArray(clientSnapshot.assignedWorkouts) ? clientSnapshot.assignedWorkouts : []);
-            clientSnapshot.sharing = isPlainRecord(c.sharing)
-                ? deepClone(c.sharing)
-                : (isPlainRecord(clientSnapshot.sharing) ? clientSnapshot.sharing : {});
-            viewingClientData = { uid, name: c.name || 'Client', data: clientSnapshot, email: c.email };
-            renderClientDetail();
-        } catch (error) {
-            console.error('Error opening client:', error);
-            showToast('Could not load client data (check Firestore rules)');
-        }
-    }
-
-    function renderClientDetail() {
-        const coachView = document.getElementById('coach-view');
-        if (!coachView || !viewingClientData) return;
-        const { name, data, email } = viewingClientData;
-        const snapshot = data || {};
-        const workouts = snapshot.workoutHistory || [];
-        const nutrition = snapshot.nutritionHistory || [];
-        const metrics = snapshot.metricsHistory || [];
-        const profile = snapshot.userProfile || {};
-        const goals = snapshot.goals || {};
-        const latestCheckIn = (snapshot.checkIns || []).slice().sort((a, b) =>
-            String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || ''))
-        )[0] || null;
-
-        const recentWorkouts = workouts.map(w => {
-            const exCount = (w.exercises || []).length;
-            const setCount = (w.exercises || []).reduce((s, e) => s + (e.sets || []).length, 0);
-            const title = w.title || w.focus || 'Workout';
-            const badge = w.title ? '<span class="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">coach plan</span>' : '';
-            return `<div onclick="openSessionDetail('${escapeJsString(w.date || '')}', '${escapeJsString(w.id || '')}')" class="bg-slate-50 p-3 rounded-xl cursor-pointer hover:bg-slate-100">
-                <div class="flex justify-between items-center">
-                    <span class="font-bold text-sm flex items-center gap-2">${escapeHtml(title)} ${badge}</span>
-                    <span class="text-xs text-slate-400 flex items-center gap-1">${escapeHtml(w.date || '')} <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></span>
-                </div>
-                <p class="text-xs text-slate-400 mt-1">${exCount} exercises ¬∑ ${setCount} sets${w.duration ? ' ¬∑ ' + escapeHtml(w.duration) : ''} ¬∑ tap for detail</p>
-            </div>`;
-        }).join('') || '<p class="text-sm text-slate-400 text-center py-3">No completed sessions yet</p>';
-
-        const latestMetric = metrics[0] || {};
-        const metricRows = [];
-        if (latestMetric.weight) metricRows.push(`<div class="flex justify-between"><span class="text-slate-400">Weight</span><span class="font-bold">${nutritionNumber(latestMetric.weight)} kg</span></div>`);
-        if (latestMetric.bodyFat) metricRows.push(`<div class="flex justify-between"><span class="text-slate-400">Body Fat</span><span class="font-bold">${nutritionNumber(latestMetric.bodyFat)}%</span></div>`);
-        if (latestMetric.chest) metricRows.push(`<div class="flex justify-between"><span class="text-slate-400">Chest</span><span class="font-bold">${nutritionNumber(latestMetric.chest)} cm</span></div>`);
-        if (latestMetric.waist) metricRows.push(`<div class="flex justify-between"><span class="text-slate-400">Waist</span><span class="font-bold">${nutritionNumber(latestMetric.waist)} cm</span></div>`);
-        if (latestMetric.arms) metricRows.push(`<div class="flex justify-between"><span class="text-slate-400">Arms</span><span class="font-bold">${nutritionNumber(latestMetric.arms)} cm</span></div>`);
-
-        const recentNutrition = nutrition.slice(0, 7).map(d => {
-            return `<div class="bg-slate-50 p-3 rounded-xl flex justify-between items-center">
-                <span class="text-xs text-slate-400">${escapeHtml(d.date || '')}</span>
-                <span class="font-bold text-sm">${Math.round(d.totalCalories || d.calories || 0)} kcal</span>
-            </div>`;
-        }).join('') || '<p class="text-sm text-slate-400 text-center py-3">No nutrition logged</p>';
-
-        const lastUpdated = snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString('en-GB') : 'never';
-        const checkInFlagsHtml = latestCheckIn && (latestCheckIn.flags || []).length
-            ? `<div class="flex flex-wrap gap-1 mt-3">${latestCheckIn.flags.map(flag => `<span class="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full">${escapeHtml(flag)}</span>`).join('')}</div>`
-            : latestCheckIn ? '<p class="text-xs text-emerald-600 font-bold mt-3">‚úì No automatic concerns flagged</p>' : '';
-        const checkInBodyHtml = latestCheckIn ? `
-            <div class="grid grid-cols-3 gap-2 text-center mb-3">
-                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Training</p><p class="font-black">${Math.round(Number(latestCheckIn.trainingAdherence || 0))}%</p></div>
-                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Nutrition</p><p class="font-black">${Math.round(Number(latestCheckIn.nutritionAdherence || 0))}%</p></div>
-                <div class="bg-slate-50 p-3 rounded-xl"><p class="text-[9px] uppercase text-slate-400 font-bold">Energy</p><p class="font-black">${Math.round(Number(latestCheckIn.energy || 0))}/5</p></div>
-            </div>
-            <p class="text-xs text-slate-400 mb-1">${escapeHtml(latestCheckIn.date || '')} ¬∑ ${nutritionNumber(latestCheckIn.sleepHours || 0)}h average sleep</p>
-            <p class="text-sm"><b>Win:</b> ${escapeHtml(latestCheckIn.win || '‚Äî')}</p>
-            <p class="text-sm mt-1"><b>Challenge:</b> ${escapeHtml(latestCheckIn.challenge || '‚Äî')}</p>
-            ${checkInFlagsHtml}`
-            : '<p class="text-sm text-slate-400 text-center py-3">No weekly check-in submitted yet.</p>';
-
-        coachView.innerHTML = `
-            <div class="max-w-xl mx-auto p-4 sm:p-6 space-y-6">
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <button onclick="backToCoachDashboard()" class="flex items-center gap-2 text-indigo-600 font-bold text-sm mb-4">
-                    <i data-lucide="arrow-left" class="w-4 h-4"></i> Back to clients
-                </button>
-                <div class="flex items-center gap-3">
-                    <div class="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black text-xl">
-                        ${escapeHtml((name || 'U').charAt(0).toUpperCase())}
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <h2 class="text-xl font-black truncate">${escapeHtml(name)}</h2>
-                        <p class="text-xs text-slate-400 truncate">${escapeHtml(email || '')}</p>
-                    </div>
-                </div>
-                <div class="mt-3 inline-flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-lg">
-                    <i data-lucide="eye" class="w-3.5 h-3.5 text-slate-400"></i>
-                    <span class="text-[10px] font-bold text-slate-400 uppercase">Read-only ¬∑ synced ${escapeHtml(lastUpdated)}</span>
-                </div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-3">Profile & Goals</h3>
-                <div class="space-y-2 text-sm">
-                    ${profile.gender ? `<div class="flex justify-between"><span class="text-slate-400">Gender</span><span class="font-bold">${escapeHtml(profile.gender)}</span></div>` : ''}
-                    ${profile.age ? `<div class="flex justify-between"><span class="text-slate-400">Age</span><span class="font-bold">${Math.round(nutritionNumber(profile.age))}</span></div>` : ''}
-                    ${profile.heightCm ? `<div class="flex justify-between"><span class="text-slate-400">Height</span><span class="font-bold">${nutritionNumber(profile.heightCm)} cm</span></div>` : ''}
-                    ${(profile.yearsTraining !== undefined && profile.yearsTraining !== null) ? `<div class="flex justify-between"><span class="text-slate-400">Training</span><span class="font-bold">${nutritionNumber(profile.yearsTraining)} yrs</span></div>` : ''}
-                    ${goals.calories ? `<div class="flex justify-between"><span class="text-slate-400">Calorie Goal</span><span class="font-bold">${Math.round(nutritionNumber(goals.calories))} kcal</span></div>` : ''}
-                    ${goals.protein ? `<div class="flex justify-between"><span class="text-slate-400">Protein Goal</span><span class="font-bold">${Math.round(nutritionNumber(goals.protein))} g</span></div>` : ''}
-                </div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-3">Latest Measurements</h3>
-                <div class="space-y-2 text-sm">
-                    ${metricRows.length ? metricRows.join('') : '<p class="text-sm text-slate-400 text-center py-3">No measurements logged</p>'}
-                </div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <div class="flex items-center justify-between gap-3 mb-3">
-                    <div><h3 class="text-lg font-black">Weekly Check-in</h3><p class="text-xs text-slate-400">Latest readiness and adherence update</p></div>
-                    <i data-lucide="clipboard-check" class="w-5 h-5 text-indigo-600"></i>
-                </div>
-                ${checkInBodyHtml}
-                <div class="grid grid-cols-2 gap-2 mt-4">
-                    <button onclick="replyToClientCheckIn()" ${latestCheckIn ? '' : 'disabled'} class="p-3 bg-indigo-600 text-white rounded-xl font-bold text-xs disabled:opacity-40">Reply in Notes</button>
-                    <button onclick="exportViewedClientReport()" class="p-3 bg-slate-900 text-white rounded-xl font-bold text-xs">Download Report</button>
-                </div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-1">Completed Sessions (${workouts.length})</h3>
-                <p class="text-xs text-slate-400 mb-3">Every workout ${escapeHtml(name)} has finished. Tap any to see full detail.</p>
-                <div class="space-y-2 max-h-96 overflow-y-auto">${recentWorkouts}</div>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-3">Recent Nutrition</h3>
-                <div class="space-y-2">${recentNutrition}</div>
-            </div>
-
-            <!-- Client's goals, focus & targets -->
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-1">Goals &amp; Targets</h3>
-                <p class="text-xs text-slate-400 mb-4">What ${escapeHtml(name)} is working toward.</p>
-                <div id="client-goals-list"></div>
-            </div>
-
-            <!-- Days the client has chosen to share with the coach -->
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-1">Shared With You</h3>
-                <p class="text-xs text-slate-400 mb-4">Workouts &amp; nutrition ${escapeHtml(name)} has shared.</p>
-                <div id="shared-days-list" class="space-y-2">
-                    <p class="text-sm text-slate-400 text-center py-3">Loading...</p>
-                </div>
-            </div>
-
-            <!-- Coach assigns a workout to this client -->
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-1">Assign a Workout</h3>
-                <p class="text-xs text-slate-400 mb-4">Build a workout for ${escapeHtml(name)}. It appears in their app to follow.</p>
-                <div id="assigned-workouts-list" class="space-y-2 mb-4"></div>
-                <button onclick="openAssignWorkout()" class="w-full bg-indigo-600 text-white p-3 rounded-xl font-bold hover:bg-indigo-700">+ New Assigned Workout</button>
-            </div>
-
-            <div class="glass-card rounded-[2.5rem] p-6">
-                <h3 class="text-lg font-black mb-1">Personal Training Notes</h3>
-                <p class="text-xs text-slate-400 mb-4">A shared conversation between you and ${escapeHtml(name)}.</p>
-                <div id="notes-thread" class="space-y-3 mb-4 max-h-80 overflow-y-auto">
-                    <p class="text-sm text-slate-400 text-center py-3">Loading notes...</p>
-                </div>
-                <div class="flex gap-2">
-                    <input id="note-input" type="text" maxlength="1000" placeholder="Write a note..." class="flex-1 p-3 bg-slate-50 rounded-xl border-2 border-transparent focus:border-indigo-500 outline-none font-medium" onkeydown="if(event.key==='Enter')postNote()">
-                    <button onclick="postNote()" class="bg-indigo-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-indigo-700">Send</button>
-                </div>
-            </div>
-            </div>
-        `;
-        refreshIcons();
-        loadNotesThread();
-        renderSharedDays();
-        renderClientGoals();
-        renderAssignedWorkoutsForCoach();
-    }
-
-    function replyToClientCheckIn() {
-        if (!viewingClientData) return;
-        const latest = (((viewingClientData.data || {}).checkIns || []).slice().sort((a, b) =>
-            String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || ''))
-        ))[0];
-        const input = document.getElementById('note-input');
-        if (!latest || !input) { showToast('No check-in available to reply to'); return; }
-        input.value = `Check-in response for ${latest.date || 'this week'}: `;
-        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        input.focus();
-        if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
-    }
-
-    // ==========================================================================
-    // COACH ‚Üî CLIENT SHARING & ASSIGNED WORKOUTS
-    // ==========================================================================
-
-    // ==========================================================================
-    // NOTIFICATIONS  (coach <-> client activity feed)
-    // ==========================================================================
-    // Stored as an `events` array on the shared notes doc (which both the coach
-    // and the client are allowed to write to). Each event records who it's FOR,
-    // so each side only counts the ones meant for them as unread. `seenBy` tracks
-    // who has opened their notifications so we can show an unread badge.
-
-    /**
-     * Add a notification for a recipient. Figures out the coach/member pair from
-     * the current user's role, writes into the shared notes doc's events array.
-     * @param {String} recipientUid - who should receive/see this notification
-     * @param {Object} notif - { type, title, body, fromName }
-     */
-    async function pushNotification(recipientUid, notif) {
-        try {
-            let coachUid, memberUid;
-            if (currentUserRole === 'coach') {
-                coachUid = currentUser.uid;
-                memberUid = recipientUid;
-            } else {
-                coachUid = firebaseUserData.coachUid;
-                memberUid = currentUser.uid;
-            }
-            if (!coachUid || !memberUid) return;
-
-            const event = {
-                type: notif.type || 'update',
-                title: notif.title || 'Update',
-                body: notif.body || '',
-                fromName: notif.fromName || '',
-                forUid: recipientUid,
-                at: new Date().toISOString(),
-                id: 'n_' + Date.now() + '_' + Math.floor(Math.random() * 1000)
-            };
-
-            const ref = db.collection('notes').doc(notesDocId(coachUid, memberUid));
-            const existing = await ref.get();
-            if (existing.exists) {
-                await ref.update({ events: firebase.firestore.FieldValue.arrayUnion(event) });
-            } else {
-                await ref.set({ coachUid: coachUid, memberUid: memberUid, messages: [], events: [event] });
-            }
-            if (RUNTIME_CONFIG.pushEnabled && appCheckReady) {
-                const sendPush = getBackendCallable('sendUserPush');
-                if (sendPush) {
-                    try {
-                        await sendPush({
-                            recipientUid,
-                            title: event.title,
-                            body: event.body,
-                            kind: 'coachMessages',
-                            url: new URL('./#coaching', window.location.href).href
-                        });
-                    } catch (pushError) {
-                        // The in-app activity event above is still safely delivered.
-                        console.warn('Remote push delivery pending:', pushError);
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn('Could not push notification:', error);
-        }
-    }
-
-    /**
-     * Load all notifications addressed to the current user across their coach/
-     * client relationship. Members have one coach; coaches may have many clients.
-     */
-    async function loadMyNotifications() {
-        const results = [];
-        try {
-            if (currentUserRole === 'coach') {
-                // All notes docs where this coach is a participant
-                const snap = await db.collection('notes').where('coachUid', '==', currentUser.uid).limit(50).get();
-                snap.forEach(doc => {
-                    const d = doc.data();
-                    (d.events || []).forEach(e => { if (e.forUid === currentUser.uid) results.push(e); });
-                });
-            } else {
-                const coachUid = firebaseUserData.coachUid;
-                if (coachUid) {
-                    const ref = db.collection('notes').doc(notesDocId(coachUid, currentUser.uid));
-                    const doc = await ref.get();
-                    if (doc.exists) {
-                        (doc.data().events || []).forEach(e => { if (e.forUid === currentUser.uid) results.push(e); });
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn('Could not load notifications:', error);
-        }
-        results.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
-        return results;
-    }
-
-    // Track which notification ids the user has already seen (persisted locally)
-    function notificationStorageKey(base) {
-        return `${base}:${currentUser ? currentUser.uid : 'guest'}`;
-    }
-
-    function seenNotifIds() {
-        try { return JSON.parse(localStorage.getItem(notificationStorageKey('vfit_seen_notifs')) || '[]'); }
-        catch (e) { return []; }
-    }
-    function markNotifsSeen(ids) {
-        const set = new Set(seenNotifIds());
-        ids.forEach(id => set.add(id));
-        localStorage.setItem(notificationStorageKey('vfit_seen_notifs'), JSON.stringify(Array.from(set).slice(-500)));
-    }
-
-    // Track which notifications the user has DISMISSED (read and cleared off the list)
-    function dismissedNotifIds() {
-        try { return JSON.parse(localStorage.getItem(notificationStorageKey('vfit_dismissed_notifs')) || '[]'); }
-        catch (e) { return []; }
-    }
-    function dismissNotif(id) {
-        const set = new Set(dismissedNotifIds());
-        set.add(id);
-        localStorage.setItem(notificationStorageKey('vfit_dismissed_notifs'), JSON.stringify(Array.from(set).slice(-1000)));
-        markNotifsSeen([id]);
-        openNotifications();     // re-render the list without the dismissed item
-        refreshNotifBadge();
-    }
-    function clearAllNotifs() {
-        const notifs = window._cachedNotifs || [];
-        const set = new Set(dismissedNotifIds());
-        notifs.forEach(n => set.add(n.id));
-        localStorage.setItem(notificationStorageKey('vfit_dismissed_notifs'), JSON.stringify(Array.from(set).slice(-1000)));
-        markNotifsSeen(notifs.map(n => n.id));
-        openNotifications();
-        refreshNotifBadge();
-    }
-
-    async function refreshNotifBadge() {
-        const notifs = await loadMyNotifications();
-        const seen = new Set(seenNotifIds());
-        const dismissed = new Set(dismissedNotifIds());
-        // Unread = not seen and not dismissed
-        const unread = notifs.filter(n => !seen.has(n.id) && !dismissed.has(n.id)).length;
-        document.querySelectorAll('.notif-badge').forEach(badge => {
-            if (unread > 0) {
-                badge.textContent = unread > 9 ? '9+' : String(unread);
-                badge.classList.remove('hidden');
-            } else {
-                badge.classList.add('hidden');
-            }
-        });
-        window._cachedNotifs = notifs;
-    }
-
-    async function openNotifications() {
-        const modal = document.getElementById('notifications-modal');
-        const body = document.getElementById('notifications-body');
-        if (!modal || !body) return;
-        body.innerHTML = '<p class="text-sm text-slate-400 text-center py-8">Loading...</p>';
-        modal.style.display = 'flex';
-
-        const all = await loadMyNotifications();
-        const dismissed = new Set(dismissedNotifIds());
-        const seen = new Set(seenNotifIds());
-        // Show everything that hasn't been dismissed
-        const notifs = all.filter(n => !dismissed.has(n.id));
-
-        const clearBtn = document.getElementById('notif-clear-all');
-        if (clearBtn) clearBtn.style.display = notifs.length > 0 ? '' : 'none';
-
-        if (notifs.length === 0) {
-            body.innerHTML = `
-                <div class="text-center py-12">
-                    <i data-lucide="bell-off" class="w-12 h-12 text-slate-300 mx-auto mb-3"></i>
-                    <p class="text-sm text-slate-400 font-bold">You're all caught up</p>
-                    <p class="text-xs text-slate-400 mt-1">New activity with your ${currentUserRole === 'coach' ? 'clients' : 'coach'} shows here.</p>
-                </div>`;
-        } else {
-            const iconFor = {
-                'workout-assigned': { icon: 'clipboard-list', color: 'bg-indigo-100 text-indigo-600' },
-                'workout-completed': { icon: 'check-circle', color: 'bg-emerald-100 text-emerald-600' },
-                'days-shared': { icon: 'share-2', color: 'bg-emerald-100 text-emerald-600' },
-                'note': { icon: 'message-circle', color: 'bg-blue-100 text-blue-600' },
-                'coach-connected': { icon: 'user-check', color: 'bg-indigo-100 text-indigo-600' }
-            };
-            body.innerHTML = notifs.map(n => {
-                const isUnread = !seen.has(n.id);
-                const ic = iconFor[n.type] || { icon: 'bell', color: 'bg-slate-100 text-slate-600' };
-                const time = n.at ? new Date(n.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-                return `
-                    <div class="flex gap-3 p-3 rounded-2xl mb-2 ${isUnread ? 'bg-indigo-50' : 'bg-slate-50'}">
-                        <div class="w-10 h-10 ${ic.color} rounded-xl flex items-center justify-center flex-shrink-0">
-                            <i data-lucide="${ic.icon}" class="w-5 h-5"></i>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <p class="font-bold text-sm">${escapeHtml(n.title || '')}</p>
-                                ${isUnread ? '<span class="w-2 h-2 bg-indigo-600 rounded-full flex-shrink-0"></span>' : ''}
-                            </div>
-                            ${n.body ? `<p class="text-xs text-slate-500 mt-0.5">${escapeHtml(n.body)}</p>` : ''}
-                            <p class="text-[10px] text-slate-400 mt-1">${n.fromName ? escapeHtml(n.fromName) + ' ¬∑ ' : ''}${time}</p>
-                        </div>
-                        <button onclick="dismissNotif('${escapeJsString(n.id)}')" class="text-slate-300 hover:text-slate-500 flex-shrink-0 self-start" aria-label="Dismiss">
-                            <i data-lucide="x" class="w-4 h-4"></i>
-                        </button>
-                    </div>`;
-            }).join('');
-        }
-        refreshIcons();
-
-        // Opening the list marks everything as SEEN (clears the badge), but items
-        // stay on the list until individually dismissed or cleared.
-        markNotifsSeen(all.map(n => n.id));
-        refreshNotifBadge();
-    }
-
-    function closeNotifications() {
-        const modal = document.getElementById('notifications-modal');
-        if (modal) modal.style.display = 'none';
-    }
-
-    // ---- COACH SIDE: show the client's goals, focus & targets ----
-    function renderClientGoals() {
-        const box = document.getElementById('client-goals-list');
-        if (!box || !viewingClientData) return;
-        const snap = viewingClientData.data || {};
-        const goals = snap.userGoals || [];
-        const targets = snap.goalTargets || {};
-        const profile = snap.userProfile || {};
-
-        let html = '';
-
-        // Focus goals (weight loss / muscle gain / health) ‚Äî same shape the client sets
-        if (goals.length > 0) {
-            html += goals.map(g => {
-                const focusInfo = {
-                    weight_loss: { emoji: 'üî•', label: 'Fat Loss', color: 'text-rose-600' },
-                    muscle_gain: { emoji: 'üí™', label: 'Muscle Gain', color: 'text-indigo-600' },
-                    health:      { emoji: 'üå±', label: 'Health',      color: 'text-emerald-600' }
-                }[g.focus] || { emoji: 'üéØ', label: g.type || 'Goal', color: 'text-slate-600' };
-
-                let summary = '';
-                if (g.focus === 'weight_loss' && g.details) {
-                    const parts = [];
-                    if (g.details.kg) parts.push(`${g.details.kg}kg`);
-                    if (g.details.weeks) parts.push(`${g.details.weeks}w`);
-                    if (g.details.style) parts.push(g.details.style === 'toned' ? 'toned' : 'scale weight');
-                    if (parts.length) summary = parts.join(' ¬∑ ');
-                } else if (g.focus === 'muscle_gain' && g.details) {
-                    const parts = [];
-                    if (g.details.scope === 'general') parts.push('Full body ¬∑ 12‚Äì16 sets/muscle/week');
-                    else if (g.details.scope === 'specific' && Array.isArray(g.details.muscles)) parts.push(`${g.details.muscles.join(', ')} ¬∑ 12‚Äì20 sets each/week`);
-                    else if (g.details.priority) parts.push(g.details.priority);
-                    if (g.details.physique) parts.push(g.details.physique);
-                    if (g.details.experience) parts.push(g.details.experience);
-                    if (parts.length) summary = parts.join(' ¬∑ ');
-                } else if (g.focus === 'health' && g.details && g.details.area) {
-                    summary = g.details.area;
-                }
-
-                return `
-                    <div class="bg-slate-50 p-3 rounded-xl mb-2">
-                        <span class="text-[10px] font-black ${focusInfo.color} uppercase">${focusInfo.emoji} ${escapeHtml(focusInfo.label)}</span>
-                        <p class="font-bold text-sm mt-1">${escapeHtml(g.description || '')}</p>
-                        ${summary ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(summary)}</p>` : ''}
-                    </div>`;
-            }).join('');
-        }
-
-        // Daily targets (calories / water / steps)
-        const targetChips = [];
-        if (targets.calories) targetChips.push(`üî• ${Math.round(Number(targets.calories) || 0)} kcal`);
-        if (targets.water) targetChips.push(`üíß ${Math.round(Number(targets.water) || 0)} ml`);
-        if (targets.steps) targetChips.push(`üëü ${(Number(targets.steps) || 0).toLocaleString()} steps`);
-        if (targetChips.length) {
-            html += `<p class="text-[10px] font-black uppercase text-slate-400 mt-2 mb-1">Daily Targets</p>
-                <div class="flex flex-wrap gap-2 mb-2">
-                    ${targetChips.map(c => `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-full">${escapeHtml(c)}</span>`).join('')}
-                </div>`;
-        }
-
-        // Profile basics that inform training
-        const profBits = [];
-        if (profile.gender) profBits.push(profile.gender);
-        if (profile.age) profBits.push(`${profile.age} yrs`);
-        if (profile.heightCm) profBits.push(`${profile.heightCm} cm`);
-        if (profile.yearsTraining != null) profBits.push(`${profile.yearsTraining}y training`);
-        if (profile.activityLevel) profBits.push(profile.activityLevel.replace('_', ' '));
-        if (profBits.length) {
-            html += `<p class="text-[10px] font-black uppercase text-slate-400 mt-2 mb-1">Profile</p>
-                <p class="text-xs text-slate-500">${escapeHtml(profBits.join(' ¬∑ '))}</p>`;
-        }
-
-        box.innerHTML = html || '<p class="text-sm text-slate-400 text-center py-3">No goals or targets set yet.</p>';
-    }
-
-    // ---- COACH SIDE: show what the client has shared ----
-    function renderSharedDays() {
-        const box = document.getElementById('shared-days-list');
-        if (!box || !viewingClientData) return;
-        const snap = viewingClientData.data || {};
-        const sharing = snap.sharing || {};
-        const sharedWorkoutDates = sharing.workouts || [];
-        const sharedNutritionDates = sharing.nutrition || [];
-
-        const workouts = snap.workoutHistory || [];
-        const nutrition = snap.nutritionHistory || [];
-
-        let html = '';
-
-        if (sharedWorkoutDates.length > 0) {
-            html += '<p class="text-[10px] font-black uppercase text-slate-400 mt-1 mb-1">Shared Workouts</p>';
-            sharedWorkoutDates.forEach(date => {
-                const w = workouts.find(x => x.date === date);
-                if (!w) return;
-                const exCount = (w.exercises || []).length;
-                const setCount = (w.exercises || []).reduce((s, e) => s + (e.sets || []).length, 0);
-                html += `<div onclick="openSharedDetail('workout', '${escapeJsString(date)}')" class="bg-slate-50 p-3 rounded-xl cursor-pointer hover:bg-slate-100">
-                    <div class="flex justify-between items-center">
-                        <span class="font-bold text-sm">${escapeHtml(w.focus || 'Workout')}</span>
-                        <span class="text-xs text-slate-400 flex items-center gap-1">${escapeHtml(date)} <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></span>
-                    </div>
-                    <p class="text-xs text-slate-400 mt-1">${exCount} exercises ¬∑ ${setCount} sets${w.duration ? ' ¬∑ ' + escapeHtml(w.duration) : ''} ¬∑ tap for detail</p>
-                </div>`;
-            });
-        }
-
-        if (sharedNutritionDates.length > 0) {
-            html += '<p class="text-[10px] font-black uppercase text-slate-400 mt-3 mb-1">Shared Nutrition</p>';
-            sharedNutritionDates.forEach(date => {
-                const n = nutrition.find(x => x.date === date);
-                if (!n) return;
-                const mealCount = (n.meals || []).length;
-                html += `<div onclick="openSharedDetail('nutrition', '${escapeJsString(date)}')" class="bg-slate-50 p-3 rounded-xl cursor-pointer hover:bg-slate-100">
-                    <div class="flex justify-between items-center mb-1">
-                        <span class="font-bold text-sm">${escapeHtml(date)}</span>
-                        <span class="text-xs text-slate-400 flex items-center gap-1">${Math.round(n.calories || 0)} kcal <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></span>
-                    </div>
-                    <p class="text-xs text-slate-400">${mealCount} item${mealCount !== 1 ? 's' : ''} ¬∑ ${Math.round(n.protein || 0)}g P ¬∑ ${Math.round(n.carbs || 0)}g C ¬∑ ${Math.round(n.fat || 0)}g F ¬∑ tap for detail</p>
-                </div>`;
-            });
-        }
-
-        box.innerHTML = html || '<p class="text-sm text-slate-400 text-center py-3">Nothing shared yet. Your client can share days from their app.</p>';
-        refreshIcons();
-    }
-
-    /**
-     * Coach taps a completed session in the archive ‚Üí full detail (reuses the
-     * shared-detail modal). Finds the workout by id first, falling back to date.
-     */
-    function openSessionDetail(date, id) {
-        if (!viewingClientData) return;
-        const snap = viewingClientData.data || {};
-        const workouts = snap.workoutHistory || [];
-        const w = (id && workouts.find(x => String(x.id) === String(id))) || workouts.find(x => x.date === date);
-        if (!w) { showToast('Session not found'); return; }
-
-        const modal = document.getElementById('shared-detail-modal');
-        const body = document.getElementById('shared-detail-body');
-        const titleEl = document.getElementById('shared-detail-title');
-        if (!modal || !body) return;
-
-        titleEl.textContent = w.title || w.focus || 'Workout';
-        const prettyDate = new Date(w.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-
-        let totalVolume = 0;
-        (w.exercises || []).forEach(ex => (ex.sets || []).forEach(s => {
-            const kg = parseFloat(s.weight), reps = parseInt(s.reps);
-            if (!isNaN(kg) && !isNaN(reps)) totalVolume += kg * reps;
-        }));
-
-        body.innerHTML = `
-            <p class="text-sm text-slate-400 mb-1">${prettyDate}</p>
-            ${w.title ? `<p class="text-xs font-bold text-indigo-600 mb-2">üìã Coach-assigned workout</p>` : ''}
-            <div class="flex gap-2 mb-4 flex-wrap">
-                ${w.duration ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">‚è± ${escapeHtml(w.duration)}</span>` : ''}
-                <span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${(w.exercises || []).length} exercises</span>
-                ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg volume</span>` : ''}
-            </div>
-            ${(w.exercises || []).map(ex => {
-                const rows = (ex.sets || []).map((s, i) => `
-                    <div class="flex items-center gap-3 py-1.5 border-b border-slate-100 last:border-0">
-                        <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}</span>
-                        <span class="text-sm font-bold">${escapeHtml(s.weight === '' || s.weight == null ? '‚Äî' : s.weight)} kg</span>
-                        <span class="text-slate-300">√ó</span>
-                        <span class="text-sm font-bold">${escapeHtml(s.reps === '' || s.reps == null ? '‚Äî' : s.reps)} reps</span>
-                        ${(s.rir !== undefined && s.rir !== '') ? `<span class="text-xs text-amber-600 ml-auto">RIR ${escapeHtml(String(s.rir))}</span>` : ''}
-                    </div>`).join('');
-                return `
-                    <div class="bg-slate-50 rounded-2xl p-4 mb-3">
-                        <p class="font-black text-sm mb-1">${escapeHtml(ex.name || 'Exercise')}</p>
-                        ${ex.focus ? `<p class="text-[11px] text-indigo-600 mb-2">üéØ ${escapeHtml(ex.focus)}</p>` : ''}
-                        ${rows || '<p class="text-xs text-slate-400">No sets recorded</p>'}
-                    </div>`;
-            }).join('')}
-        `;
-        modal.style.display = 'flex';
-        refreshIcons();
-    }
-
-    /**
-     * Coach taps a shared workout or nutrition day ‚Üí full detail modal.
-     * Reads from the client's snapshot (viewingClientData.data).
-     */
-    function openSharedDetail(type, date) {
-        if (!viewingClientData) return;
-        const snap = viewingClientData.data || {};
-        const modal = document.getElementById('shared-detail-modal');
-        const body = document.getElementById('shared-detail-body');
-        const titleEl = document.getElementById('shared-detail-title');
-        if (!modal || !body) return;
-
-        const prettyDate = new Date(date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-
-        if (type === 'workout') {
-            const w = (snap.workoutHistory || []).find(x => x.date === date);
-            if (!w) { showToast('Workout not found'); return; }
-            titleEl.textContent = w.focus || 'Workout';
-
-            let totalVolume = 0;
-            (w.exercises || []).forEach(ex => (ex.sets || []).forEach(s => {
-                const kg = parseFloat(s.weight), reps = parseInt(s.reps);
-                if (!isNaN(kg) && !isNaN(reps)) totalVolume += kg * reps;
-            }));
-
-            body.innerHTML = `
-                <p class="text-sm text-slate-400 mb-1">${prettyDate}</p>
-                <div class="flex gap-2 mb-4 flex-wrap">
-                    ${w.duration ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">‚è± ${escapeHtml(w.duration)}</span>` : ''}
-                    <span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${(w.exercises || []).length} exercises</span>
-                    ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg volume</span>` : ''}
-                </div>
-                ${(w.exercises || []).map(ex => {
-                    const rows = (ex.sets || []).map((s, i) => `
-                        <div class="flex items-center gap-3 py-1.5 border-b border-slate-100 last:border-0">
-                            <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}</span>
-                            <span class="text-sm font-bold">${escapeHtml(s.weight === '' || s.weight == null ? '‚Äî' : s.weight)} kg</span>
-                            <span class="text-slate-300">√ó</span>
-                            <span class="text-sm font-bold">${escapeHtml(s.reps === '' || s.reps == null ? '‚Äî' : s.reps)} reps</span>
-                            ${(s.rir !== undefined && s.rir !== '') ? `<span class="text-xs text-amber-600 ml-auto">RIR ${escapeHtml(String(s.rir))}</span>` : ''}
-                        </div>`).join('');
-                    return `
-                        <div class="bg-slate-50 rounded-2xl p-4 mb-3">
-                            <p class="font-black text-sm mb-2">${escapeHtml(ex.name || 'Exercise')}</p>
-                            ${rows || '<p class="text-xs text-slate-400">No sets recorded</p>'}
-                        </div>`;
-                }).join('')}
-            `;
-        } else {
-            const n = (snap.nutritionHistory || []).find(x => x.date === date);
-            if (!n) { showToast('Nutrition not found'); return; }
-            titleEl.textContent = 'Nutrition';
-
-            body.innerHTML = `
-                <p class="text-sm text-slate-400 mb-3">${prettyDate}</p>
-                <div class="grid grid-cols-4 gap-2 mb-4">
-                    <div class="bg-indigo-50 rounded-xl p-2 text-center">
-                        <p class="text-lg font-black text-indigo-600">${Math.round(n.calories || 0)}</p>
-                        <p class="text-[9px] font-bold uppercase text-slate-400">kcal</p>
-                    </div>
-                    <div class="bg-slate-50 rounded-xl p-2 text-center">
-                        <p class="text-lg font-black">${Math.round(n.protein || 0)}g</p>
-                        <p class="text-[9px] font-bold uppercase text-slate-400">Protein</p>
-                    </div>
-                    <div class="bg-slate-50 rounded-xl p-2 text-center">
-                        <p class="text-lg font-black">${Math.round(n.carbs || 0)}g</p>
-                        <p class="text-[9px] font-bold uppercase text-slate-400">Carbs</p>
-                    </div>
-                    <div class="bg-slate-50 rounded-xl p-2 text-center">
-                        <p class="text-lg font-black">${Math.round(n.fat || 0)}g</p>
-                        <p class="text-[9px] font-bold uppercase text-slate-400">Fat</p>
-                    </div>
-                </div>
-                <p class="text-[10px] font-black uppercase text-slate-400 mb-2">Foods logged (${(n.meals || []).length})</p>
-                ${(n.meals || []).map(m => `
-                    <div class="bg-slate-50 rounded-2xl p-3 mb-2">
-                        <div class="flex justify-between items-center">
-                            <span class="font-bold text-sm flex-1 min-w-0 truncate">${escapeHtml(m.name || 'Food')}</span>
-                            <span class="text-sm font-black text-indigo-600 ml-2">${Math.round(m.calories || 0)} kcal</span>
-                        </div>
-                        <p class="text-xs text-slate-400 mt-0.5">${Math.round(m.protein || 0)}g P ¬∑ ${Math.round(m.carbs || 0)}g C ¬∑ ${Math.round(m.fat || 0)}g F${m.fiber ? ' ¬∑ ' + Math.round(m.fiber) + 'g fibre' : ''}</p>
-                    </div>`).join('') || '<p class="text-sm text-slate-400">No foods recorded</p>'}
-            `;
-        }
-
-        modal.style.display = 'flex';
-        refreshIcons();
-    }
-
-    function closeSharedDetail() {
-        const modal = document.getElementById('shared-detail-modal');
-        if (modal) modal.style.display = 'none';
-    }
-
-    // ---- COACH SIDE: assign workouts ----
-    let assignExercises = []; // [{name, sets:[{weight,reps}]}] being built
-
-    function renderAssignedWorkoutsForCoach() {
-        const box = document.getElementById('assigned-workouts-list');
-        if (!box || !viewingClientData) return;
-        const assigned = (viewingClientData.data || {}).assignedWorkouts || [];
-        if (assigned.length === 0) {
-            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-2">None assigned yet.</p>';
-            return;
-        }
-        box.innerHTML = assigned.slice().reverse().map(w => `
-            <div class="bg-indigo-50 p-3 rounded-xl">
-                <div class="flex justify-between items-center">
-                    <span class="font-bold text-sm">${escapeHtml(w.title || 'Workout')}</span>
-                    <span class="text-[10px] text-slate-400">${escapeHtml((w.assignedAt || '').split('T')[0])}</span>
-                </div>
-                <div class="mt-1 space-y-1">
-                    ${(w.exercises || []).map(e => `
-                        <div>
-                            <p class="text-xs text-slate-600">${escapeHtml(e.name)}</p>
-                            ${e.focus ? `<p class="text-[11px] text-indigo-600 pl-2">üéØ ${escapeHtml(e.focus)}</p>` : ''}
-                        </div>
-                    `).join('')}
-                </div>
-            </div>`).join('');
-    }
-
-    let assigningToClient = null; // when set, a finished workout is assigned to this client instead of saved
-
-    function openAssignWorkout() {
-        if (!viewingClientData) return;
-        // Build the workout using the REAL workout interface (same cards, exercise
-        // picker, PB display, add-set) rather than a stripped-down form. We remember
-        // which client we're assigning to; finishing routes to saveAssignedFromBuilder().
-        const clientName = viewingClientData.name || 'client';
-        assigningToClient = { uid: viewingClientData.uid, name: clientName };
-
-        closeCoachSection(); // hide the coach overlay so the workout screen is visible
-        switchTab('training'); // the workout lives in the "training" tab
-
-        currentWorkoutContext = { env: state.workoutEnv || 'gym', focus: 'Assign to ' + clientName, muscles: null };
-        workoutStartTime = Date.now();
-        workoutAccumulatedSeconds = 0;
-        clearInterval(workoutTimer);
-        document.getElementById('workout-setup').classList.add('hidden');
-        { const _cpc = document.getElementById('coach-plan-card'); if (_cpc) _cpc.classList.add('hidden'); }
-        document.getElementById('workout-active').classList.remove('hidden');
-        const titleEl = document.getElementById('active-workout-title');
-        if (titleEl) titleEl.innerText = 'üìù Assigning to ' + clientName;
-        document.getElementById('exercise-list').innerHTML = '';
-        addExercise(); // start with one blank exercise card
-        setTimeout(() => enterWizardMode(), 120);
-        showToast('Build the workout, then Finish to assign it');
-    }
-
-    /**
-     * Called from saveWorkout() when the coach is in assign mode. Reads the built
-     * exercises straight from the workout cards and assigns them to the client,
-     * instead of saving to the coach's own history.
-     */
-    let pendingAssignExercises = null; // holds the built workout while naming it
-
-    async function saveAssignedFromBuilder() {
-        if (!requireCoachAccess()) return;
-        const clientUid = assigningToClient ? assigningToClient.uid : null;
-        if (!clientUid) return false;
-
-        // Read the exercises out of the workout DOM (same source saveWorkout uses)
-        const exercises = [];
-        document.querySelectorAll('#exercise-list > div').forEach(card => {
-            const nameInput = card.querySelector('input[type="text"]');
-            const name = nameInput ? nameInput.value.trim() : '';
-            if (!name) return;
-            const sets = [];
-            card.querySelectorAll('.set-row').forEach(row => {
-                const w = row.querySelector('.set-weight');
-                const r = row.querySelector('.set-reps');
-                sets.push({ weight: (w && w.value) || '', reps: (r && r.value) || '' });
-            });
-            // Coach's Focus text for this exercise (may be blank)
-            const focusEl = card.querySelector('[id^="coach-focus-"]');
-            const focus = focusEl ? focusEl.value.trim() : '';
-            const exObj = { name: name, sets: sets.length ? sets : [{ weight: '', reps: '' }] };
-            if (focus) exObj.focus = focus;
-            exercises.push(exObj);
-        });
-
-        if (exercises.length === 0) { showToast('Add at least one exercise'); return true; }
-
-        // Stash the built workout and ask the coach to name it before saving.
-        pendingAssignExercises = exercises;
-        const input = document.getElementById('name-workout-input');
-        if (input) input.value = '';
-        document.getElementById('name-workout-modal').style.display = 'flex';
-        setTimeout(() => { if (input) input.focus(); }, 100);
-        refreshIcons();
-        return true;
-    }
-
-    async function confirmAssignWorkoutName() {
-        if (!requireCoachAccess()) return;
-        const clientUid = assigningToClient ? assigningToClient.uid : null;
-        const clientName = assigningToClient ? assigningToClient.name : 'client';
-        if (!clientUid || !pendingAssignExercises) return;
-
-        const input = document.getElementById('name-workout-input');
-        const title = (input && input.value.trim()) || 'Coach Workout';
-
-        const workout = {
-            title: title,
-            exercises: pendingAssignExercises,
-            assignedBy: firebaseUserData.name || 'Coach',
-            assignedAt: new Date().toISOString(),
-            id: 'aw_' + Date.now()
-        };
-
-        try {
-            await db.collection('users').doc(clientUid).update({
-                assignedWorkouts: firebase.firestore.FieldValue.arrayUnion(workout)
-            });
-            if (viewingClientData && viewingClientData.uid === clientUid) {
-                if (!Array.isArray(viewingClientData.data.assignedWorkouts)) viewingClientData.data.assignedWorkouts = [];
-                viewingClientData.data.assignedWorkouts.push(workout);
-            }
-            // Notify the client that a new workout was assigned
-            await pushNotification(clientUid, {
-                type: 'workout-assigned',
-                title: 'New workout from your coach',
-                body: '"' + title + '" is ready in your Training tab',
-                fromName: firebaseUserData.name || 'Coach'
-            });
-            showToast('Assigned "' + title + '" to ' + clientName + ' ‚úì');
-        } catch (error) {
-            console.error('Assign failed:', error);
-            showToast('Assign failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-
-        // Tear down the builder and return to the coach's client view
-        pendingAssignExercises = null;
-        document.getElementById('name-workout-modal').style.display = 'none';
-        assigningToClient = null;
-        clearInterval(workoutTimer);
-        exitWizardMode();
-        clearActiveWorkout();
-        document.getElementById('workout-active').classList.add('hidden');
-        document.getElementById('workout-setup').classList.remove('hidden');
-        if (typeof renderCoachPlanInTraining === 'function') renderCoachPlanInTraining();
-        currentWorkoutContext = null;
-        openCoachSection();
-        setTimeout(() => { if (viewingClientData) renderClientDetail(); else openClientDetail(clientUid); }, 100);
-        return true;
-    }
-
-    function closeAssignWorkout() {
-        document.getElementById('assign-workout-modal').style.display = 'none';
-    }
-
-    function addAssignExercise() {
-        assignExercises.push({ name: '', sets: [{ weight: '', reps: '' }] });
-        renderAssignExerciseList();
-    }
-
-    function addAssignSet(exIdx) {
-        assignExercises[exIdx].sets.push({ weight: '', reps: '' });
-        renderAssignExerciseList();
-    }
-
-    function updateAssignField(exIdx, field, value, setIdx) {
-        const exercise = assignExercises[exIdx];
-        if (!exercise) return;
-        if (field === 'name') exercise.name = String(value || '').slice(0, 100);
-        else if ((field === 'weight' || field === 'reps') && exercise.sets[setIdx]) {
-            exercise.sets[setIdx][field] = String(value || '').slice(0, 12);
-        }
-    }
-
-    function removeAssignExercise(exIdx) {
-        assignExercises.splice(exIdx, 1);
-        renderAssignExerciseList();
-    }
-
-    function renderAssignExerciseList() {
-        const box = document.getElementById('assign-exercise-list');
-        if (!box) return;
-        if (assignExercises.length === 0) {
-            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">Add exercises to build the workout.</p>';
-            return;
-        }
-        box.innerHTML = assignExercises.map((ex, i) => `
-            <div class="bg-slate-50 p-3 rounded-xl">
-                <div class="flex gap-2 mb-2">
-                    <input value="${escapeHtml(ex.name)}" maxlength="100" oninput="updateAssignField(${i}, 'name', this.value)" placeholder="Exercise name" class="flex-1 p-2 rounded-lg border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm">
-                    <button onclick="removeAssignExercise(${i})" class="text-rose-500 text-xs font-bold px-2">‚úï</button>
-                </div>
-                ${ex.sets.map((s, si) => `
-                    <div class="flex gap-2 mb-1 items-center">
-                        <span class="text-xs text-slate-400 w-10">Set ${si + 1}</span>
-                        <input value="${escapeHtml(s.weight)}" maxlength="12" oninput="updateAssignField(${i}, 'weight', this.value, ${si})" placeholder="kg" inputmode="decimal" class="w-20 p-2 rounded-lg text-center border-2 border-transparent focus:border-indigo-500 outline-none text-sm">
-                        <span class="text-xs text-slate-400">√ó</span>
-                        <input value="${escapeHtml(s.reps)}" maxlength="12" oninput="updateAssignField(${i}, 'reps', this.value, ${si})" placeholder="reps" inputmode="numeric" class="w-20 p-2 rounded-lg text-center border-2 border-transparent focus:border-indigo-500 outline-none text-sm">
-                    </div>`).join('')}
-                <button onclick="addAssignSet(${i})" class="text-indigo-600 text-xs font-bold mt-1">+ Add set</button>
-            </div>`).join('');
-    }
-
-    async function saveAssignedWorkout() {
-        if (!requireCoachAccess()) return;
-        if (!viewingClientData) return;
-        const title = document.getElementById('assign-workout-title').value.trim() || 'Coach Workout';
-        const clean = assignExercises
-            .filter(ex => ex.name.trim())
-            .map(ex => ({
-                name: ex.name.trim(),
-                sets: ex.sets.map(s => ({ weight: s.weight || '', reps: s.reps || '' }))
-            }));
-        if (clean.length === 0) { showToast('Add at least one exercise'); return; }
-
-        const workout = {
-            title: title,
-            exercises: clean,
-            assignedBy: firebaseUserData.name || 'Coach',
-            assignedAt: new Date().toISOString(),
-            id: 'aw_' + Date.now()
-        };
-
-        try {
-            await db.collection('users').doc(viewingClientData.uid).update({
-                assignedWorkouts: firebase.firestore.FieldValue.arrayUnion(workout)
-            });
-            // keep local copy in sync so the list updates immediately
-            if (!viewingClientData.data.assignedWorkouts) viewingClientData.data.assignedWorkouts = [];
-            viewingClientData.data.assignedWorkouts.push(workout);
-            closeAssignWorkout();
-            renderAssignedWorkoutsForCoach();
-            showToast('Workout assigned ‚úì');
-        } catch (error) {
-            console.error('Assign failed:', error);
-            showToast('Assign failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    function backToCoachDashboard() {
-        viewingClientData = null;
-        renderCoachDashboard();
-    }
-
-    // ---------- NOTES (two-way conversation) ----------
-
-    function notesDocId(coachUid, memberUid) {
-        return coachUid + '_' + memberUid;
-    }
-
-    async function loadNotesThread() {
-        if (!requireCoachAccess()) return;
-        const threadEl = document.getElementById('notes-thread');
-        if (!threadEl) return;
-        let coachUid, memberUid;
-        if (currentUserRole === 'coach' && viewingClientData) {
-            coachUid = currentUser.uid;
-            memberUid = viewingClientData.uid;
-        } else if (currentUserRole === 'member') {
-            coachUid = firebaseUserData.coachUid;
-            memberUid = currentUser.uid;
-        }
-        if (!coachUid || !memberUid) {
-            threadEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No notes yet.</p>';
-            return;
-        }
-        try {
-            const noteDoc = await db.collection('notes').doc(notesDocId(coachUid, memberUid)).get();
-            const notes = (noteDoc.exists && noteDoc.data().messages) ? noteDoc.data().messages : [];
-            if (notes.length === 0) {
-                threadEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No notes yet. Start the conversation below.</p>';
-                return;
-            }
-            threadEl.innerHTML = renderNoteMessages(notes);
-            threadEl.scrollTop = threadEl.scrollHeight;
-        } catch (error) {
-            console.error('Error loading notes:', error);
-            threadEl.innerHTML = '<p class="text-sm text-rose-500 text-center py-3">Could not load notes (check Firestore rules).</p>';
-        }
-    }
-
-    function renderNoteMessages(notes) {
-        return notes.map(n => {
-            const isMine = n.fromUid === currentUser.uid;
-            const time = n.at ? new Date(n.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-
-            // Workout-feedback messages get a distinct card with star rows
-            if (n.type === 'workout-feedback' && Array.isArray(n.feedback)) {
-                const rows = n.feedback.map(it => {
-                    const starCount = Math.max(0, Math.min(5, Math.round(Number(it.stars) || 0)));
-                    const stars = starCount ? '‚òÖ'.repeat(starCount) + '‚òÜ'.repeat(5 - starCount) : '‚Äî';
-                    return `<div class="text-xs py-0.5">
-                        <span class="font-bold">${escapeHtml(it.name)}</span>
-                        <span class="text-amber-500">${stars}</span>
-                        ${it.comment ? `<div class="text-[11px] italic opacity-80">"${escapeHtml(it.comment)}"</div>` : ''}
-                    </div>`;
-                }).join('');
-                return `
-                    <div class="flex ${isMine ? 'justify-end' : 'justify-start'}">
-                        <div class="max-w-[85%] bg-emerald-50 border border-emerald-200 text-slate-800 px-4 py-3 rounded-2xl">
-                            <p class="text-[10px] font-bold text-emerald-700 mb-1">${escapeHtml(n.fromName || '')} completed a workout</p>
-                            <p class="text-sm font-black mb-1">üìã ${escapeHtml(n.workoutTitle || 'Coach Workout')}</p>
-                            ${rows}
-                            <p class="text-[9px] opacity-60 mt-1 text-right">${time}</p>
-                        </div>
-                    </div>`;
-            }
-
-            const safeText = escapeHtml(n.text || '').replace(/\n/g, '<br>');
-            return `
-                <div class="flex ${isMine ? 'justify-end' : 'justify-start'}">
-                    <div class="max-w-[80%] ${isMine ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800'} px-4 py-2.5 rounded-2xl">
-                        <p class="text-[10px] font-bold opacity-70 mb-0.5">${escapeHtml(n.fromName || '')}${n.fromRole === 'coach' ? ' ¬∑ Coach' : ''}</p>
-                        <p class="text-sm">${safeText}</p>
-                        <p class="text-[9px] opacity-60 mt-1 text-right">${time}</p>
-                    </div>
-                </div>`;
-        }).join('');
-    }
-
-    async function appendNote(coachUid, memberUid, message) {
-        const ref = db.collection('notes').doc(notesDocId(coachUid, memberUid));
-        const existing = await ref.get();
-        if (existing.exists) {
-            await ref.update({ messages: firebase.firestore.FieldValue.arrayUnion(message) });
-        } else {
-            await ref.set({ coachUid: coachUid, memberUid: memberUid, messages: [message] });
-        }
-    }
-
-    async function postNote() {
-        if (!requireCoachAccess()) return;
-        const input = document.getElementById('note-input');
-        const text = (input.value || '').trim().slice(0, 1000);
-        if (!text) return;
-        let coachUid, memberUid;
-        if (currentUserRole === 'coach' && viewingClientData) {
-            coachUid = currentUser.uid;
-            memberUid = viewingClientData.uid;
-        } else if (currentUserRole === 'member') {
-            coachUid = firebaseUserData.coachUid;
-            memberUid = currentUser.uid;
-        }
-        if (!coachUid || !memberUid) { showToast('No coach/client link found'); return; }
-        const message = {
-            fromUid: currentUser.uid,
-            fromName: firebaseUserData.name || (currentUser.displayName) || 'User',
-            fromRole: currentUserRole,
-            text: text,
-            at: new Date().toISOString()
-        };
-        try {
-            await appendNote(coachUid, memberUid, message);
-            // Notify the other person about the new note
-            const recipientUid = (currentUser.uid === coachUid) ? memberUid : coachUid;
-            await pushNotification(recipientUid, {
-                type: 'note',
-                title: 'New message from ' + (firebaseUserData.name || 'your ' + (currentUserRole === 'coach' ? 'coach' : 'client')),
-                body: text.length > 60 ? text.slice(0, 57) + '...' : text,
-                fromName: firebaseUserData.name || ''
-            });
-            input.value = '';
-            loadNotesThread();
-        } catch (error) {
-            console.error('Error posting note:', error);
-            showToast('Note failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    // ---------- MEMBER SIDE: coach link + requests ----------
-
-    async function renderMemberCoachSection() {
-        const container = document.getElementById('member-coach-section');
-        if (!container) return;
-        if (!currentUser) {
-            container.innerHTML = '<p class="text-sm text-slate-400">Sign in to view coach connections and messages.</p>';
-            return;
-        }
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            const me = meDoc.data() || {};
-            const pending = me.pendingRequests || [];
-            const coachUid = me.coachUid;
-            const coachName = me.coachName;
-            firebaseUserData.coachUid = coachUid;
-            firebaseUserData.coachName = coachName;
-
-            let html = '';
-            if (pending.length > 0) {
-                html += '<h4 class="text-sm font-black mb-2">Connection Requests</h4>';
-                html += pending.map((r, ri) => {
-                    const safeName = escapeJsString(r.fromName || 'Coach');
-                    const safeUid = escapeJsString(r.fromUid || '');
-                    return `
-                    <div class="bg-amber-50 border border-amber-200 p-3 rounded-xl mb-2">
-                        <p class="font-bold text-sm">${escapeHtml(r.fromName || 'A coach')}</p>
-                        <p class="text-xs text-slate-500 mb-2">${escapeHtml(r.fromEmail || '')} wants to be your coach</p>
-                        <div class="flex gap-2">
-                            <button onclick="approveCoach('${safeUid}', '${safeName}')" class="flex-1 bg-emerald-600 text-white py-2 rounded-lg font-bold text-sm">Approve</button>
-                            <button onclick="declineCoach('${safeUid}')" class="flex-1 bg-slate-200 text-slate-700 py-2 rounded-lg font-bold text-sm">Decline</button>
-                        </div>
-                    </div>`;
-                }).join('');
-            }
-            if (coachUid) {
-                html += `
-                    <div class="bg-slate-50 p-4 rounded-2xl flex items-center gap-3 mb-3">
-                        <div class="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white font-black">
-                            ${escapeHtml((coachName || 'C').charAt(0).toUpperCase())}
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <p class="text-[10px] font-bold text-slate-400 uppercase">Your Coach</p>
-                            <p class="font-bold truncate">${escapeHtml(coachName || 'Coach')}</p>
-                        </div>
-                        <button onclick="openMemberNotes()" class="bg-indigo-600 text-white px-3 py-2 rounded-lg font-bold text-xs">Notes</button>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <button onclick="openShareDays()" class="bg-emerald-600 text-white p-3 rounded-xl font-bold text-sm flex items-center justify-center gap-1">
-                            <i data-lucide="share-2" class="w-4 h-4"></i> Share Days With Coach
-                        </button>
-                        <button onclick="switchTab('training')" class="bg-slate-900 text-white p-3 rounded-xl font-bold text-sm flex items-center justify-center gap-1">
-                            <i data-lucide="clipboard-list" class="w-4 h-4"></i> Coach Workouts
-                        </button>
-                    </div>
-                    <p class="text-[11px] text-slate-400 text-center mt-2">Your coach's workouts appear in the Training tab.</p>`;
-            } else if (pending.length === 0) {
-                html += '<p class="text-sm text-slate-400">No coach connected. When a coach sends a request, it\'ll appear here to approve.</p>';
-            }
-            container.innerHTML = html;
-            refreshIcons();
-        } catch (error) {
-            console.error('Error rendering coach section:', error);
-            container.innerHTML = '<p class="text-sm text-rose-500">Could not load coach info.</p>';
-        }
-    }
-
-    async function approveCoach(coachUid, coachNameFromRequest) {
-        try {
-            // We do NOT read the coach's document here. The hardened rules only let
-            // you read your own doc or a client linked to you, so a member reading
-            // the coach's doc is (correctly) denied ‚Äî that was the "permission
-            // denied" on approve. The coach's name already arrived in the pending
-            // request (fromName), so we use that and avoid the blocked read entirely.
-            const coachName = coachNameFromRequest || 'Coach';
-
-            // The member writes ONLY their own doc: set their coach + clear requests.
-            // This touches coachUid, coachName and pendingRequests ‚Äî never `role` ‚Äî
-            // so the self-update rule allows it.
-            await db.collection('users').doc(currentUser.uid).update({
-                coachUid: coachUid,
-                coachName: coachName,
-                pendingRequests: []
-            });
-            firebaseUserData.coachUid = coachUid;
-            firebaseUserData.coachName = coachName;
-            showToast('Connected with ' + coachName + ' ‚úì');
-            renderMemberCoachSection();
-        } catch (error) {
-            console.error('Error approving coach:', error);
-            showToast('Approve failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    async function declineCoach(coachUid) {
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            const pending = (meDoc.data().pendingRequests || []).filter(r => r.fromUid !== coachUid);
-            await db.collection('users').doc(currentUser.uid).update({ pendingRequests: pending });
-            showToast('Request declined');
-            renderMemberCoachSection();
-        } catch (error) {
-            console.error('Error declining:', error);
-            showToast('Could not decline request');
-        }
-    }
-
-    // ---- CLIENT SIDE: share workout / nutrition days with the coach ----
-    let shareTab = 'workouts';
-    let shareSelection = { workouts: [], nutrition: [] };
-
-    async function openShareDays() {
-        if (!firebaseUserData.coachUid) { showToast('No coach connected'); return; }
-        // Start from what's already shared
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            const sharing = (meDoc.data() || {}).sharing || {};
-            shareSelection = {
-                workouts: (sharing.workouts || []).slice(),
-                nutrition: (sharing.nutrition || []).slice()
-            };
-        } catch (e) { shareSelection = { workouts: [], nutrition: [] }; }
-        setShareTab('workouts');
-        document.getElementById('share-days-modal').style.display = 'flex';
-        refreshIcons();
-    }
-
-    function closeShareDays() {
-        document.getElementById('share-days-modal').style.display = 'none';
-    }
-
-    function setShareTab(tab) {
-        shareTab = tab;
-        const w = document.getElementById('share-tab-workouts');
-        const n = document.getElementById('share-tab-nutrition');
-        const on = 'flex-1 py-2 rounded-lg text-xs font-black uppercase bg-white text-indigo-600 shadow-sm';
-        const off = 'flex-1 py-2 rounded-lg text-xs font-black uppercase text-slate-400';
-        if (w) w.className = (tab === 'workouts') ? on : off;
-        if (n) n.className = (tab === 'nutrition') ? on : off;
-        renderShareOptions();
-    }
-
-    function renderShareOptions() {
-        const box = document.getElementById('share-days-options');
-        if (!box) return;
-        const list = shareTab === 'workouts'
-            ? (state.workoutHistory || [])
-            : (state.nutritionHistory || []);
-        if (list.length === 0) {
-            box.innerHTML = `<p class="text-sm text-slate-400 text-center py-6">No ${shareTab} logged yet.</p>`;
-            return;
-        }
-        box.innerHTML = list.slice(0, 60).map(item => {
-            const date = item.date;
-            const selected = shareSelection[shareTab].indexOf(date) >= 0;
-            const summary = shareTab === 'workouts'
-                ? `${escapeHtml(item.focus || 'Workout')} ¬∑ ${(item.exercises || []).length} exercises`
-                : `${Math.round(item.calories || 0)} kcal ¬∑ ${Math.round(item.protein || 0)}g protein`;
-            return `
-                <label class="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer">
-                    <div class="min-w-0">
-                        <p class="font-bold text-sm">${escapeHtml(date)}</p>
-                        <p class="text-xs text-slate-400 truncate">${summary}</p>
-                    </div>
-                    <input type="checkbox" ${selected ? 'checked' : ''} onchange="toggleShareDay('${escapeJsString(date)}', this.checked)" class="w-5 h-5 accent-indigo-600 flex-shrink-0">
-                </label>`;
-        }).join('');
-    }
-
-    function toggleShareDay(date, on) {
-        const arr = shareSelection[shareTab];
-        const i = arr.indexOf(date);
-        if (on) { if (i < 0) arr.push(date); }
-        else { if (i >= 0) arr.splice(i, 1); }
-    }
-
-    async function saveSharedDays() {
-        try {
-            await db.collection('users').doc(currentUser.uid).update({
-                sharing: {
-                    workouts: shareSelection.workouts,
-                    nutrition: shareSelection.nutrition
-                }
-            });
-            // Make sure the shared days' full data is in the cloud snapshot for the coach
-            await pushMemberDataToCloud();
-            // Notify the coach that the client shared days
-            if (firebaseUserData.coachUid) {
-                const total = shareSelection.workouts.length + shareSelection.nutrition.length;
-                await pushNotification(firebaseUserData.coachUid, {
-                    type: 'days-shared',
-                    title: (firebaseUserData.name || 'Your client') + ' shared their data',
-                    body: total + ' day' + (total !== 1 ? 's' : '') + ' now visible to you',
-                    fromName: firebaseUserData.name || 'Client'
-                });
-            }
-            closeShareDays();
-            const total = shareSelection.workouts.length + shareSelection.nutrition.length;
-            showToast(total > 0 ? `Sharing ${total} day${total > 1 ? 's' : ''} with your coach ‚úì` : 'Sharing updated');
-        } catch (error) {
-            console.error('Share failed:', error);
-            showToast('Could not save sharing: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    // ---- CLIENT SIDE: view & use workouts the coach assigned ----
-    // ==========================================================================
-    // PROGRESS REMINDERS ‚Äî weight / measurements / photos, scheduled
-    // ==========================================================================
-    function updReminders() {
-        if (!state.updateReminders) state.updateReminders = JSON.parse(JSON.stringify(DEFAULT_STATE.updateReminders));
-        return state.updateReminders;
-    }
-
-    const REMINDER_META = {
-        weight:      { label: 'Weight', icon: 'scale', desc: 'Log your bodyweight' },
-        measurement: { label: 'Body Measurements', icon: 'ruler', desc: 'Chest, waist, arms, etc.' },
-        photo:       { label: 'Progress Photos', icon: 'camera', desc: 'Front, side, back photos' }
-    };
-    const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-    function openProgressReminders() {
-        renderRemindersSections();
-        document.getElementById('progress-reminders-modal').style.display = 'flex';
-        refreshIcons();
-    }
-    function closeProgressReminders() {
-        document.getElementById('progress-reminders-modal').style.display = 'none';
-    }
-
-    function renderRemindersSections() {
-        const box = document.getElementById('reminders-sections');
-        if (!box) return;
-        const r = updReminders();
-        box.innerHTML = ['weight', 'measurement', 'photo'].map(key => {
-            const cfg = r[key];
-            const meta = REMINDER_META[key];
-            const on = cfg.enabled;
-            return `
-                <div class="border-2 ${on ? 'border-indigo-200' : 'border-slate-200'} rounded-3xl p-4">
-                    <label class="flex items-center justify-between gap-3 cursor-pointer">
-                        <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 ${on ? 'bg-indigo-600' : 'bg-slate-300'} rounded-xl flex items-center justify-center flex-shrink-0">
-                                <i data-lucide="${meta.icon}" class="w-5 h-5 text-white"></i>
-                            </div>
-                            <div>
-                                <p class="font-black text-sm">${meta.label}</p>
-                                <p class="text-[11px] text-slate-400">${meta.desc}</p>
-                            </div>
-                        </div>
-                        <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleReminder('${key}', this.checked)" class="w-6 h-6 accent-indigo-600 flex-shrink-0">
-                    </label>
-
-                    <div id="reminder-body-${key}" class="${on ? '' : 'hidden'} mt-4 space-y-3">
-                        <div>
-                            <label class="text-[9px] font-black uppercase text-slate-400 block mb-1.5">How often</label>
-                            <div class="grid grid-cols-4 gap-1">
-                                ${['daily', 'weekly', 'monthly', 'custom'].map(f => `
-                                    <button onclick="setReminderFreq('${key}', '${f}')" class="py-2 rounded-lg text-[10px] font-black uppercase ${cfg.frequency === f ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">${f}</button>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <!-- Weekly: pick weekday(s) -->
-                        <div id="reminder-weekly-${key}" class="${cfg.frequency === 'weekly' || cfg.frequency === 'custom' ? '' : 'hidden'}">
-                            <label class="text-[9px] font-black uppercase text-slate-400 block mb-1.5">${cfg.frequency === 'custom' ? 'Pick your days' : 'Which day'}</label>
-                            <div class="grid grid-cols-7 gap-1">
-                                ${WEEKDAYS.map((d, i) => `
-                                    <button onclick="toggleReminderDay('${key}', ${i})" class="py-2 rounded-lg text-[9px] font-black ${(cfg.customDays || []).indexOf(i) >= 0 ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">${d[0]}</button>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <!-- Monthly: pick day of month -->
-                        <div id="reminder-monthly-${key}" class="${cfg.frequency === 'monthly' ? '' : 'hidden'}">
-                            <label class="text-[9px] font-black uppercase text-slate-400 block mb-1.5">Day of the month</label>
-                            <select onchange="setReminderDate('${key}', this.value)" class="w-full p-3 bg-slate-50 rounded-xl font-bold outline-none text-sm">
-                                ${Array.from({length: 28}, (_, i) => i + 1).map(d => `<option value="${d}" ${cfg.customDate === d ? 'selected' : ''}>${d}${d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'}</option>`).join('')}
-                            </select>
-                            <p class="text-[10px] text-slate-400 mt-1">Days 1‚Äì28 so it works every month.</p>
-                        </div>
-
-                        ${key === 'measurement' || key === 'photo' || key === 'weight' ? `
-                        <div class="bg-pink-50 border border-pink-100 rounded-xl p-2.5">
-                            <p class="text-[10px] text-pink-700">üí° Using <b>custom</b> days can help track around a menstrual cycle ‚Äî measuring at the same phase each month gives more accurate, comparable results (fluid shifts across the cycle can affect weight and measurements).</p>
-                        </div>` : ''}
-
-                        <div>
-                            <label class="text-[9px] font-black uppercase text-slate-400 block mb-1.5">How to remind me</label>
-                            <div class="grid grid-cols-2 gap-2">
-                                <button onclick="setReminderDelivery('${key}', 'alert')" class="p-3 rounded-xl text-xs font-bold ${cfg.delivery === 'alert' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}">
-                                    <i data-lucide="bell" class="w-4 h-4 inline"></i> Sign-in alert
-                                </button>
-                                <button onclick="setReminderDelivery('${key}', 'ai')" class="p-3 rounded-xl text-xs font-bold ${cfg.delivery === 'ai' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}">
-                                    <i data-lucide="sparkles" class="w-4 h-4 inline"></i> AI coach
-                                </button>
-                            </div>
-                            <p class="text-[10px] text-slate-400 mt-1">${cfg.delivery === 'alert'
-                                ? 'A tick-box alert when you open the app, repeating daily until you log it or turn it off.'
-                                : 'Your AI coach will mention it in conversation instead of a pop-up.'}</p>
-                        </div>
-                    </div>
-                </div>`;
-        }).join('');
-        refreshIcons();
-    }
-
-    function toggleReminder(key, on) {
-        updReminders()[key].enabled = on;
-        renderRemindersSections();
-    }
-    function setReminderFreq(key, freq) {
-        const cfg = updReminders()[key];
-        cfg.frequency = freq;
-        // Sensible defaults when switching
-        if (freq === 'weekly' && (!cfg.customDays || cfg.customDays.length !== 1)) cfg.customDays = [cfg.customDays && cfg.customDays[0] != null ? cfg.customDays[0] : 1];
-        renderRemindersSections();
-    }
-    function toggleReminderDay(key, day) {
-        const cfg = updReminders()[key];
-        if (!cfg.customDays) cfg.customDays = [];
-        const i = cfg.customDays.indexOf(day);
-        if (cfg.frequency === 'weekly') {
-            cfg.customDays = [day]; // weekly = single day
-        } else {
-            if (i >= 0) cfg.customDays.splice(i, 1); else cfg.customDays.push(day);
-        }
-        renderRemindersSections();
-    }
-    function setReminderDate(key, d) {
-        updReminders()[key].customDate = parseInt(d, 10);
-    }
-    function setReminderDelivery(key, mode) {
-        updReminders()[key].delivery = mode;
-        renderRemindersSections();
-    }
-
-    function saveProgressReminders() {
-        saveState();
-        closeProgressReminders();
-        updateRemindersStatus();
-        showToast('Reminders saved');
-    }
-
-    function updateRemindersStatus() {
-        const el = document.getElementById('reminders-status');
-        if (!el) return;
-        const r = updReminders();
-        const active = ['weight', 'measurement', 'photo'].filter(k => r[k].enabled);
-        el.textContent = active.length === 0
-            ? 'Weight, measurements & photos'
-            : active.map(k => REMINDER_META[k].label.split(' ')[0]).join(', ') + ' on';
-    }
-
-    // ---- Is a given reminder due today? ----
-    // A reminder is due if it's enabled, today matches its schedule, and it hasn't
-    // already been completed for the current period.
-    function isReminderDue(key) {
-        const cfg = updReminders()[key];
-        if (!cfg || !cfg.enabled) return false;
-
-        const now = new Date();
-        const today = localDateKey(now);
-        const dow = now.getDay();       // 0..6
-        const dom = now.getDate();      // 1..31
-        const lastDone = cfg.lastDone;  // ISO date string or null
-
-        // Has it been logged already for this period? If logged today, never due.
-        if (lastDone === today) return false;
-
-        if (cfg.frequency === 'daily') {
-            return true; // due every day it hasn't been done
-        }
-        if (cfg.frequency === 'weekly') {
-            const targetDay = (cfg.customDays && cfg.customDays[0] != null) ? cfg.customDays[0] : 1;
-            return dow === targetDay;
-        }
-        if (cfg.frequency === 'custom') {
-            return (cfg.customDays || []).indexOf(dow) >= 0;
-        }
-        if (cfg.frequency === 'monthly') {
-            // Due on the chosen day of month (clamped for short months)
-            const target = Math.min(cfg.customDate || 1, daysInThisMonth());
-            return dom === target;
-        }
-        return false;
-    }
-    function daysInThisMonth() {
-        const n = new Date();
-        return new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate();
-    }
-
-    function markReminderDone(key) {
-        const cfg = updReminders()[key];
-        if (!cfg) return;
-        cfg.lastDone = localDateKey();
-        saveState();
-        refreshDueAlertBadgeSoon();
-    }
-
-    let alertQueue = [];
-    let alertIndex = 0;
-
-    function getDueAlerts() {
-        return ['weight', 'measurement', 'photo'].filter(k =>
-            updReminders()[k].delivery === 'alert' && isReminderDue(k)
-        );
-    }
-
-    function maybeShowUpdateAlerts() {
-        alertQueue = getDueAlerts();
-        alertIndex = 0;
-        if (alertQueue.length > 0) {
-            showCurrentAlert();
-        }
-    }
-
-    function showCurrentAlert() {
-        const key = alertQueue[alertIndex];
-        if (!key) { document.getElementById('update-alerts-modal').style.display = 'none'; return; }
-        const meta = REMINDER_META[key];
-
-        const progressEl = document.getElementById('update-alert-progress');
-        const titleEl = document.getElementById('update-alert-title');
-        const bodyEl = document.getElementById('update-alert-body');
-        const checkLabel = document.getElementById('update-alert-check-label');
-        const check = document.getElementById('update-alert-check');
-        const nextBtn = document.getElementById('update-alert-next');
-
-        progressEl.textContent = alertQueue.length > 1 ? `Update ${alertIndex + 1} of ${alertQueue.length}` : 'Reminder';
-        titleEl.textContent = 'Time for a ' + meta.label.toLowerCase() + ' update';
-        bodyEl.textContent = 'Take a moment to log your ' + meta.label.toLowerCase() + '. Tick below once done, or come back to it later.';
-        checkLabel.textContent = "I've logged my " + meta.label.toLowerCase() + " (or I'll do it now)";
-        check.checked = false;
-        nextBtn.textContent = (alertIndex >= alertQueue.length - 1) ? 'Finish' : 'Next';
-
-        document.getElementById('update-alerts-modal').style.display = 'flex';
-        refreshIcons();
-    }
-
-    function updateAlertNext() {
-        const key = alertQueue[alertIndex];
-        const check = document.getElementById('update-alert-check');
-        if (check && check.checked) {
-            markReminderDone(key);
-            openLoggerFor(key);
-        }
-        alertIndex++;
-        if (alertIndex >= alertQueue.length) {
-            document.getElementById('update-alerts-modal').style.display = 'none';
-        } else {
-            showCurrentAlert();
-        }
-    }
-
-    function snoozeUpdateAlerts() {
-        document.getElementById('update-alerts-modal').style.display = 'none';
-    }
-
-    function openLoggerFor(key) {
-        const am = document.getElementById('update-alerts-modal');
-        if (am) am.style.display = 'none';
-        setTimeout(() => {
-            switchTab('metrics');
-            setTimeout(() => {
-                if (key === 'weight' && typeof openRecordWeightModal === 'function') openRecordWeightModal();
-                else if (key === 'measurement' && typeof openRecordMeasurementsModal === 'function') openRecordMeasurementsModal();
-                else if (key === 'photo' && typeof openProgressPhotosModal === 'function') openProgressPhotosModal();
-            }, 200);
-        }, 200);
-    }
-
-    function refreshDueAlertBadgeSoon() {
-    }
-
-    let activeShiftPopupSection = null;
-    let activeShiftPopupDateKey = null;
-
-    function shiftP() {
-        if (!state.shiftProfile) state.shiftProfile = JSON.parse(JSON.stringify(DEFAULT_STATE.shiftProfile));
-        return state.shiftProfile;
-    }
-
-    function renderShiftWorker() {
-        const box = document.getElementById('shift-worker-content');
-        if (!box) return;
-        const sp = shiftP();
-
-        if (!sp.acknowledgedDisclaimer) {
-            box.innerHTML = shiftDisclaimerHTML();
-            refreshIcons();
-            return;
-        }
-
-        const hasSavedRota = isPlainRecord(sp.rota) && Object.keys(sp.rota).length > 0;
-        if (!sp.enabled && !hasSavedRota) {
-            box.innerHTML = `
-                <div class="glass-card p-6 rounded-[2.5rem] text-center">
-                    <div class="w-16 h-16 mx-auto mb-4 bg-indigo-50 rounded-2xl flex items-center justify-center">
-                        <i data-lucide="moon" class="w-8 h-8 text-indigo-600"></i>
-                    </div>
-                    <h3 class="text-xl font-black mb-2">Shift Worker Mode</h3>
-                    <p class="text-sm text-slate-500 mb-5">Meal timing and training built around your shift pattern, using circadian-rhythm science. Working nights makes your body eat and train "against the clock" ‚Äî this helps you work with it.</p>
-                    <button onclick="openShiftSetup()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Set Up My Shift</button>
-                    <button onclick="reshowShiftDisclaimer()" class="w-full mt-2 text-xs text-slate-400 font-bold">Review the health disclaimer</button>
-                </div>`;
-            refreshIcons();
-            return;
-        }
-
-        box.innerHTML = shiftPlanHTML();
-        refreshIcons();
-    }
-
-    function shiftDisclaimerHTML() {
-        return `
-            <div class="glass-card p-6 rounded-[2.5rem]">
-                <div class="w-16 h-16 mx-auto mb-4 bg-amber-50 rounded-2xl flex items-center justify-center">
-                    <i data-lucide="heart-pulse" class="w-8 h-8 text-amber-500"></i>
-                </div>
-                <h3 class="text-xl font-black text-center mb-3">Before you start ‚Äî please read</h3>
-                <div class="space-y-3 text-sm text-slate-600 mb-5">
-                    <p><b>This is general guidance, not medical advice.</b> The suggestions here are based on published research on shift work and circadian rhythms, but they are not a substitute for professional medical care.</p>
-                    <p><b>Speak to your GP first.</b> This is especially important if you have diabetes or take glucose-lowering medication (including insulin), have heart or blood-pressure conditions, are pregnant or breastfeeding, have a history of disordered eating, or take any regular medication. Meal-timing and fasting changes can affect these conditions and medications.</p>
-                    <p><b>Fasting isn't for everyone.</b> The optional fasting features should not be used by anyone for whom fasting is unsafe. If in doubt, don't ‚Äî and ask your GP.</p>
-                    <p class="text-xs text-slate-400">VFIT is a tracking tool. It can't see your medical history and doesn't know your individual needs. Always prioritise advice from a qualified healthcare professional over anything shown here.</p>
-                </div>
-                <label class="flex items-start gap-3 p-3 bg-slate-50 rounded-2xl cursor-pointer mb-3">
-                    <input type="checkbox" id="shift-disclaimer-check" class="w-6 h-6 accent-indigo-600 flex-shrink-0 mt-0.5">
-                    <span class="text-sm font-bold">I understand this is not medical advice, and I'll speak to my GP before making significant changes ‚Äî especially regarding any health conditions or medication.</span>
-                </label>
-                <button onclick="acceptShiftDisclaimer()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">I Understand ‚Äî Continue</button>
-            </div>`;
-    }
-
-    function acceptShiftDisclaimer() {
-        const cb = document.getElementById('shift-disclaimer-check');
-        if (!cb || !cb.checked) { showToast('Please tick the box to confirm you understand'); return; }
-        shiftP().acknowledgedDisclaimer = true;
-        saveState();
-        renderShiftWorker();
-    }
-
-    function reshowShiftDisclaimer() {
-        shiftP().acknowledgedDisclaimer = false;
-        saveState();
-        renderShiftWorker();
-    }
-
-    function openShiftSetup() {
-        const sp = shiftP();
-        const modal = document.getElementById('shift-setup-modal');
-        if (!modal) return;
-        document.getElementById('shift-type-select').value = sp.shiftType;
-        document.getElementById('shift-start-input').value = sp.shiftStart;
-        document.getElementById('shift-end-input').value = sp.shiftEnd;
-        document.getElementById('shift-goal-select').value = sp.goal;
-        document.getElementById('shift-fasting-check').checked = !!sp.useFasting;
-        [0,1,2,3,4,5,6].forEach(d => {
-            const cb = document.getElementById('shift-day-' + d);
-            if (cb) cb.checked = (sp.workDays || []).indexOf(d) >= 0;
-        });
-        toggleFastingVisibility();
-        modal.style.display = 'flex';
-        refreshIcons();
-    }
-
-    function closeShiftSetup() {
-        document.getElementById('shift-setup-modal').style.display = 'none';
-    }
-
-    function toggleFastingVisibility() {
-        const goal = document.getElementById('shift-goal-select').value;
-        const wrap = document.getElementById('shift-fasting-wrap');
-        if (wrap) wrap.style.display = (goal === 'fat_loss') ? '' : 'none';
-    }
-
-    function saveShiftSetup() {
-        const sp = shiftP();
-        sp.shiftType = document.getElementById('shift-type-select').value;
-        sp.shiftStart = document.getElementById('shift-start-input').value || '19:00';
-        sp.shiftEnd = document.getElementById('shift-end-input').value || '07:00';
-        sp.goal = document.getElementById('shift-goal-select').value;
-        sp.useFasting = (sp.goal === 'fat_loss') && document.getElementById('shift-fasting-check').checked;
-        sp.workDays = [0,1,2,3,4,5,6].filter(d => {
-            const cb = document.getElementById('shift-day-' + d);
-            return cb && cb.checked;
-        });
-        sp.enabled = true;
-        saveState();
-        closeShiftSetup();
-        renderShiftWorker();
-        showToast('Shift plan ready üåô');
-    }
-
-    function hmToMin(hm) {
-        const [h, m] = (hm || '0:0').split(':').map(Number);
-        return (h * 60 + (m || 0));
-    }
-    function minToHM(min) {
-        min = ((min % 1440) + 1440) % 1440;
-        const h = Math.floor(min / 60), m = min % 60;
-        const ap = h < 12 ? 'am' : 'pm';
-        let h12 = h % 12; if (h12 === 0) h12 = 12;
-        return `${h12}:${String(m).padStart(2, '0')}${ap}`;
-    }
-    function shiftPlanHTML() {
-        const sp = shiftP();
-        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : localDateKey();
-        const shift = getShiftForDate(dateKey);
-        const type = ['night', 'early', 'day'].includes(shift.type) ? shift.type : 'off';
-        const onShift = type !== 'off';
-        const isNight = type === 'night';
-        const isEarly = type === 'early';
-        const labels = { off: 'Rest / Off Day', day: 'Day Shift', early: 'Early Shift', night: 'Night Shift' };
-        const icons = { off: '‚òÄÔ∏è', day: 'üè¢', early: 'üåÖ', night: 'üåô' };
-        const date = new Date(dateKey + 'T12:00:00');
-        const dateLabel = date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-        const sourceLabel = shift.source === 'rota' ? 'Saved rota' : shift.source === 'pattern' ? 'Normal weekly pattern' : 'No shift scheduled';
-        const timeLabel = onShift && shift.start ? `${minToHM(hmToMin(shift.start))} ‚Äì ${minToHM(hmToMin(shift.end || shift.start))}` : '';
-        let html = '';
-
-        html += `
-            <div class="glass-card p-5 rounded-[2.5rem]" data-shift-nutrition-type="${type}" data-shift-nutrition-date="${dateKey}">
-                <div class="flex items-center gap-2 mb-4">
-                    <button onclick="changeNutritionDate(-1)" class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center" aria-label="Previous nutrition day"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
-                    <label class="flex-1 text-center"><span class="block text-[10px] font-black uppercase text-slate-400">Nutrition plan date</span><input type="date" id="shift-nutrition-date-picker" value="${dateKey}" onchange="selectNutritionDate(this.value)" class="w-full bg-transparent text-sm font-black text-center outline-none"></label>
-                    <button onclick="changeNutritionDate(1)" class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center" aria-label="Next nutrition day"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
-                </div>
-                <div class="flex justify-between items-start gap-3 mb-2">
-                    <div>
-                        <p class="text-[10px] font-black uppercase text-orange-500">${sourceLabel} ¬∑ ${dateLabel}</p>
-                        <h3 class="text-xl font-black">${icons[type]} ${labels[type]}</h3>
-                    </div>
-                    <div class="flex flex-col gap-2 flex-shrink-0"><button onclick="openShiftRotaFromNutrition()" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl">Open Rota</button><button onclick="openShiftSetup()" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-xl">Pattern</button></div>
-                </div>
-                <p class="text-sm text-slate-500">${onShift
-                    ? `Your ${labels[type].toLowerCase()} runs ${timeLabel}. The meals, training and recovery below use this date's saved shift.`
-                    : 'This date is a rest/off day, so the plan switches to daytime eating and recovery. Changes made in your rota update this automatically.'}
-                </p>
-            </div>`;
-
-        // Keep the Shift landing page compact. Every former accordion is now a
-        // button that opens the complete guide in its own popup page.
-        html += shiftSectionButtonsHTML(type, dateKey, dateLabel, shift);
-
-        html += `
-            <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-                <p class="text-xs text-amber-800"><b>Not medical advice.</b> This is general guidance. Speak to your GP before significant changes, especially with any health condition or medication. <button onclick="reshowShiftDisclaimer()" class="underline font-bold">Review disclaimer</button></p>
-            </div>`;
-
-        return html;
-    }
-
-    function shiftMealTimingTitle(type) {
-        return {
-            night: 'Meal Timing ‚Äî Working Night',
-            early: 'Meal Timing ‚Äî Working Early',
-            day: 'Meal Timing ‚Äî Working Day',
-            off: 'Meal Timing ‚Äî Rest / Off Day'
-        }[type] || 'Meal Timing';
-    }
-
-    function shiftSectionButtonHTML(section, icon, title, description) {
-        return `
-            <button type="button" onclick="openShiftSectionPopup('${section}')" class="w-full glass-card p-5 rounded-2xl flex items-center gap-4 text-left hover:shadow-lg transition-all active:scale-[0.99]">
-                <span class="w-12 h-12 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center text-2xl flex-shrink-0" aria-hidden="true">${icon}</span>
-                <span class="flex-1 min-w-0">
-                    <span class="font-black text-sm block">${title}</span>
-                    <span class="text-xs text-slate-400 mt-1 block">${description}</span>
-                </span>
-                <i data-lucide="chevron-right" class="w-5 h-5 text-orange-500 flex-shrink-0"></i>
-            </button>`;
-    }
-
-    function shiftSectionButtonsHTML(type, dateKey, dateLabel, shift) {
-        const sp = shiftP();
-        const profile = dietaryProfile();
-        const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
-        const recipeCount = mealTypes.reduce((sum, mealType) => sum + shiftMealIdeasFor(type, mealType).length, 0);
-        const dietaryApproaches = profile.approaches || [];
-        const fastingEnabled = (sp.goal === 'fat_loss' && sp.useFasting) || dietaryApproaches.includes('intermittent_fasting');
-        const shiftLabel = { night: 'night shift', early: 'early shift', day: 'day shift', off: 'rest day' }[type] || 'selected day';
-        let buttons = '';
-
-        buttons += shiftSectionButtonHTML('meals', 'üçΩÔ∏è', 'Meal Timing', `${dateLabel} ¬∑ ${shiftLabel}`);
-        buttons += shiftSectionButtonHTML('dietary', 'üéØ', 'Personalised Dietary Focus', profile.completed ? `${dietaryPatternLabel(profile.pattern)} priorities matched to this shift` : 'Set your dietary preferences and requirements');
-        buttons += shiftSectionButtonHTML('planner', 'üìñ', 'Personalised Meal Planner', `${recipeCount} compatible recipes for this day`);
-        buttons += shiftSectionButtonHTML('training', 'üèãÔ∏è', 'Training Advice', `${sp.goal === 'fat_loss' ? 'Fat-loss' : 'muscle-gain'} advice matched to ${shiftLabel}`);
-        if (fastingEnabled) {
-            buttons += shiftSectionButtonHTML('fasting', '‚è±Ô∏è', 'Optional Fasting', `Safe, practical timing for this ${shiftLabel}`);
-        }
-        buttons += shiftSectionButtonHTML('food', 'ü•ó', 'Food Ideas', `${dietaryPatternLabel(profile.pattern)} shift-friendly foods, preparation and saved meals`);
-        buttons += shiftSectionButtonHTML('science', 'üß†', 'Science Explained', 'Circadian rhythms, the SCN and timing cues');
-
-        return `
-            <div class="space-y-3" data-shift-section-buttons="${dateKey}">
-                <div class="px-1">
-                    <h3 class="text-lg font-black">Open a Shift Section</h3>
-                    <p class="text-xs text-slate-400 mt-1">Tap a button to open the full page. Use Save &amp; Close at the bottom when finished.</p>
-                </div>
-                ${buttons}
-            </div>`;
-    }
-
-    function getShiftSectionPopupContent(section, requestedDateKey) {
-        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDateKey || '')) ? requestedDateKey : localDateKey();
-        const shift = getShiftForDate(dateKey);
-        const type = ['night', 'early', 'day'].includes(shift.type) ? shift.type : 'off';
-        const onShift = type !== 'off';
-        const isNight = type === 'night';
-        const isEarly = type === 'early';
-        const profile = dietaryProfile();
-        const date = new Date(dateKey + 'T12:00:00');
-        const dateLabel = date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-
-        if (section === 'meals') {
-            return {
-                title: shiftMealTimingTitle(type),
-                dateLabel,
-                content: onShift
-                    ? (isNight ? nightShiftMealHTML(shift) : isEarly ? earlyShiftMealHTML(shift) : dayShiftMealHTML(shift))
-                    : offDayMealHTML()
-            };
-        }
-        if (section === 'dietary') {
-            return { title: 'Your Personalised Dietary Focus', dateLabel, content: dietaryShiftFocusHTML(type) };
-        }
-        if (section === 'planner') {
-            return { title: 'Personalised Meal Planner', dateLabel, content: shiftMealIdeasHTML(type, dateKey) };
-        }
-        if (section === 'training') {
-            return {
-                title: `Training Advice ‚Äî ${shiftP().goal === 'fat_loss' ? 'Fat Loss' : 'Muscle Gain'}`,
-                dateLabel,
-                content: shiftTrainingHTML(onShift, isNight, isEarly)
-            };
-        }
-        if (section === 'fasting') {
-            return { title: 'Optional Fasting', dateLabel, content: fastingGuidanceHTML(onShift, type) };
-        }
-        if (section === 'food') {
-            return {
-                title: 'Food Ideas',
-                dateLabel,
-                content: shiftFoodIdeasHTML(isNight && onShift, dateKey)
-            };
-        }
-        if (section === 'science') {
-            return { title: 'Science Explained', dateLabel, content: shiftScienceHTML() };
-        }
-        return null;
-    }
-
-    function openShiftSectionPopup(section) {
-        const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? state.viewDate : localDateKey();
-        const page = getShiftSectionPopupContent(section, dateKey);
-        const modal = document.getElementById('shift-section-modal');
-        const title = document.getElementById('shift-section-modal-title');
-        const date = document.getElementById('shift-section-modal-date');
-        const body = document.getElementById('shift-section-modal-body');
-        if (!page || !modal || !title || !date || !body) return;
-
-        if (section === 'fasting') {
-            const sp = shiftP();
-            const approaches = dietaryProfile().approaches || [];
-            if (!((sp.goal === 'fat_loss' && sp.useFasting) || approaches.includes('intermittent_fasting'))) {
-                showToast('Enable intermittent fasting in your dietary plan first');
-                return;
-            }
-        }
-
-        activeShiftPopupSection = section;
-        activeShiftPopupDateKey = dateKey;
-        title.textContent = page.title;
-        date.textContent = page.dateLabel;
-        body.innerHTML = page.content;
-        body.scrollTop = 0;
-        modal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-        ensureAccessibleDom(modal);
-        refreshIcons();
-    }
-
-    function closeShiftSectionPopup(returnToShift) {
-        const modal = document.getElementById('shift-section-modal');
-        if (modal) modal.style.display = 'none';
-        document.body.style.overflow = '';
-        activeShiftPopupSection = null;
-        activeShiftPopupDateKey = null;
-
-        if (returnToShift !== false) {
-            switchTab('nutrition');
-            setNutritionTab('shift');
-        }
-    }
-
-    function saveShiftSectionPopup() {
-        const page = activeShiftPopupSection
-            ? getShiftSectionPopupContent(activeShiftPopupSection, activeShiftPopupDateKey)
-            : null;
-        saveState();
-        closeShiftSectionPopup();
-        showToast(`${page ? page.title : 'Shift section'} saved`);
-    }
-
-    function openShiftDiaryFromPopup() {
-        closeShiftSectionPopup(false);
-        switchTab('nutrition');
-        setNutritionTab('diary');
-    }
-
-    function openShiftRotaFromNutrition() {
-        if (openPreferencesAndGoals('coaching')) openCoachingPage('shifts');
-    }
-
-
-    // DAILY READINESS + RECOVERY DAY
-    // ==========================================================================
-
-    const READINESS_PROMPT_HOUR = 10;
-    const RECOVERY_VOLUME_MULTIPLIER = 0.60;
-    const RECOVERY_LOAD_MULTIPLIER = 0.85;
-    let dailyReadinessTimer = null;
-    let dailyReadinessRetryTimer = null;
-    let dailyReadinessListenersReady = false;
-
-    function readinessDateKey(value) {
-        if (value instanceof Date) return localDateKey(value);
-        if (!value) return localDateKey();
-        return String(value).slice(0, 10);
-    }
-
-    function readinessRecordForDate(dateKey) {
-        const key = readinessDateKey(dateKey);
-        const records = state.dailyReadiness || {};
-        return records[key] || null;
-    }
-
-    function readinessRecordTime(record) {
-        if (!record) return 0;
-        return Date.parse(record.completedAt || record.skippedAt || '') || 0;
-    }
-
-    function mergeLatestReadinessFromCloud(record) {
-        if (!record || !record.date) return;
-        const dateKey = readinessDateKey(record.date);
-        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
-        const local = state.dailyReadiness[dateKey];
-        if (!local || readinessRecordTime(record) >= readinessRecordTime(local)) {
-            state.dailyReadiness[dateKey] = Object.assign({}, record, { date: dateKey });
-            saveState();
-        }
-    }
-
-    async function syncLatestReadinessToCloud(record) {
-        if (!currentUser || !record) return;
-        try {
-            await db.collection('users').doc(currentUser.uid).update({
-                latestReadiness: record,
-                readinessUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            firebaseUserData.latestReadiness = record;
-        } catch (error) {
-            // The local plan remains authoritative offline and will still work.
-            console.warn('Could not sync daily readiness:', error);
-        }
-    }
-
-    /** The normal goal remains untouched; only a completed daily plan can override it. */
-    function getDailyCalorieTarget(dateKey) {
-        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
-        const record = readinessRecordForDate(dateKey);
-        if (record && record.status === 'completed' && parseInt(record.recommendedCalories, 10) > 0) {
-            return parseInt(record.recommendedCalories, 10);
-        }
-        return baseline;
-    }
-
-    function getRecoveryPlanForDate(dateKey) {
-        const record = readinessRecordForDate(dateKey);
-        return (record && record.status === 'completed' && record.recovery) ? record : null;
-    }
-
-    function recoveryAdjustedWeight(weight, exerciseName, recoveryPlan) {
-        const kg = parseFloat(weight);
-        if (isNaN(kg) || !recoveryPlan) return isNaN(kg) ? null : kg;
-        let adjusted;
-        if (isAssistanceExercise(exerciseName)) {
-            // Assistance is inverted: more assistance means less bodyweight moved.
-            // When bodyweight is known, reduce the actual moved load by the same
-            // percentage; otherwise use a conservative increase in assistance.
-            const bodyweight = getBodyweightForDate(selectedWorkoutDateKey());
-            adjusted = bodyweight && kg <= bodyweight.weight
-                ? bodyweight.weight - ((bodyweight.weight - kg) * recoveryPlan.loadMultiplier)
-                : kg * (2 - recoveryPlan.loadMultiplier);
-        } else {
-            adjusted = kg * recoveryPlan.loadMultiplier;
-        }
-        return Math.max(0, Math.round(adjusted * 2) / 2);
-    }
-
-    function selectedWorkoutDateKey() {
-        const picker = document.getElementById('workout-date-picker');
-        return readinessDateKey(window.selectedWorkoutDate || (picker && picker.value) || localDateKey());
-    }
-
-    function readDailyReadinessForm() {
-        const numberValue = id => {
-            const el = document.getElementById(id);
-            return el && el.value !== '' ? parseInt(el.value, 10) : null;
-        };
-        const note = document.getElementById('daily-readiness-note');
-        return {
-            energy: numberValue('daily-readiness-energy'),
-            mood: numberValue('daily-readiness-mood'),
-            feeling: numberValue('daily-readiness-feeling'),
-            hunger: numberValue('daily-readiness-hunger'),
-            fatigue: numberValue('daily-readiness-fatigue'),
-            note: note ? note.value.trim().slice(0, 300) : ''
-        };
-    }
-
-    function readinessAnswersComplete(answers) {
-        return ['energy', 'mood', 'feeling', 'hunger', 'fatigue']
-            .every(key => Number.isInteger(answers[key]) && answers[key] >= 1 && answers[key] <= 5);
-    }
-
-    function buildDailyReadinessPlan(answers) {
-        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
-        const maintenance = calculateMaintenanceCalories();
-        const recovery = answers.energy <= 2 && answers.hunger >= 4 && answers.fatigue >= 4;
-        // Halfway between the normal target and maintenance gives meaningful extra
-        // recovery fuel without replacing the user's long-term goal.
-        const recommendedCalories = recovery && maintenance
-            ? Math.round((baseline + maintenance) / 2)
-            : baseline;
-
-        let nutritionMessage;
-        let trainingMessage;
-        if (recovery) {
-            nutritionMessage = maintenance
-                ? `Today's target moves from ${baseline.toLocaleString()} to ${recommendedCalories.toLocaleString()} kcal ‚Äî halfway toward your estimated ${maintenance.toLocaleString()} kcal maintenance. Prioritise protein, fluids, carbohydrates and regular meals.`
-                : `Recovery is active. Your target stays at ${baseline.toLocaleString()} kcal until maintenance can be calculated; complete About You and log a bodyweight to unlock the tailored recovery target.`;
-            trainingMessage = 'Use about 60% of normal training volume and 85% of normal load. Keep repetitions controlled and stop well before failure.';
-        } else {
-            const nutritionParts = [`Keep today's normal ${baseline.toLocaleString()} kcal target.`];
-            if (answers.hunger >= 4) nutritionParts.push('Build meals around protein, fibre and high-volume foods to manage hunger.');
-            if (answers.energy <= 2) nutritionParts.push('Place more of today‚Äôs carbohydrates around training and keep fluids up.');
-            if (answers.mood <= 2 || answers.feeling <= 2) nutritionParts.push('Keep meals simple and regular rather than relying on restriction.');
-            if (nutritionParts.length === 1) nutritionParts.push('Keep protein consistent and fuel training as planned.');
-            nutritionMessage = nutritionParts.join(' ');
-            trainingMessage = answers.fatigue >= 4
-                ? 'Recovery mode was not triggered, but fatigue is high. Train conservatively and stop if performance or technique drops.'
-                : 'Normal training is available today; adjust effort if your warm-up feels unusually difficult.';
-        }
-
-        return {
-            recovery,
-            baselineCalories: baseline,
-            maintenanceCalories: maintenance || null,
-            recommendedCalories,
-            volumeMultiplier: recovery ? RECOVERY_VOLUME_MULTIPLIER : 1,
-            loadMultiplier: recovery ? RECOVERY_LOAD_MULTIPLIER : 1,
-            nutritionMessage,
-            trainingMessage
-        };
-    }
-
-    function readinessPlanPreviewHTML(plan) {
-        if (plan.recovery) {
-            return `
-                <div class="flex items-start gap-3">
-                    <i data-lucide="battery-medium" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
-                    <div>
-                        <p class="font-black text-amber-900">Recovery day will be activated</p>
-                        <p class="text-xs text-amber-800 mt-1">${plan.nutritionMessage}</p>
-                        <p class="text-xs text-amber-800 mt-2">${plan.trainingMessage}</p>
-                    </div>
-                </div>`;
-        }
-        return `
-            <div class="flex items-start gap-3">
-                <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5"></i>
-                <div>
-                    <p class="font-black text-emerald-900">Normal plan</p>
-                    <p class="text-xs text-emerald-800 mt-1">${plan.nutritionMessage}</p>
-                    <p class="text-xs text-emerald-800 mt-2">${plan.trainingMessage}</p>
-                </div>
-            </div>`;
-    }
-
-    function previewDailyReadiness() {
-        const preview = document.getElementById('readiness-preview');
-        if (!preview) return;
-        const answers = readDailyReadinessForm();
-        if (!readinessAnswersComplete(answers)) {
-            preview.classList.add('hidden');
-            preview.innerHTML = '';
-            return;
-        }
-        const plan = buildDailyReadinessPlan(answers);
-        preview.className = `mt-5 p-4 rounded-2xl border text-sm ${plan.recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
-        preview.innerHTML = readinessPlanPreviewHTML(plan);
-        refreshIcons();
-    }
-
-    function openDailyReadinessCheck() {
-        const modal = document.getElementById('daily-readiness-modal');
-        if (!modal) return;
-        const dateKey = localDateKey();
-        const record = readinessRecordForDate(dateKey);
-        window._dailyReadinessDate = dateKey;
-
-        ['energy', 'mood', 'feeling', 'hunger', 'fatigue'].forEach(key => {
-            const el = document.getElementById('readiness-' + key);
-            if (el) el.value = record && record.status === 'completed' ? String(record[key] || '') : '';
-        });
-        const note = document.getElementById('daily-readiness-note');
-        if (note) note.value = record && record.status === 'completed' ? (record.note || '') : '';
-        const preview = document.getElementById('readiness-preview');
-        if (preview) { preview.classList.add('hidden'); preview.innerHTML = ''; }
-
-        modal.style.display = 'flex';
-        previewDailyReadiness();
-        refreshIcons();
-    }
-
-    function closeDailyReadinessCheck(markSkipped) {
-        const modal = document.getElementById('daily-readiness-modal');
-        if (modal) modal.style.display = 'none';
-        if (!markSkipped) return;
-
-        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
-        const existing = readinessRecordForDate(dateKey);
-        // Closing a previously completed check-in is just Cancel; it never erases it.
-        if (!existing || existing.status !== 'completed') {
-            if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
-            state.dailyReadiness[dateKey] = {
-                status: 'skipped',
-                date: dateKey,
-                skippedAt: new Date().toISOString()
-            };
-            saveState();
-            syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
-            renderDailyReadinessCards();
-            showToast('Today‚Äôs check-in skipped ‚Äî you can complete it from the dashboard');
-        }
-    }
-
-    function saveDailyReadiness() {
-        const answers = readDailyReadinessForm();
-        if (!readinessAnswersComplete(answers)) {
-            showToast('Answer all five readiness questions');
-            return;
-        }
-
-        const dateKey = readinessDateKey(window._dailyReadinessDate || localDateKey());
-        const plan = buildDailyReadinessPlan(answers);
-        if (!state.dailyReadiness || typeof state.dailyReadiness !== 'object') state.dailyReadiness = {};
-        state.dailyReadiness[dateKey] = Object.assign({
-            status: 'completed',
-            date: dateKey,
-            completedAt: new Date().toISOString()
-        }, answers, plan);
-
-        saveState();
-        syncLatestReadinessToCloud(state.dailyReadiness[dateKey]);
-        closeDailyReadinessCheck(false);
-        renderDashboard();
-        renderDiary();
-        renderDailyReadinessCards();
-        pushMemberDataToCloud();
-        showToast(plan.recovery
-            ? `Recovery day active ¬∑ ${plan.recommendedCalories.toLocaleString()} kcal ¬∑ lighter training`
-            : `Readiness saved ¬∑ ${plan.recommendedCalories.toLocaleString()} kcal target`);
-    }
-
-    function isAnotherModalOpen(excludedId) {
-        return Array.from(document.querySelectorAll('.modal-overlay')).some(modal => {
-            if (modal.id === excludedId) return false;
-            return window.getComputedStyle(modal).display !== 'none';
-        });
-    }
-
-    function maybeShowDailyReadiness() {
-        if (!currentUser) return;
-        const now = new Date();
-        if (now.getHours() < READINESS_PROMPT_HOUR) return;
-        const readinessModal = document.getElementById('daily-readiness-modal');
-        if (readinessModal && window.getComputedStyle(readinessModal).display !== 'none') return;
-        const record = readinessRecordForDate(localDateKey(now));
-        if (record && (record.status === 'completed' || record.status === 'skipped')) return;
-
-        if (isAnotherModalOpen('daily-readiness-modal')) {
-            clearTimeout(dailyReadinessRetryTimer);
-            dailyReadinessRetryTimer = setTimeout(maybeShowDailyReadiness, 30000);
-            return;
-        }
-        openDailyReadinessCheck();
-    }
-
-    function handleReadinessVisibility() {
-        if (document.visibilityState === 'visible') maybeShowDailyReadiness();
-    }
-
-    function scheduleNextReadinessPrompt() {
-        clearTimeout(dailyReadinessTimer);
-        const now = new Date();
-        const tenToday = new Date(now);
-        tenToday.setHours(READINESS_PROMPT_HOUR, 0, 0, 0);
-        const nextTen = new Date(tenToday);
-
-        if (now >= tenToday) {
-            setTimeout(maybeShowDailyReadiness, 1200);
-            nextTen.setDate(nextTen.getDate() + 1);
-        }
-
-        dailyReadinessTimer = setTimeout(() => {
-            maybeShowDailyReadiness();
-            scheduleNextReadinessPrompt();
-        }, Math.max(1000, nextTen.getTime() - now.getTime()));
-    }
-
-    function setupDailyReadinessPrompt() {
-        scheduleNextReadinessPrompt();
-        if (!dailyReadinessListenersReady) {
-            document.addEventListener('visibilitychange', handleReadinessVisibility);
-            window.addEventListener('focus', maybeShowDailyReadiness);
-            dailyReadinessListenersReady = true;
-        }
-        renderDailyReadinessCards();
-    }
-
-    function teardownDailyReadinessPrompt() {
-        clearTimeout(dailyReadinessTimer);
-        clearTimeout(dailyReadinessRetryTimer);
-        dailyReadinessTimer = null;
-        dailyReadinessRetryTimer = null;
-        if (dailyReadinessListenersReady) {
-            document.removeEventListener('visibilitychange', handleReadinessVisibility);
-            window.removeEventListener('focus', maybeShowDailyReadiness);
-            dailyReadinessListenersReady = false;
-        }
-        const modal = document.getElementById('daily-readiness-modal');
-        if (modal) modal.style.display = 'none';
-    }
-
-    function renderDailyReadinessCards() {
-        const todayKey = localDateKey();
-        const todayRecord = readinessRecordForDate(todayKey);
-        const dashCard = document.getElementById('daily-readiness-card');
-
-        if (dashCard) {
-            const afterTen = new Date().getHours() >= READINESS_PROMPT_HOUR;
-            if (todayRecord && todayRecord.status === 'completed') {
-                const recovery = !!todayRecord.recovery;
-                dashCard.className = `glass-card rounded-[2.5rem] p-6 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
-                dashCard.innerHTML = `
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="flex items-start gap-3 min-w-0">
-                            <div class="w-11 h-11 ${recovery ? 'bg-amber-500' : 'bg-emerald-500'} text-white rounded-2xl flex items-center justify-center flex-shrink-0">
-                                <i data-lucide="${recovery ? 'battery-medium' : 'battery-charging'}" class="w-5 h-5"></i>
-                            </div>
-                            <div>
-                                <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery day active' : 'Ready for the normal plan'}</p>
-                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">Energy ${todayRecord.energy}/5 ¬∑ Mood ${todayRecord.mood}/5 ¬∑ Hunger ${todayRecord.hunger}/5 ¬∑ Fatigue ${todayRecord.fatigue}/5</p>
-                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-2"><b>${getDailyCalorieTarget(todayKey).toLocaleString()} kcal</b> today${recovery ? ' ¬∑ 60% volume ¬∑ 85% load' : ''}</p>
-                            </div>
-                        </div>
-                        <button onclick="openDailyReadinessCheck()" class="text-xs font-black underline ${recovery ? 'text-amber-700' : 'text-emerald-700'} flex-shrink-0">Update</button>
-                    </div>`;
-            } else if (afterTen) {
-                const skipped = todayRecord && todayRecord.status === 'skipped';
-                dashCard.className = 'glass-card rounded-[2.5rem] p-6 border-2 bg-indigo-50 border-indigo-100';
-                dashCard.innerHTML = `
-                    <div class="flex items-center justify-between gap-4">
-                        <div>
-                            <p class="font-black text-indigo-900">${skipped ? 'Today‚Äôs check-in was skipped' : 'Daily readiness check'}</p>
-                            <p class="text-xs text-indigo-600 mt-1">Check energy, mood, hunger and fatigue to tailor today‚Äôs plan.</p>
-                        </div>
-                        <button onclick="openDailyReadinessCheck()" class="bg-indigo-600 text-white px-4 py-3 rounded-xl text-xs font-black flex-shrink-0">Check in</button>
-                    </div>`;
-            } else {
-                dashCard.classList.add('hidden');
-                dashCard.innerHTML = '';
-            }
-        }
-
-        const dashTarget = document.getElementById('dash-calorie-target');
-        if (dashTarget) dashTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()}`;
-
-        const nutritionTarget = document.getElementById('nutrition-calorie-target');
-        if (nutritionTarget) nutritionTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()} kcal`;
-
-        const nutritionCard = document.getElementById('nutrition-readiness-card');
-        if (nutritionCard) {
-            const record = readinessRecordForDate(state.viewDate);
-            if (record && record.status === 'completed') {
-                const recovery = !!record.recovery;
-                nutritionCard.className = `rounded-[2rem] p-5 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
-                nutritionCard.innerHTML = `
-                    <div class="flex items-start gap-3">
-                        <i data-lucide="${recovery ? 'utensils' : 'salad'}" class="w-5 h-5 ${recovery ? 'text-amber-600' : 'text-emerald-600'} flex-shrink-0 mt-0.5"></i>
-                        <div>
-                            <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery nutrition' : 'Today‚Äôs nutrition plan'}</p>
-                            <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">${record.nutritionMessage}</p>
-                        </div>
-                    </div>`;
-            } else {
-                nutritionCard.classList.add('hidden');
-                nutritionCard.innerHTML = '';
-            }
-        }
-
-        const trainingCard = document.getElementById('training-recovery-card');
-        if (trainingCard) {
-            const workoutDate = selectedWorkoutDateKey();
-            const recovery = getRecoveryPlanForDate(workoutDate);
-            if (recovery) {
-                trainingCard.className = 'rounded-[2rem] p-5 border-2 border-amber-200 bg-amber-50';
-                trainingCard.innerHTML = `
-                    <div class="flex items-start gap-3">
-                        <i data-lucide="shield" class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"></i>
-                        <div>
-                            <p class="font-black text-amber-900">Recovery training ¬∑ ${Math.round(recovery.volumeMultiplier * 100)}% volume ¬∑ ${Math.round(recovery.loadMultiplier * 100)}% load</p>
-                            <p class="text-xs text-amber-800 mt-1">AI-generated sessions use fewer exercises and working-weight suggestions are reduced. ${recovery.trainingMessage}</p>
-                        </div>
-                    </div>`;
-            } else {
-                trainingCard.classList.add('hidden');
-                trainingCard.innerHTML = '';
-            }
-        }
-        refreshIcons();
-    }
-
-    // ==========================================================================
-    // DASHBOARD
-    // ==========================================================================
-
-    function renderDashboardReadinessLegacy() {
-        const todayMeals = state.dailyMeals.filter(m => m.date === state.viewDate);
-        const totalCals = todayMeals.reduce((sum, m) => sum + (m.calories || 0), 0);
-        const totalProtein = todayMeals.reduce((sum, m) => sum + (m.protein || 0), 0);
-        const totalCarbs = todayMeals.reduce((sum, m) => sum + (m.carbs || 0), 0);
-        const totalFat = todayMeals.reduce((sum, m) => sum + (m.fat || 0), 0);
-
-        const dashCals = document.getElementById('dash-calories');
-        if (dashCals) dashCals.innerText = Math.round(totalCals);
-
-        const dashProtein = document.getElementById('dash-protein');
-        if (dashProtein) dashProtein.innerText = Math.round(totalProtein) + 'g';
-
-        // FIXED: use actual carbs/fat totals from logged meals (not made-up percentages)
-        const dashCarbs = document.getElementById('dash-carbs');
-        if (dashCarbs) dashCarbs.innerText = Math.round(totalCarbs) + 'g';
-
-        const dashFat = document.getElementById('dash-fat');
-        if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
-
-        const calorieGoal = getDailyCalorieTarget(state.viewDate);
-        const progress = Math.min((totalCals / calorieGoal) * 534, 534);
-        const progressEl = document.getElementById('calorie-progress');
-        if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;
-
-        const water = (state.waterLogs && state.waterLogs[state.viewDate]) || 0;
-        const waterGoal = (state.goals && state.goals.water) ? state.goals.water : 2500;
-        const waterCountEl = document.getElementById('water-count');
-        if (waterCountEl) waterCountEl.innerText = `${(water / 1000).toFixed(2)} / ${(waterGoal / 1000).toFixed(1)}L`;
-        const waterBar = document.getElementById('water-progress-bar');
-        if (waterBar) waterBar.style.width = Math.min(100, (water / waterGoal) * 100) + '%';
-
-        const steps = (state.stepsLogs && state.stepsLogs[state.viewDate]) || 0;
-        const stepsGoal = (state.goals && state.goals.steps) ? state.goals.steps : 10000;
-        const stepsCountEl = document.getElementById('steps-count');
-    }
-    const DIETARY_PATTERN_LABELS = Object.freeze({
-        balanced: 'Balanced / no specific diet',
-        vegan: 'Vegan',
-        vegetarian: 'Vegetarian',
-        ketogenic: 'Ketogenic'
-    });
-    const DIETARY_APPROACH_LABELS = Object.freeze({
-        intermittent_fasting: 'Intermittent fasting',
-        calorie_deficit: 'Calorie deficit'
-    });
-    const DIETARY_REQUIREMENT_LABELS = Object.freeze({
-        dairy_free: 'Dairy-free',
-        gluten_free: 'Gluten-free',
-        nut_free: 'Nut-free',
-        egg_free: 'Egg-free',
-        fish_free: 'Fish / seafood-free',
-        soy_free: 'Soy-free',
-        sesame_free: 'Sesame-free',
-        halal: 'Halal',
-        kosher: 'Kosher',
-        religious_cultural: 'Religious / cultural requirement',
-        other: 'Other / allergy detail supplied'
-    });
-
-    function inferDietaryRequirementsFromText(value) {
-        const text = String(value || '').toLowerCase();
-        const inferred = [];
-        if (/\b(dairy|milk|lactose)\b/.test(text)) inferred.push('dairy_free');
-        if (/\b(gluten|coeliac|celiac|wheat)\b/.test(text)) inferred.push('gluten_free');
-        if (/\b(nut|nuts|peanut|almond|walnut|cashew|hazelnut)\b/.test(text)) inferred.push('nut_free');
-        if (/\b(egg|eggs)\b/.test(text)) inferred.push('egg_free');
-        if (/\b(fish|seafood|shellfish|prawn|shrimp)\b/.test(text)) inferred.push('fish_free');
-        if (/\b(soy|soya)\b/.test(text)) inferred.push('soy_free');
-        if (/\b(sesame|tahini)\b/.test(text)) inferred.push('sesame_free');
-        if (/\bhalal\b/.test(text)) inferred.push('halal');
-        if (/\bkosher\b/.test(text)) inferred.push('kosher');
-        return Array.from(new Set(inferred));
-    }
-
-    function dietaryProfile() {
-        if (!isPlainRecord(state.dietaryProfile)) state.dietaryProfile = deepClone(DEFAULT_STATE.dietaryProfile);
-        const profile = state.dietaryProfile;
-        if (!['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(profile.pattern)) profile.pattern = 'balanced';
-        if (!Array.isArray(profile.approaches)) profile.approaches = [];
-        if (!Array.isArray(profile.requirements)) profile.requirements = [];
-        profile.notes = String(profile.notes || '').slice(0, 750);
-        return profile;
-    }
-
-    function dietaryPatternLabel(pattern) {
-        return DIETARY_PATTERN_LABELS[pattern] || DIETARY_PATTERN_LABELS.balanced;
-    }
-
-    function dietaryProfileBadgesHTML(profileInput) {
-        const profile = profileInput || dietaryProfile();
-        const labels = [dietaryPatternLabel(profile.pattern)]
-            .concat((profile.approaches || []).map(value => DIETARY_APPROACH_LABELS[value]).filter(Boolean))
-            .concat((profile.requirements || []).map(value => DIETARY_REQUIREMENT_LABELS[value]).filter(Boolean));
-        return labels.map((label, index) => `<span class="text-[10px] font-black px-2 py-1 rounded-full ${index === 0 ? 'bg-slate-900 text-orange-300' : 'bg-orange-50 text-orange-800 border border-orange-200'}">${escapeHtml(label)}</span>`).join('');
-    }
-
-    function openDietaryProfile() {
-        const profile = dietaryProfile();
-        document.querySelectorAll('input[name="dietary-pattern"]').forEach(input => {
-            input.checked = input.value === profile.pattern;
-        });
-        const fasting = document.getElementById('dietary-approach-fasting');
-        const deficit = document.getElementById('dietary-approach-deficit');
-        if (fasting) fasting.checked = profile.approaches.includes('intermittent_fasting');
-        if (deficit) deficit.checked = profile.approaches.includes('calorie_deficit');
-        document.querySelectorAll('input[name="dietary-requirement"]').forEach(input => {
-            input.checked = profile.requirements.includes(input.value);
-        });
-        const notes = document.getElementById('dietary-profile-notes');
-        if (notes) notes.value = profile.notes;
-        const modal = document.getElementById('dietary-profile-modal');
-        if (modal) modal.style.display = 'flex';
-        refreshIcons();
-    }
-
-    function closeDietaryProfile() {
-        const modal = document.getElementById('dietary-profile-modal');
-        if (modal) modal.style.display = 'none';
-    }
-
-    function saveDietaryProfile() {
-        const selectedPattern = document.querySelector('input[name="dietary-pattern"]:checked');
-        if (!selectedPattern) {
-            showToast('Choose a diet style, including balanced / no specific diet');
-            return;
-        }
-        const profile = dietaryProfile();
-        profile.pattern = selectedPattern.value;
-        profile.approaches = [
-            document.getElementById('dietary-approach-fasting')?.checked ? 'intermittent_fasting' : '',
-            document.getElementById('dietary-approach-deficit')?.checked ? 'calorie_deficit' : ''
-        ].filter(Boolean);
-        profile.notes = String(document.getElementById('dietary-profile-notes')?.value || '').trim().slice(0, 750);
-        const selectedRequirements = Array.from(document.querySelectorAll('input[name="dietary-requirement"]:checked'))
-            .map(input => input.value)
-            .filter(value => DIETARY_REQUIREMENT_LABELS[value]);
-        profile.requirements = Array.from(new Set(selectedRequirements.concat(inferDietaryRequirementsFromText(profile.notes))));
-        profile.completed = true;
-        profile.source = 'coaching-questionnaire';
-        profile.updatedAt = new Date().toISOString();
-        saveState();
-        closeDietaryProfile();
-        renderCoachingHub();
-        renderShiftWorker();
-        showToast(`${dietaryPatternLabel(profile.pattern)} plan saved ¬∑ meal choices updated`, 5000);
-    }
-
-    function applyDietaryCoachAnswers(answers) {
-        const values = answers || {};
-        if (!values.dietPattern) return false;
-        const profile = dietaryProfile();
-        profile.pattern = ['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(values.dietPattern)
-            ? values.dietPattern
-            : 'balanced';
-        const approachMap = {
-            none: [],
-            intermittent_fasting: ['intermittent_fasting'],
-            calorie_deficit: ['calorie_deficit'],
-            fasting_deficit: ['intermittent_fasting', 'calorie_deficit']
-        };
-        profile.approaches = approachMap[values.dietApproach] || [];
-        const requirementMap = {
-            none: [],
-            allergy: ['other'],
-            faith: ['religious_cultural'],
-            other: ['other']
-        };
-        profile.notes = String(values.dietRequirementDetails || '').trim().slice(0, 750);
-        profile.requirements = Array.from(new Set(
-            (requirementMap[values.dietRequirementOverview] || []).concat(inferDietaryRequirementsFromText(profile.notes))
-        ));
-        profile.completed = true;
-        profile.source = 'ai-coach-conversation';
-        profile.updatedAt = new Date().toISOString();
-        return true;
-    }
-
-    function dietaryShiftFocusLines(type, profileInput) {
-        const profile = profileInput || dietaryProfile();
-        const shiftLines = {
-            night: 'Anchor the largest meal after waking or before the shift, then use lighter planned food through the biological night.',
-            early: 'Prepare breakfast and the first break meal the evening before so food planning does not reduce sleep.',
-            day: 'Pack the main work-break meal and keep a planned option ready for the pre- or post-shift training window.',
-            off: 'Return meals to daytime hours and batch-prepare food for the next run of shifts.'
-        };
-        const patternLines = {
-            balanced: 'Build each main meal around a clear protein source, vegetables or fruit, and a portion of carbohydrate that fits the day.',
-            vegan: 'Use a substantial plant-protein anchor at each meal‚Äîsuch as tofu, tempeh, seitan, beans, lentils or a fortified protein product.',
-            vegetarian: 'Rotate eggs, dairy or fortified alternatives, tofu, beans and lentils so each meal has a deliberate protein source.',
-            ketogenic: 'Prioritise protein, non-starchy vegetables and measured fats; hydration and electrolyte needs deserve extra attention during long shifts.'
-        };
-        const lines = [
-            shiftLines[type] || shiftLines.off,
-            patternLines[profile.pattern] || patternLines.balanced
-        ];
-        if ((profile.approaches || []).includes('calorie_deficit')) {
-            lines.push('Suggested portions are reduced by about 15% in the planner; keep protein and vegetables in place rather than skipping both.');
-        }
-        if ((profile.approaches || []).includes('intermittent_fasting')) {
-            lines.push(type === 'night'
-                ? 'Do not force a fasting window through a safety-critical night shift. Place the eating window after waking and stop if alertness, wellbeing or performance suffers.'
-                : 'Keep the eating window consistent with this shift and do not let fasting displace hydration, recovery or adequate protein.');
-        }
-        if ((profile.requirements || []).length || profile.notes) {
-            lines.push('VFIT hides obvious matches for selected exclusions, but you must still check labels, certification and cross-contamination.');
-        }
-        return lines;
-    }
-
-    function dietaryShiftCoachAdvice(type) {
-        const profile = dietaryProfile();
-        if (!profile.completed) return 'Complete Dietary Plan & Meals in the Coaching Hub so food advice can reflect your requirements.';
-        return `Dietary focus: ${dietaryShiftFocusLines(type, profile).join(' ')}`;
-    }
-
-    function dietaryShiftFocusHTML(type) {
-        const profile = dietaryProfile();
-        if (!profile.completed) {
-            return `<div class="bg-orange-50 border-2 border-orange-200 rounded-[2rem] p-5">
-                <p class="text-[10px] font-black uppercase text-orange-600">Dietary plan needed</p>
-                <h3 class="font-black text-lg mt-1">Personalise these shift meals</h3>
-                <p class="text-xs text-orange-900 mt-2">Answer the Coaching Hub dietary questions to set vegan, vegetarian, ketogenic, fasting, calorie-deficit and dietary-requirement preferences.</p>
-                <button onclick="openDietaryProfile()" class="w-full mt-3 bg-slate-900 text-white p-3 rounded-xl font-black text-xs">Answer Dietary Questions</button>
-            </div>`;
-        }
-        const lines = dietaryShiftFocusLines(type, profile);
-        return `<div class="bg-slate-900 border border-orange-500 text-white rounded-[2rem] p-5">
-            <div>
-                <div class="flex flex-wrap gap-1.5 mb-3">${dietaryProfileBadgesHTML(profile)}</div>
-                <ul class="space-y-2">${lines.map(line => `<li class="flex items-start gap-2 text-xs text-slate-200"><span class="text-orange-400 font-black">‚Ä¢</span><span>${escapeHtml(line)}</span></li>`).join('')}</ul>
-                ${profile.notes ? `<div class="mt-3 bg-white/10 border border-white/10 p-3 rounded-xl"><p class="text-[10px] font-black uppercase text-orange-300">Your instructions</p><p class="text-xs text-slate-200 mt-1">${escapeHtml(profile.notes)}</p></div>` : ''}
-                <button onclick="openDietaryProfile()" class="mt-3 text-xs font-black text-orange-300 underline">Update dietary plan</button>
-            </div>
-        </div>`;
-    }
-
-    function renderDietaryProfileSummary() {
-        const box = document.getElementById('dietary-profile-summary');
-        if (!box) return;
-        const profile = dietaryProfile();
-        if (!profile.completed) {
-            box.innerHTML = `<div class="bg-orange-50 border border-orange-200 p-4 rounded-2xl">
-                <p class="font-black text-sm text-orange-900">Questions not completed yet</p>
-                <p class="text-xs text-orange-800 mt-1">The AI Coach will ask on your next conversation, or you can fill them in now.</p>
-            </div>`;
-            return;
-        }
-        const requirementText = (profile.requirements || []).length
-            ? profile.requirements.map(value => DIETARY_REQUIREMENT_LABELS[value] || value).join(' ¬∑ ')
-            : 'No selected exclusions';
-        box.innerHTML = `<div class="bg-slate-50 p-4 rounded-2xl">
-            <div class="flex flex-wrap gap-1.5 mb-3">${dietaryProfileBadgesHTML(profile)}</div>
-            <p class="text-xs text-slate-500"><b>Requirements:</b> ${escapeHtml(requirementText)}</p>
-            ${profile.notes ? `<p class="text-xs text-slate-500 mt-2"><b>Your instructions:</b> ${escapeHtml(profile.notes)}</p>` : ''}
-            <p class="text-[10px] text-slate-400 mt-3">Last updated ${profile.updatedAt ? escapeHtml(new Date(profile.updatedAt).toLocaleDateString('en-GB')) : 'today'}.</p>
-        </div>`;
-    }
-
-    function renderDietaryShiftSummary() {
-        const box = document.getElementById('dietary-shift-summary');
-        if (!box) return;
-        const shift = getShiftForDate(localDateKey());
-        const profile = dietaryProfile();
-        const label = aiCoachShiftLabel(shift);
-        const lines = dietaryShiftFocusLines(shift.type, profile);
-        box.innerHTML = `<div class="bg-slate-50 border border-slate-200 p-4 rounded-2xl">
-            <p class="text-[10px] font-black uppercase text-orange-600">${escapeHtml(label)}</p>
-            <p class="font-black text-sm mt-1">${profile.completed ? escapeHtml(dietaryPatternLabel(profile.pattern)) : 'Complete your dietary questions'}</p>
-            <p class="text-xs text-slate-500 mt-2">${escapeHtml(lines[0])}</p>
-            ${profile.completed ? `<p class="text-xs text-slate-500 mt-2">${escapeHtml(lines.slice(1).join(' '))}</p>` : ''}
-        </div>`;
-    }
-
-    function openDietaryMeals() {
-        switchTab('nutrition');
-        setNutritionTab('shift');
-        setTimeout(() => {
-            const target = document.querySelector('[data-shift-meal-ideas]');
-            if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 80);
-    }
-
-
-    // Each shift keeps its original four-choice balanced rotation. The dietary
-    // layer below adds another compatible option or swaps in a five-recipe
-    // vegan, vegetarian or ketogenic library without mixing shift base lists.
-    const SHIFT_MEAL_IDEAS = Object.freeze({
-        night: Object.freeze({
-            breakfast: Object.freeze([
-                { id: 'night-breakfast-oats', name: 'Protein overnight oats with berries', calories: 485, protein: 36, carbs: 58, fat: 12, fiber: 9, note: 'Oats, Greek yogurt, whey and berries prepared ahead as one filling meal after waking.' },
-                { id: 'night-breakfast-yogurt-bowl', name: 'Greek yogurt, banana and granola bowl', calories: 455, protein: 34, carbs: 57, fat: 10, fiber: 7, note: 'A quick no-cook first meal with fruit, wholegrain carbohydrate and a clear protein serving.' },
-                { id: 'night-breakfast-eggs-beans', name: 'Eggs, beans and wholegrain toast', calories: 510, protein: 32, carbs: 58, fat: 17, fiber: 13, note: 'A hot meal after waking that combines protein and high-fibre carbohydrate before the shift.' },
-                { id: 'night-breakfast-smoothie', name: 'Protein berry smoothie with oats', calories: 470, protein: 38, carbs: 55, fat: 11, fiber: 10, note: 'Milk, whey, berries, oats and a small spoon of peanut butter blended for busy nights.' }
-            ]),
-            lunch: Object.freeze([
-                { id: 'night-lunch-chicken-rice', name: 'Chicken, brown rice and roasted veg bowl', calories: 610, protein: 48, carbs: 67, fat: 16, fiber: 9, note: 'A filling pre-shift meal-prep bowl with protein, vegetables and slow-release carbohydrate.' },
-                { id: 'night-lunch-salmon-potato', name: 'Salmon, baby potatoes and green vegetables', calories: 625, protein: 43, carbs: 59, fat: 23, fiber: 10, note: 'A substantial anchor meal around two hours before work, with oily fish and vegetables.' },
-                { id: 'night-lunch-turkey-chilli', name: 'Turkey and bean chilli with rice', calories: 640, protein: 49, carbs: 72, fat: 17, fiber: 14, note: 'A batch-cook option with lean protein and fibre to help control hunger later in the shift.' },
-                { id: 'night-lunch-tofu-noodles', name: 'Tofu and edamame noodle stir-fry', calories: 590, protein: 36, carbs: 68, fat: 20, fiber: 12, note: 'A plant-based pre-shift meal with vegetables, soy protein and moderate carbohydrate.' }
-            ]),
-            dinner: Object.freeze([
-                { id: 'night-dinner-turkey-wrap', name: 'Turkey, hummus and salad wholegrain wrap', calories: 465, protein: 39, carbs: 48, fat: 13, fiber: 8, note: 'A lighter, portable dinner for early in the shift when a large meal would feel too heavy.' },
-                { id: 'night-dinner-tuna-couscous', name: 'Tuna and vegetable couscous pot', calories: 450, protein: 38, carbs: 52, fat: 10, fiber: 8, note: 'Easy to pack and eat cold, with enough protein for a main break without a heavy portion.' },
-                { id: 'night-dinner-chicken-soup', name: 'Chicken and vegetable soup with a wholegrain roll', calories: 430, protein: 36, carbs: 49, fat: 10, fiber: 9, note: 'A warm but lighter early-shift meal that is practical to batch-cook and reheat.' },
-                { id: 'night-dinner-jacket-potato', name: 'Cottage cheese jacket potato with salad', calories: 475, protein: 32, carbs: 66, fat: 9, fiber: 10, note: 'A simple early-shift dinner with a high-protein topping and plenty of fibre.' }
-            ]),
-            snack: Object.freeze([
-                { id: 'night-snack-yogurt', name: 'Greek yogurt, berries and almonds', calories: 275, protein: 24, carbs: 22, fat: 10, fiber: 5, note: 'A protein-forward option that is easy to portion and carry for a mid-shift break.' },
-                { id: 'night-snack-shake-banana', name: 'Protein shake with a banana', calories: 260, protein: 28, carbs: 32, fat: 3, fiber: 4, note: 'A quick backup for unpredictable breaks, combining protein with an easy-to-carry fruit.' },
-                { id: 'night-snack-cottage-oatcakes', name: 'Cottage cheese with oatcakes', calories: 290, protein: 26, carbs: 29, fat: 8, fiber: 5, note: 'A savoury snack with slow-digesting protein that can replace vending-machine food.' },
-                { id: 'night-snack-eggs-fruit', name: 'Two boiled eggs with an apple', calories: 250, protein: 15, carbs: 27, fat: 10, fiber: 5, note: 'Prepared ahead for a smaller deep-night snack when genuinely hungry.' }
-            ])
-        }),
-        early: Object.freeze({
-            breakfast: Object.freeze([
-                { id: 'early-breakfast-wrap', name: 'Egg, turkey and spinach breakfast wrap', calories: 435, protein: 35, carbs: 42, fat: 14, fiber: 6, note: 'A portable hot or cold breakfast that can be prepared the night before.' },
-                { id: 'early-breakfast-porridge', name: 'Protein porridge with banana', calories: 445, protein: 34, carbs: 57, fat: 10, fiber: 9, note: 'Microwave or overnight oats make this practical before an early start.' },
-                { id: 'early-breakfast-yogurt-pot', name: 'Greek yogurt overnight-oats pot', calories: 420, protein: 32, carbs: 52, fat: 9, fiber: 8, note: 'Prepare it before bed so breakfast does not reduce an already-short sleep window.' },
-                { id: 'early-breakfast-sandwich', name: 'Egg and lean ham wholemeal sandwich', calories: 410, protein: 31, carbs: 43, fat: 13, fiber: 7, note: 'A portable breakfast for mornings when there is no time to sit down before leaving.' }
-            ]),
-            lunch: Object.freeze([
-                { id: 'early-lunch-pasta', name: 'Chicken pesto pasta salad', calories: 575, protein: 45, carbs: 62, fat: 16, fiber: 7, note: 'Easy to pack and eat cold when a work break is short or unpredictable.' },
-                { id: 'early-lunch-tuna-rice', name: 'Tuna, sweetcorn and rice pot', calories: 535, protein: 40, carbs: 65, fat: 12, fiber: 7, note: 'A portable balanced lunch that can be batch-prepared for several early shifts.' },
-                { id: 'early-lunch-turkey-wrap', name: 'Turkey salad wrap with fruit', calories: 505, protein: 39, carbs: 59, fat: 12, fiber: 9, note: 'Quick to eat on a short break while still providing protein, carbohydrate and fibre.' },
-                { id: 'early-lunch-chicken-soup', name: 'Chicken and lentil soup with wholegrain bread', calories: 550, protein: 43, carbs: 64, fat: 13, fiber: 14, note: 'A filling reheatable lunch with lean protein and high-fibre pulses.' }
-            ]),
-            dinner: Object.freeze([
-                { id: 'early-dinner-stirfry', name: 'Lean beef vegetable stir-fry with rice', calories: 630, protein: 46, carbs: 70, fat: 18, fiber: 9, note: 'A substantial recovery meal with lean protein and vegetables soon after work.' },
-                { id: 'early-dinner-salmon', name: 'Baked salmon, potatoes and broccoli', calories: 610, protein: 44, carbs: 56, fat: 23, fiber: 10, note: 'A balanced main meal early enough to protect the earlier bedtime needed for the next shift.' },
-                { id: 'early-dinner-fajita', name: 'Chicken fajita rice bowl', calories: 620, protein: 49, carbs: 69, fat: 17, fiber: 11, note: 'Chicken, peppers, beans and rice make a colourful post-shift recovery meal.' },
-                { id: 'early-dinner-turkey-pasta', name: 'Turkey tomato pasta with vegetables', calories: 600, protein: 47, carbs: 72, fat: 13, fiber: 12, note: 'A family-friendly batch meal that gives protein and carbohydrate without a very late dinner.' }
-            ]),
-            snack: Object.freeze([
-                { id: 'early-snack-banana-yogurt', name: 'High-protein yogurt with banana', calories: 265, protein: 24, carbs: 35, fat: 3, fiber: 4, note: 'Quick carbohydrate and protein for a short morning break.' },
-                { id: 'early-snack-eggs-oatcakes', name: 'Boiled eggs with oatcakes', calories: 270, protein: 18, carbs: 23, fat: 12, fiber: 4, note: 'A savoury option that can be packed the previous evening and eaten without reheating.' },
-                { id: 'early-snack-cottage-fruit', name: 'Cottage cheese with berries', calories: 235, protein: 25, carbs: 21, fat: 6, fiber: 5, note: 'A lighter protein-rich snack for the morning or the journey home.' },
-                { id: 'early-snack-shake-apple', name: 'Protein shake with an apple', calories: 250, protein: 27, carbs: 31, fat: 2, fiber: 5, note: 'A fast option to keep in reserve when an early shift delays the planned break.' }
-            ])
-        }),
-        day: Object.freeze({
-            breakfast: Object.freeze([
-                { id: 'day-breakfast-porridge', name: 'Protein porridge with banana and cinnamon', calories: 450, protein: 33, carbs: 55, fat: 11, fiber: 9, note: 'Slow-release carbohydrate with a clear protein serving for steadier energy.' },
-                { id: 'day-breakfast-eggs-toast', name: 'Scrambled eggs, tomatoes and wholegrain toast', calories: 430, protein: 30, carbs: 41, fat: 17, fiber: 8, note: 'A balanced cooked breakfast before the shift with protein, vegetables and wholegrains.' },
-                { id: 'day-breakfast-yogurt-muesli', name: 'Greek yogurt, muesli and berries', calories: 425, protein: 31, carbs: 53, fat: 10, fiber: 9, note: 'A quick no-cook breakfast that is easy to scale around the day‚Äôs calorie target.' },
-                { id: 'day-breakfast-bagel', name: 'Egg and smoked salmon wholemeal bagel', calories: 475, protein: 34, carbs: 49, fat: 16, fiber: 7, note: 'A higher-protein portable breakfast for a busy day shift.' }
-            ]),
-            lunch: Object.freeze([
-                { id: 'day-lunch-tuna-potato', name: 'Tuna jacket potato with mixed salad', calories: 530, protein: 40, carbs: 65, fat: 12, fiber: 10, note: 'A practical main meal that is filling without being difficult to prepare.' },
-                { id: 'day-lunch-chicken-quinoa', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'High in protein and vegetables, and suitable for preparing several portions.' },
-                { id: 'day-lunch-burrito-bowl', name: 'Lean beef and bean burrito bowl', calories: 625, protein: 45, carbs: 72, fat: 18, fiber: 15, note: 'A filling work-break meal with lean protein, beans, rice and colourful vegetables.' },
-                { id: 'day-lunch-falafel-chicken', name: 'Chicken and falafel wholegrain pitta', calories: 565, protein: 43, carbs: 61, fat: 17, fiber: 12, note: 'A portable pitta with salad and yogurt dressing for a lunch away from a microwave.' }
-            ]),
-            dinner: Object.freeze([
-                { id: 'day-dinner-chilli', name: 'Turkey and bean chilli with rice', calories: 650, protein: 50, carbs: 72, fat: 18, fiber: 13, note: 'A batch-cook dinner with protein, vegetables and high-fibre carbohydrate.' },
-                { id: 'day-dinner-cod', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced dinner with lean protein, colourful vegetables and carbohydrate.' },
-                { id: 'day-dinner-curry', name: 'Chicken and vegetable curry with basmati rice', calories: 635, protein: 48, carbs: 73, fat: 17, fiber: 11, note: 'A batch-friendly evening meal that can be portioned to the current calorie goal.' },
-                { id: 'day-dinner-bolognese', name: 'Lean beef bolognese with wholewheat pasta', calories: 640, protein: 46, carbs: 76, fat: 17, fiber: 13, note: 'A familiar high-protein dinner with extra vegetables and wholewheat pasta.' }
-            ]),
-            snack: Object.freeze([
-                { id: 'day-snack-cottage-cheese', name: 'Cottage cheese, apple and oatcakes', calories: 285, protein: 25, carbs: 28, fat: 8, fiber: 5, note: 'A portable snack that adds protein without relying on sweets or pastries.' },
-                { id: 'day-snack-yogurt', name: 'High-protein yogurt with berries', calories: 220, protein: 24, carbs: 24, fat: 3, fiber: 5, note: 'A simple chilled snack for the gap between lunch and the end of the shift.' },
-                { id: 'day-snack-hummus', name: 'Hummus, vegetable sticks and turkey slices', calories: 280, protein: 22, carbs: 24, fat: 11, fiber: 7, note: 'A savoury snack with crunch, fibre and a stronger protein contribution.' },
-                { id: 'day-snack-shake', name: 'Protein shake with a small banana', calories: 245, protein: 27, carbs: 30, fat: 2, fiber: 4, note: 'A convenient option for a busy afternoon or before training after work.' }
-            ])
-        }),
-        off: Object.freeze({
-            breakfast: Object.freeze([
-                { id: 'off-breakfast-eggs', name: 'Eggs, avocado and wholegrain toast', calories: 480, protein: 30, carbs: 45, fat: 20, fiber: 10, note: 'A balanced cooked breakfast with protein, fibre and satisfying fats.' },
-                { id: 'off-breakfast-pancakes', name: 'Protein pancakes with yogurt and berries', calories: 465, protein: 37, carbs: 55, fat: 11, fiber: 8, note: 'A slower off-day breakfast that still provides a clear protein serving.' },
-                { id: 'off-breakfast-oats', name: 'Apple-cinnamon protein oats', calories: 445, protein: 33, carbs: 58, fat: 9, fiber: 11, note: 'A high-fibre breakfast to help return meal timing to the daytime.' },
-                { id: 'off-breakfast-shakshuka', name: 'Shakshuka with wholegrain toast', calories: 470, protein: 29, carbs: 50, fat: 18, fiber: 12, note: 'Eggs, tomatoes, peppers and toast make a vegetable-rich off-day meal.' }
-            ]),
-            lunch: Object.freeze([
-                { id: 'off-lunch-quinoa', name: 'Chicken and quinoa rainbow salad', calories: 550, protein: 47, carbs: 54, fat: 16, fiber: 11, note: 'High in protein and vegetables, and suitable for preparing several portions.' },
-                { id: 'off-lunch-omelette', name: 'Chicken and vegetable omelette with potatoes', calories: 570, protein: 45, carbs: 49, fat: 21, fiber: 9, note: 'A substantial daytime meal that works well before an off-day training session.' },
-                { id: 'off-lunch-salmon-pitta', name: 'Salmon and salad wholegrain pitta', calories: 540, protein: 39, carbs: 51, fat: 19, fiber: 9, note: 'A quick lunch with oily fish, salad and a wholegrain carbohydrate source.' },
-                { id: 'off-lunch-lentil-bowl', name: 'Lentil, chicken and roasted vegetable bowl', calories: 585, protein: 46, carbs: 63, fat: 16, fiber: 17, note: 'A high-fibre meal-prep bowl for daytime eating on a rest day.' }
-            ]),
-            dinner: Object.freeze([
-                { id: 'off-dinner-cod', name: 'Baked cod, sweet potato and greens', calories: 585, protein: 48, carbs: 62, fat: 16, fiber: 12, note: 'A balanced dinner with lean protein, colourful vegetables and carbohydrate.' },
-                { id: 'off-dinner-roast-chicken', name: 'Roast chicken, potatoes and vegetables', calories: 640, protein: 52, carbs: 65, fat: 19, fiber: 11, note: 'A balanced family meal that can also provide prepared portions for upcoming shifts.' },
-                { id: 'off-dinner-beef-stew', name: 'Lean beef and vegetable stew', calories: 590, protein: 47, carbs: 58, fat: 18, fiber: 13, note: 'A batch-cook dinner with protein, root vegetables and beans.' },
-                { id: 'off-dinner-tofu-curry', name: 'Tofu and chickpea curry with rice', calories: 620, protein: 32, carbs: 78, fat: 20, fiber: 16, note: 'A plant-based dinner with tofu, pulses and vegetables for protein and fibre.' }
-            ]),
-            snack: Object.freeze([
-                { id: 'off-snack-smoothie', name: 'Protein berry smoothie with oats', calories: 320, protein: 30, carbs: 36, fat: 6, fiber: 8, note: 'Milk or a fortified alternative, protein, berries and oats blended together.' },
-                { id: 'off-snack-yogurt-nuts', name: 'Greek yogurt with fruit and walnuts', calories: 285, protein: 24, carbs: 25, fat: 11, fiber: 5, note: 'A filling snack that combines protein, fruit and a measured portion of nuts.' },
-                { id: 'off-snack-tuna-oatcakes', name: 'Tuna and cucumber oatcakes', calories: 265, protein: 25, carbs: 24, fat: 8, fiber: 5, note: 'A savoury high-protein option for an afternoon break.' },
-                { id: 'off-snack-chocolate-yogurt', name: 'Chocolate protein yogurt pot', calories: 250, protein: 27, carbs: 28, fat: 4, fiber: 4, note: 'Greek yogurt, cocoa, berries and a little granola for a sweeter planned option.' }
-            ])
-        })
-    });
-
-    function dietaryMeal(id, name, calories, protein, carbs, fat, fiber, note, ingredients, kind, allergens) {
-        return Object.freeze({
-            id, name, calories, protein, carbs, fat, fiber, note,
-            ingredients: String(ingredients || '').split('|').filter(Boolean),
-            kind: kind || 'bowl',
-            allergens: String(allergens || '').split('|').filter(Boolean)
-        });
-    }
-
-    const DIETARY_MEAL_IDEAS = Object.freeze({
-        vegan: Object.freeze({
-            breakfast: Object.freeze([
-                dietaryMeal('vegan-breakfast-overnight-oats', 'Vegan protein overnight oats with berries', 455, 32, 59, 10, 12, 'Prepare before sleep for a ready-to-eat first meal after waking.', '60g rolled oats|250ml fortified soy milk|30g pea protein|100g mixed berries|10g chia seeds', 'overnight', 'soy|gluten'),
-                dietaryMeal('vegan-breakfast-tofu-wrap', 'Tofu scramble and spinach breakfast wrap', 440, 31, 43, 16, 9, 'Portable plant protein for an early start or the first meal after waking.', '180g firm tofu|1 wholegrain wrap|2 handfuls spinach|1 chopped tomato|Turmeric, pepper and 1 tsp oil', 'wrap', 'soy|gluten'),
-                dietaryMeal('vegan-breakfast-berry-smoothie', 'Berry, banana and pea-protein smoothie', 420, 34, 55, 8, 10, 'A fast option when appetite is low after waking; blend immediately before drinking.', '300ml fortified soy milk|30g pea protein|1 small banana|120g frozen berries|30g rolled oats', 'blend', 'soy|gluten'),
-                dietaryMeal('vegan-breakfast-chia-pot', 'Chocolate chia and soy-protein pot', 405, 31, 35, 17, 14, 'A chilled make-ahead breakfast with fibre and a deliberate protein serving.', '250ml fortified soy milk|30g chia seeds|25g chocolate plant protein|100g strawberries|1 tsp cocoa', 'overnight', 'soy'),
-                dietaryMeal('vegan-breakfast-quinoa-porridge', 'Apple-cinnamon quinoa protein porridge', 450, 30, 61, 10, 11, 'Warm or reheat after waking and portion into a lidded pot for work.', '180g cooked quinoa|250ml fortified soy milk|25g pea protein|1 small apple|Cinnamon', 'simmer', 'soy')
-            ]),
-            lunch: Object.freeze([
-                dietaryMeal('vegan-lunch-tofu-rice', 'Ginger tofu and brown-rice vegetable bowl', 555, 34, 68, 17, 13, 'A batch-cook work meal with soy protein, vegetables and steady carbohydrate.', '180g firm tofu|160g cooked brown rice|200g mixed vegetables|1 tbsp reduced-salt soy sauce|Ginger and 1 tsp oil', 'stirfry', 'soy'),
-                dietaryMeal('vegan-lunch-lentil-quinoa', 'Lentil and quinoa rainbow salad', 520, 28, 70, 14, 18, 'Eat cold on a short break; add the dressing only when serving.', '180g cooked lentils|140g cooked quinoa|200g cucumber, tomato and peppers|40g spinach|Lemon and 1 tbsp olive oil', 'bowl', ''),
-                dietaryMeal('vegan-lunch-chickpea-pasta', 'Chickpea pasta with peas and tomato pesto', 545, 32, 67, 16, 17, 'High-protein pasta that reheats well or works as a cold lunch pot.', '85g dry chickpea pasta|100g peas|150g cherry tomatoes|25g dairy-free pesto|Rocket leaves', 'simmer', 'nuts'),
-                dietaryMeal('vegan-lunch-seitan-fajita', 'Seitan fajita wholegrain wrap', 525, 39, 57, 14, 11, 'A portable lunch for unpredictable breaks with vegetables and plant protein.', '160g seitan strips|1 large wholegrain wrap|150g peppers and onion|60g black beans|Salsa and lime', 'wrap', 'gluten'),
-                dietaryMeal('vegan-lunch-tempeh-noodles', 'Tempeh and edamame noodle box', 570, 38, 64, 18, 15, 'Prepare two portions at once and chill promptly for the next shift.', '150g tempeh|140g cooked wholewheat noodles|80g edamame|180g stir-fry vegetables|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy|gluten')
-            ]),
-            dinner: Object.freeze([
-                dietaryMeal('vegan-dinner-tofu-curry', 'Tofu and chickpea vegetable curry with rice', 590, 34, 75, 18, 17, 'A reliable batch dinner that can become tomorrow‚Äôs packed shift meal.', '170g firm tofu|100g cooked chickpeas|150g cooked basmati rice|220g mixed vegetables|120ml light coconut milk and curry spices', 'simmer', 'soy'),
-                dietaryMeal('vegan-dinner-lentil-chilli', 'Three-bean lentil chilli with brown rice', 575, 31, 84, 12, 23, 'Batch-cook, cool quickly and freeze individual portions for busy weeks.', '220g mixed cooked beans and lentils|150g cooked brown rice|200g chopped tomatoes|150g peppers and onion|Chilli, cumin and paprika', 'simmer', ''),
-                dietaryMeal('vegan-dinner-seitan-stirfry', 'Seitan vegetable stir-fry with noodles', 560, 42, 62, 15, 12, 'A high-protein plant-based recovery meal ready in around 20 minutes.', '170g seitan strips|140g cooked wholewheat noodles|250g stir-fry vegetables|1 tbsp reduced-salt soy sauce|Garlic, ginger and 1 tsp oil', 'stirfry', 'soy|gluten'),
-                dietaryMeal('vegan-dinner-chickpea-tagine', 'Chickpea and apricot tagine with quinoa', 565, 27, 83, 15, 20, 'A fibre-rich evening meal; keep dried fruit measured for predictable nutrition.', '220g cooked chickpeas|150g cooked quinoa|200g tomatoes and vegetables|25g dried apricots|Cumin, cinnamon and 1 tsp oil', 'simmer', ''),
-                dietaryMeal('vegan-dinner-bean-traybake', 'Black-bean sweet-potato traybake', 540, 26, 78, 15, 20, 'Roast extra portions on an off day and reheat until piping hot.', '220g black beans|250g sweet potato cubes|200g peppers and courgette|60g avocado|Paprika, lime and 1 tsp oil', 'bake', '')
-            ]),
-            snack: Object.freeze([
-                dietaryMeal('vegan-snack-soy-yogurt', 'High-protein soy yogurt with berries', 235, 22, 24, 7, 7, 'A chilled, portioned snack for the middle of a shift.', '250g high-protein soy yogurt|100g berries|10g pumpkin seeds', 'snack', 'soy'),
-                dietaryMeal('vegan-snack-edamame', 'Edamame, cucumber and chilli-lime pot', 245, 21, 22, 9, 11, 'A savoury plant-protein snack that can be eaten cold.', '180g cooked edamame|100g cucumber|Lime juice|Chilli flakes and a pinch of salt', 'snack', 'soy'),
-                dietaryMeal('vegan-snack-hummus', 'Hummus, vegetable sticks and seed crackers', 270, 12, 31, 12, 10, 'Pre-portion the hummus so a quick break still fits the plan.', '70g hummus|200g carrot, cucumber and pepper sticks|25g seed crackers', 'snack', 'sesame'),
-                dietaryMeal('vegan-snack-protein-shake', 'Pea-protein shake with a small banana', 250, 28, 32, 3, 5, 'Keep a measured dry serving at work for a reliable backup.', '30g pea protein|300ml water or fortified plant milk|1 small banana|Ice and cinnamon', 'blend', ''),
-                dietaryMeal('vegan-snack-roasted-chickpeas', 'Roasted chickpeas with an apple', 260, 13, 42, 6, 11, 'Crunchy, portable and easy to batch-portion for several shifts.', '120g cooked chickpeas|1 small apple|Paprika and garlic powder|1 tsp olive oil', 'bake', '')
-            ])
-        }),
-        vegetarian: Object.freeze({
-            breakfast: Object.freeze([
-                dietaryMeal('vegetarian-breakfast-porridge', 'Protein porridge with banana and cinnamon', 440, 34, 56, 10, 9, 'A repeatable hot breakfast before a day or early shift.', '60g rolled oats|250ml semi-skimmed milk|30g whey or vegetarian protein|1 small banana|Cinnamon', 'simmer', 'dairy|gluten'),
-                dietaryMeal('vegetarian-breakfast-egg-wrap', 'Egg, spinach and bean breakfast wrap', 445, 30, 45, 17, 10, 'Cook ahead, chill promptly and reheat for a fast shift breakfast.', '2 eggs|1 wholegrain wrap|80g black beans|2 handfuls spinach|Salsa', 'wrap', 'egg|gluten'),
-                dietaryMeal('vegetarian-breakfast-yogurt', 'Greek yogurt, muesli and berry bowl', 425, 32, 52, 10, 9, 'No-cook and easy to portion the night before.', '250g Greek yogurt|45g no-added-sugar muesli|120g berries|10g mixed seeds', 'snack', 'dairy|gluten'),
-                dietaryMeal('vegetarian-breakfast-cottage-toast', 'Cottage cheese, tomato and wholegrain toast', 410, 32, 43, 12, 8, 'A savoury breakfast with little preparation and a clear protein anchor.', '220g cottage cheese|2 slices wholegrain toast|150g tomatoes|Black pepper and herbs', 'snack', 'dairy|gluten'),
-                dietaryMeal('vegetarian-breakfast-pancakes', 'Oat protein pancakes with yogurt and berries', 465, 37, 54, 12, 9, 'Cook a batch on an off day and reheat individual portions.', '60g oats|2 eggs|25g whey or vegetarian protein|100g Greek yogurt|100g berries', 'skillet', 'dairy|egg|gluten')
-            ]),
-            lunch: Object.freeze([
-                dietaryMeal('vegetarian-lunch-halloumi', 'Halloumi and quinoa rainbow salad', 555, 31, 52, 25, 12, 'Pack the dressing separately to keep the vegetables crisp.', '100g halloumi|150g cooked quinoa|220g salad vegetables|50g chickpeas|Lemon and herbs', 'bowl', 'dairy'),
-                dietaryMeal('vegetarian-lunch-egg-lentil', 'Egg and lentil potato salad', 520, 29, 58, 19, 15, 'A filling cold lunch that can be prepared for two shifts.', '2 boiled eggs|180g cooked lentils|200g baby potatoes|150g green vegetables|Mustard-yogurt dressing', 'bowl', 'egg|dairy'),
-                dietaryMeal('vegetarian-lunch-mozzarella-pasta', 'Mozzarella, bean and tomato pasta pot', 545, 33, 67, 17, 15, 'Works warm or cold and travels well in a sealed container.', '75g dry wholewheat pasta|100g reduced-fat mozzarella|100g cannellini beans|180g tomatoes and spinach|Basil', 'simmer', 'dairy|gluten'),
-                dietaryMeal('vegetarian-lunch-tofu-burrito', 'Tofu and black-bean burrito bowl', 560, 34, 70, 17, 17, 'Batch the rice, tofu and beans, then add fresh salsa at serving.', '160g firm tofu|130g cooked brown rice|100g black beans|180g peppers and corn|Salsa and lime', 'bowl', 'soy'),
-                dietaryMeal('vegetarian-lunch-cottage-potato', 'Cottage cheese jacket potato with salad', 475, 32, 66, 9, 10, 'A simple microwave-friendly work lunch with a high-protein topping.', '1 medium baked potato|220g cottage cheese|200g mixed salad|Chives and black pepper', 'bake', 'dairy')
-            ]),
-            dinner: Object.freeze([
-                dietaryMeal('vegetarian-dinner-lentil-bolognese', 'Lentil bolognese with wholewheat pasta', 585, 32, 82, 13, 21, 'Make several portions and freeze the sauce separately.', '200g cooked lentils|75g dry wholewheat pasta|220g chopped tomatoes and vegetables|15g vegetarian hard cheese|Italian herbs', 'simmer', 'dairy|gluten'),
-                dietaryMeal('vegetarian-dinner-paneer-curry', 'Paneer and vegetable curry with basmati rice', 620, 34, 66, 24, 12, 'A substantial post-shift meal; measure the paneer and oil.', '140g reduced-fat paneer|150g cooked basmati rice|250g mixed vegetables|150g tomato curry sauce|Curry spices', 'simmer', 'dairy'),
-                dietaryMeal('vegetarian-dinner-bean-chilli', 'Bean chilli with rice and Greek yogurt', 570, 30, 82, 12, 22, 'A high-fibre batch meal for off days and work containers.', '240g mixed beans|140g cooked brown rice|220g tomatoes, peppers and onion|80g Greek yogurt|Chilli and cumin', 'simmer', 'dairy'),
-                dietaryMeal('vegetarian-dinner-tofu-noodles', 'Tofu and edamame vegetable noodles', 565, 37, 63, 18, 15, 'Fast enough for after work and suitable for next-day leftovers.', '170g firm tofu|140g cooked wholewheat noodles|80g edamame|220g stir-fry vegetables|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy|gluten'),
-                dietaryMeal('vegetarian-dinner-omelette', 'Mushroom omelette with roast potatoes and greens', 550, 35, 48, 23, 11, 'A balanced off-day or post-early-shift dinner.', '3 eggs|150g mushrooms and spinach|35g reduced-fat cheese|220g potatoes|180g green vegetables', 'skillet', 'egg|dairy')
-            ]),
-            snack: Object.freeze([
-                dietaryMeal('vegetarian-snack-yogurt', 'Greek yogurt with berries and pumpkin seeds', 250, 24, 24, 8, 6, 'Portion into a chilled pot before the shift.', '250g Greek yogurt|100g berries|10g pumpkin seeds', 'snack', 'dairy'),
-                dietaryMeal('vegetarian-snack-cottage', 'Cottage cheese with pineapple', 240, 26, 25, 5, 3, 'A quick high-protein chilled snack.', '220g cottage cheese|120g pineapple pieces|Cinnamon', 'snack', 'dairy'),
-                dietaryMeal('vegetarian-snack-eggs', 'Boiled eggs, tomatoes and oatcakes', 275, 19, 23, 12, 5, 'Prepare the eggs ahead and keep chilled until the break.', '2 boiled eggs|3 oatcakes|120g cherry tomatoes|Black pepper', 'snack', 'egg|gluten'),
-                dietaryMeal('vegetarian-snack-shake', 'Protein shake with a small banana', 250, 28, 31, 3, 4, 'A measured backup when a work break changes unexpectedly.', '30g whey or vegetarian protein|300ml water or milk|1 small banana|Ice', 'blend', 'dairy'),
-                dietaryMeal('vegetarian-snack-hummus', 'Hummus, vegetable sticks and mini pitta', 280, 12, 38, 10, 9, 'A portable savoury option; portion the hummus rather than eating from the tub.', '70g hummus|180g vegetable sticks|1 mini wholemeal pitta', 'snack', 'sesame|gluten')
-            ])
-        }),
-        ketogenic: Object.freeze({
-            breakfast: Object.freeze([
-                dietaryMeal('keto-breakfast-eggs-avocado', 'Eggs, avocado and spinach skillet', 455, 29, 12, 34, 9, 'A low-carbohydrate first meal with vegetables and a measured fat serving.', '3 eggs|100g avocado|100g spinach and tomatoes|1 tsp olive oil|Pepper and herbs', 'skillet', 'egg'),
-                dietaryMeal('keto-breakfast-yogurt-chia', 'Greek yogurt, chia and berry bowl', 395, 31, 18, 23, 10, 'Use unsweetened yogurt and keep the berry portion measured.', '250g unsweetened Greek yogurt|25g chia seeds|70g berries|10g pumpkin seeds', 'snack', 'dairy'),
-                dietaryMeal('keto-breakfast-tofu', 'Tofu, mushroom and spinach scramble', 410, 34, 14, 27, 8, 'A dairy- and egg-free lower-carbohydrate breakfast option.', '220g firm tofu|150g mushrooms|100g spinach|60g avocado|Turmeric and 1 tsp olive oil', 'skillet', 'soy'),
-                dietaryMeal('keto-breakfast-salmon', 'Smoked salmon, eggs and cucumber plate', 430, 36, 8, 28, 4, 'No-cook apart from the eggs and practical after a night shift.', '100g smoked salmon|2 boiled eggs|150g cucumber and tomatoes|60g avocado|Lemon and pepper', 'snack', 'fish|egg'),
-                dietaryMeal('keto-breakfast-cottage-walnut', 'Cottage cheese, walnuts and berries', 400, 33, 17, 24, 6, 'A chilled breakfast with a measured nut serving.', '250g full-fat cottage cheese|20g walnuts|70g berries|10g chia seeds', 'snack', 'dairy|nuts')
-            ]),
-            lunch: Object.freeze([
-                dietaryMeal('keto-lunch-chicken-salad', 'Chicken, avocado and crunchy salad bowl', 515, 48, 15, 31, 10, 'Pack dressing separately and chill promptly.', '170g cooked chicken breast|100g avocado|250g mixed salad vegetables|20g seeds|Lemon and 1 tbsp olive oil', 'bowl', ''),
-                dietaryMeal('keto-lunch-tuna-avocado', 'Tuna and avocado lettuce cups', 465, 42, 12, 28, 8, 'A cold work lunch that does not need a microwave.', '150g drained tuna|90g avocado|6 large lettuce leaves|150g cucumber and tomato|Lemon-yogurt or olive-oil dressing', 'wrap', 'fish'),
-                dietaryMeal('keto-lunch-tofu-cauliflower', 'Tofu and cauliflower-rice bowl', 470, 34, 21, 28, 12, 'Cook ahead and reheat until piping hot.', '200g firm tofu|250g cauliflower rice|220g green vegetables|20g pumpkin seeds|1 tbsp reduced-salt soy sauce', 'stirfry', 'soy'),
-                dietaryMeal('keto-lunch-beef-courgetti', 'Lean beef and courgetti tomato bowl', 500, 45, 20, 28, 9, 'Keep courgetti separate until reheating so it stays firm.', '170g lean beef mince|250g courgetti|180g tomato and mushrooms|15g vegetarian hard cheese|Italian herbs', 'skillet', 'dairy'),
-                dietaryMeal('keto-lunch-halloumi-egg', 'Halloumi, egg and green salad', 520, 35, 13, 37, 8, 'A vegetarian lower-carbohydrate lunch with measured cheese.', '100g halloumi|2 boiled eggs|250g leafy salad and cucumber|80g avocado|Lemon dressing', 'bowl', 'dairy|egg')
-            ]),
-            dinner: Object.freeze([
-                dietaryMeal('keto-dinner-salmon', 'Baked salmon with broccoli and herb butter', 555, 44, 16, 36, 9, 'A simple tray meal for after work or an off day.', '180g salmon fillet|250g broccoli and courgette|100g cauliflower mash|10g herb butter|Lemon and pepper', 'bake', 'fish|dairy'),
-                dietaryMeal('keto-dinner-chicken-curry', 'Chicken and cauliflower coconut curry', 540, 47, 20, 31, 10, 'Batch-cook the curry and add fresh greens when reheating.', '180g chicken breast|250g cauliflower and green vegetables|150ml light coconut milk|150g cauliflower rice|Curry spices', 'simmer', ''),
-                dietaryMeal('keto-dinner-beef-skillet', 'Beef, mushroom and green-bean skillet', 535, 46, 18, 32, 9, 'A one-pan meal that is quick enough for a post-shift dinner.', '180g lean beef strips|180g mushrooms|180g green beans|80g cauliflower rice|Garlic and 1 tbsp olive oil', 'skillet', ''),
-                dietaryMeal('keto-dinner-tofu-coconut', 'Tofu coconut curry with greens', 520, 33, 23, 34, 12, 'A plant-based lower-carbohydrate dinner; measure coconut milk.', '220g firm tofu|250g broccoli, spinach and courgette|150ml light coconut milk|150g cauliflower rice|Curry spices', 'simmer', 'soy'),
-                dietaryMeal('keto-dinner-turkey-courgetti', 'Turkey courgetti bolognese', 485, 48, 19, 25, 9, 'Batch the sauce and add courgetti only for the final few minutes.', '180g lean turkey mince|300g courgetti|200g tomato, celery and mushrooms|15g hard cheese|Italian herbs', 'simmer', 'dairy')
-            ]),
-            snack: Object.freeze([
-                dietaryMeal('keto-snack-eggs', 'Boiled eggs with cucumber and tomatoes', 245, 18, 9, 16, 3, 'Prepare and chill the eggs before the shift.', '2 boiled eggs|150g cucumber and tomatoes|Pepper and herbs', 'snack', 'egg'),
-                dietaryMeal('keto-snack-yogurt', 'Unsweetened Greek yogurt with chia', 260, 24, 12, 13, 8, 'A portioned chilled snack with no added sugar.', '220g unsweetened Greek yogurt|20g chia seeds|50g berries', 'snack', 'dairy'),
-                dietaryMeal('keto-snack-tuna-boats', 'Tuna cucumber boats', 235, 31, 7, 10, 3, 'Mix just before the shift and keep chilled.', '120g drained tuna|1 large cucumber|40g Greek yogurt or mayonnaise|Lemon and pepper', 'snack', 'fish|dairy'),
-                dietaryMeal('keto-snack-edamame', 'Edamame with chilli and lime', 230, 20, 18, 9, 9, 'A plant-based savoury snack that works cold.', '170g cooked edamame|Lime juice|Chilli flakes and a pinch of salt', 'snack', 'soy'),
-                dietaryMeal('keto-snack-cheese-olives', 'Cheese, olives and pepper strips', 280, 19, 9, 20, 4, 'Pre-portion rather than grazing from the pack.', '70g reduced-fat cheese|40g olives|150g pepper strips', 'snack', 'dairy')
-            ])
-        })
-    });
-
-    function dietaryMealAllergens(idea) {
-        if (typeof structuredMealSafety === 'function') return structuredMealSafety(idea).allergens.slice();
-        const allergens = new Set(Array.isArray(idea && idea.allergens) ? idea.allergens : []);
-        const text = `${idea && idea.name || ''} ${idea && idea.note || ''} ${(idea && idea.ingredients || []).join(' ')}`.toLowerCase();
-        if (/\b(yogurts?|yoghurts?|cheeses?|milk|whey|paneer|halloumi|butter|mozzarella|pesto)\b/.test(text)) allergens.add('dairy');
-        if (/\b(oats?|oatcakes?|bread|toast|wraps?|pittas?|pastas?|noodles?|couscous|bagels?|muesli|granola|seitan|wheat|rolls?|pancakes?)\b/.test(text)) allergens.add('gluten');
-        if (/\b(nuts?|almonds?|walnuts?|peanuts?|cashews?|hazelnuts?|pesto)\b/.test(text)) allergens.add('nuts');
-        if (/\b(eggs?|omelettes?|shakshuka)\b/.test(text)) allergens.add('egg');
-        if (/\b(fish|salmon|tuna|cod|seafood|shellfish|prawn|shrimp)\b/.test(text)) allergens.add('fish');
-        if (/\b(soy|soya|tofu|tempeh|edamame)\b/.test(text)) allergens.add('soy');
-        if (/\b(sesame|tahini|hummus)\b/.test(text)) allergens.add('sesame');
-        return Array.from(allergens);
-    }
-
-    function mealMatchesDietaryRequirements(idea, profileInput) {
-        const profile = profileInput || dietaryProfile();
-        const allergens = dietaryMealAllergens(idea);
-        const exclusions = {
-            dairy_free: 'dairy',
-            gluten_free: 'gluten',
-            nut_free: 'nuts',
-            egg_free: 'egg',
-            fish_free: 'fish',
-            soy_free: 'soy',
-            sesame_free: 'sesame'
-        };
-        return !(profile.requirements || []).some(requirement =>
-            exclusions[requirement] && allergens.includes(exclusions[requirement])
-        );
-    }
-
-    function calorieDeficitPortion(idea) {
-        const factor = 0.85;
-        return Object.assign({}, idea, {
-            calories: Math.round(idea.calories * factor),
-            protein: Math.round(idea.protein * factor),
-            carbs: Math.round(idea.carbs * factor),
-            fat: Math.round(idea.fat * factor),
-            fiber: Math.round(idea.fiber * factor),
-            originalCalories: idea.calories,
-            portionAdjusted: true,
-            note: `${idea.note} Calorie-deficit view uses about 85% of the standard suggested portion.`
-        });
-    }
-
-    function personalisedShiftMealIdeas(type, mealType) {
-        const profile = dietaryProfile();
-        const shiftIdeas = SHIFT_MEAL_IDEAS[type] || SHIFT_MEAL_IDEAS.off;
-        const baseIdeas = (shiftIdeas && shiftIdeas[mealType]) || [];
-        let ideas;
-        if (profile.completed && profile.pattern !== 'balanced') {
-            ideas = ((DIETARY_MEAL_IDEAS[profile.pattern] || {})[mealType] || []).slice();
-        } else {
-            const extra = (DIETARY_MEAL_IDEAS.vegan[mealType] || [])[0];
-            ideas = baseIdeas.concat(extra ? [extra] : []);
-        }
-        ideas = ideas.filter(idea => mealMatchesDietaryRequirements(idea, profile));
-        if ((profile.approaches || []).includes('calorie_deficit')) {
-            ideas = ideas.map(calorieDeficitPortion).sort((a, b) => a.calories - b.calories);
-        }
-        return ideas;
-    }
-
-
-    const SHIFT_MEAL_TIMINGS = Object.freeze({
-        night: { breakfast: 'After waking', lunch: 'About 2h before shift', dinner: 'Early in the shift', snack: 'Mid-shift if hungry' },
-        early: { breakfast: 'Before leaving for work', lunch: 'Mid-shift break', dinner: 'Soon after work', snack: 'Morning break' },
-        day: { breakfast: 'Before the shift', lunch: 'Main work break', dinner: 'After the shift', snack: 'Between meals' },
-        off: { breakfast: 'Within 1h of waking', lunch: 'Around midday', dinner: 'Early evening', snack: 'Between meals if hungry' }
-    });
-    const SHIFT_MEAL_ROTATION = Object.create(null);
-
-    function shiftMealIdeasFor(type, mealType) {
-        return personalisedShiftMealIdeas(type, mealType);
-    }
-
-
-    function shiftMealTimingLabel(type, mealType) {
-        const base = (SHIFT_MEAL_TIMINGS[type] || SHIFT_MEAL_TIMINGS.off)[mealType] || '';
-        const approaches = dietaryProfile().approaches || [];
-        if (!approaches.includes('intermittent_fasting')) return base;
-        return type === 'night' ? `${base} ¬∑ alertness first` : `${base} ¬∑ inside your eating window`;
-    }
-
-    function shiftMealIdeaPattern(idea) {
-        const id = String(idea && idea.id || '');
-        if (id.startsWith('vegan-')) return 'Vegan';
-        if (id.startsWith('vegetarian-')) return 'Vegetarian';
-        if (id.startsWith('keto-')) return 'Ketogenic';
-        return 'Balanced';
-    }
-
-    function shiftMealIdeaBadgesHTML(idea) {
-        const badges = [shiftMealIdeaPattern(idea)];
-        if (idea && idea.portionAdjusted) badges.push('Calorie-deficit portion');
-        return badges.map(label => `<span class="text-[9px] font-black uppercase bg-orange-50 text-orange-800 border border-orange-200 px-2 py-1 rounded-full">${escapeHtml(label)}</span>`).join('');
-    }
-
-    function shiftMealIdeaCardHTML(type, mealType, dateKey) {
-        const ideas = shiftMealIdeasFor(type, mealType);
-        if (!ideas.length) {
-            return `<div class="bg-amber-50 border border-amber-200 p-4 rounded-xl">
-                <p class="font-black text-sm text-amber-900">No automatic matches for these requirements</p>
-                <p class="text-xs text-amber-800 mt-1">Update the dietary plan or use a meal you know is safe. VFIT will not bypass a selected exclusion.</p>
-                <button onclick="openDietaryProfile()" class="mt-3 text-xs font-black text-amber-900 underline">Review dietary requirements</button>
-            </div>`;
-        }
-        const key = type + ':' + mealType;
-        const index = ((Number(SHIFT_MEAL_ROTATION[key]) || 0) % ideas.length + ideas.length) % ideas.length;
-        const idea = ideas[index];
-        const timing = shiftMealTimingLabel(type, mealType);
-        const loggedCount = (state.dailyMeals || []).filter(meal => meal.date === dateKey && meal.shiftMealIdeaId === idea.id).length;
-        return `
-            <div data-shift-meal-id="${idea.id}" data-shift-meal-option="${index + 1}">
-                <div class="flex items-center justify-between gap-2 mb-3"><button onclick="rotateShiftMealIdea('${type}', '${mealType}', -1, '${dateKey}')" class="w-9 h-9 rounded-xl bg-white font-black" aria-label="Previous ${mealType} idea">‚Äπ</button><span class="text-[10px] font-black uppercase text-slate-400">Choice ${index + 1} of ${ideas.length}</span><button onclick="rotateShiftMealIdea('${type}', '${mealType}', 1, '${dateKey}')" class="w-9 h-9 rounded-xl bg-white font-black" aria-label="Next ${mealType} idea">‚Ä∫</button></div>
-                <p class="text-[10px] font-black uppercase text-orange-500">${escapeHtml(timing)}</p><h4 class="font-black text-sm mt-1">${escapeHtml(idea.name)}</h4>
-                <div class="flex flex-wrap gap-1.5 mt-2">${shiftMealIdeaBadgesHTML(idea)}</div>
-                <div class="flex gap-2 mt-2"><span class="bg-white px-2 py-1 rounded-lg text-xs font-black">${idea.calories} kcal</span><span class="bg-white px-2 py-1 rounded-lg text-xs font-black text-indigo-600">${idea.protein}g protein</span></div>
-                <p class="text-xs text-slate-500 mt-2">${escapeHtml(idea.note)}</p>
-                <button onclick="openShiftMealDetail('${type}', '${mealType}', ${index}, '${dateKey}')" class="w-full mt-3 bg-orange-600 text-white p-3 rounded-xl font-black text-xs active:scale-[0.98] flex items-center justify-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> View Recipe &amp; More Meals</button>
-                <button onclick="addShiftMealIdea('${type}', '${mealType}', ${index}, '${dateKey}')" class="w-full mt-2 bg-slate-900 text-white p-3 rounded-xl font-bold text-xs active:scale-[0.98]">${loggedCount ? `‚úì Added ${loggedCount} ¬∑ Add Again` : '+ Add to This Day‚Äôs Diary'}</button>
-            </div>`;
-    }
-
-    function shiftMealCategoryHTML(type, mealType, dateKey) {
-        const icons = { breakfast: 'üåÖ', lunch: '‚òÄÔ∏è', dinner: 'üåô', snack: 'üçé' };
-        const optionCount = shiftMealIdeasFor(type, mealType).length;
-        return `<section class="bg-slate-50 border border-slate-100 rounded-2xl p-4" data-shift-meal-category="${mealType}" data-shift-meal-options="${optionCount}"><h4 class="font-black capitalize">${icons[mealType]} ${mealType} ¬∑ ${optionCount} compatible choice${optionCount === 1 ? '' : 's'}</h4><div id="shift-meal-option-${type}-${mealType}" class="mt-3">${shiftMealIdeaCardHTML(type, mealType, dateKey)}</div></section>`;
-    }
-
-    function shiftMealIdeasHTML(type, dateKey) {
-        const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
-        const total = mealTypes.reduce((sum, mealType) => sum + shiftMealIdeasFor(type, mealType).length, 0);
-        const profile = dietaryProfile();
-        return `
-            <div data-shift-meal-ideas="${type}">
-                <div><div class="flex justify-between items-start gap-3 mb-4"><div><p class="text-xs text-slate-500">Choices reflect ${escapeHtml(dietaryPatternLabel(profile.pattern).toLowerCase())}${profile.requirements.length ? ' and selected exclusions' : ''}. Open any recipe to see every compatible meal, ingredients and step-by-step instructions.</p><div class="flex flex-wrap gap-1.5 mt-2">${profile.completed ? dietaryProfileBadgesHTML(profile) : '<span class="text-[10px] font-black text-orange-700">Complete Dietary Plan in Coaching for personalisation</span>'}</div></div><button onclick="openShiftDiaryFromPopup()" class="text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded-xl flex-shrink-0">View Diary</button></div>
-                <div class="space-y-3">${mealTypes.map(mealType => shiftMealCategoryHTML(type, mealType, dateKey)).join('')}</div>
-                <p class="text-[10px] text-slate-400 mt-3">Nutrition values are estimates per suggested portion. Check labels, allergens, certification and cooking temperatures yourself.</p></div>
-            </div>`;
-    }
-
-    function inferredShiftMealIngredients(idea) {
-        const name = String(idea && idea.name || '').toLowerCase();
-        if (name.includes('smoothie') || name.includes('shake')) {
-            return ['30g protein powder suitable for your diet', '250‚Äì300ml milk, fortified alternative or water', 'The fruit or flavouring named in the recipe', 'Ice, if wanted'];
-        }
-        if (name.includes('oat') || name.includes('porridge') || name.includes('muesli') || name.includes('granola')) {
-            return ['60g oats, muesli or granola as named', '250ml milk or a suitable fortified alternative', '25‚Äì30g protein powder or an equivalent protein serving', '100g fruit named in the recipe', 'Cinnamon or seeds, if suitable'];
-        }
-        if (name.includes('yogurt') || name.includes('yoghurt') || name.includes('cottage cheese')) {
-            return ['220‚Äì250g yogurt or cottage cheese named in the recipe', '100g fruit or vegetables named in the recipe', 'A measured 10‚Äì20g topping, if included', 'Seasoning to taste'];
-        }
-        if (name.includes('wrap') || name.includes('pitta') || name.includes('sandwich') || name.includes('bagel')) {
-            return ['1 wholegrain wrap, pitta, sandwich or bagel as named', '150g cooked protein filling or the equivalent shown', '2 handfuls salad or cooked vegetables', '1 tbsp suitable sauce or dressing'];
-        }
-        const proteinOptions = [
-            ['chicken', '160‚Äì180g cooked chicken'],
-            ['turkey', '160‚Äì180g cooked turkey'],
-            ['beef', '160‚Äì180g lean beef'],
-            ['salmon', '170‚Äì180g salmon'],
-            ['tuna', '140‚Äì150g drained tuna'],
-            ['cod', '180g cod'],
-            ['tofu', '180‚Äì220g firm tofu'],
-            ['lentil', '180‚Äì220g cooked lentils'],
-            ['bean', '180‚Äì220g cooked beans'],
-            ['chickpea', '180‚Äì220g cooked chickpeas'],
-            ['egg', '2‚Äì3 eggs']
-        ];
-        const carbohydrateOptions = [
-            ['rice', '140‚Äì160g cooked rice'],
-            ['quinoa', '140‚Äì160g cooked quinoa'],
-            ['pasta', '70‚Äì80g dry pasta'],
-            ['noodle', '140‚Äì160g cooked noodles'],
-            ['potato', '220‚Äì250g potato or sweet potato'],
-            ['couscous', '150g cooked couscous']
-        ];
-        const protein = (proteinOptions.find(([token]) => name.includes(token)) || [null, '150‚Äì200g of the protein named in the recipe'])[1];
-        const carbohydrate = (carbohydrateOptions.find(([token]) => name.includes(token)) || [null, 'A portion of the grain, potato or pulse named in the recipe'])[1];
-        return [protein, carbohydrate, '200‚Äì250g vegetables named in the recipe', '1 tsp oil plus herbs or spices'];
-    }
-
-    function shiftMealRecipeKind(idea) {
-        if (idea && idea.kind) return idea.kind;
-        const name = String(idea && idea.name || '').toLowerCase();
-        if (name.includes('overnight')) return 'overnight';
-        if (name.includes('smoothie') || name.includes('shake')) return 'blend';
-        if (name.includes('wrap') || name.includes('pitta') || name.includes('sandwich') || name.includes('bagel')) return 'wrap';
-        if (name.includes('baked') || name.includes('roast') || name.includes('traybake') || name.includes('jacket')) return 'bake';
-        if (name.includes('stir-fry') || name.includes('noodle')) return 'stirfry';
-        if (name.includes('curry') || name.includes('chilli') || name.includes('soup') || name.includes('stew') || name.includes('bolognese')) return 'simmer';
-        if (name.includes('egg') || name.includes('omelette') || name.includes('shakshuka') || name.includes('pancake')) return 'skillet';
-        if (name.includes('yogurt') || name.includes('cottage cheese') || name.includes('oatcake')) return 'snack';
-        return 'bowl';
-    }
-
-    function shiftMealRecipeSteps(idea) {
-        const kind = shiftMealRecipeKind(idea);
-        const steps = {
-            overnight: ['Add the measured ingredients to a lidded container and stir thoroughly.', 'Cover and refrigerate for at least four hours or overnight.', 'Stir again, add the fresh topping and keep chilled until eaten.'],
-            blend: ['Measure every ingredient so the logged portion stays accurate.', 'Blend until smooth, adding a little more liquid only if needed.', 'Drink straight away or keep chilled in a sealed bottle for the shift.'],
-            wrap: ['Cook or warm the protein filling and vegetables; meat must be cooked through.', 'Warm the wrap or bread, then layer in the filling, salad and measured sauce.', 'Fold firmly, chill promptly if packing, and reheat only when suitable.'],
-            bake: ['Heat the oven to 200¬∞C / 180¬∞C fan and prepare the ingredients in even pieces.', 'Season, add the measured oil and bake until vegetables are tender and the protein is safely cooked through.', 'Portion with the remaining sides; cool leftovers quickly before refrigerating.'],
-            stirfry: ['Prepare every ingredient before heating the pan.', 'Cook the protein safely, add vegetables, then the cooked grain or noodles and measured sauce.', 'Stir-fry until piping hot and divide into the suggested portion.'],
-            simmer: ['Prepare the protein, vegetables and measured carbohydrate.', 'Cook aromatics and protein, add the sauce or stock, then simmer until everything is safely cooked and tender.', 'Add the cooked grain or side, portion, and cool any shift-prep servings quickly.'],
-            skillet: ['Prepare and measure the ingredients before heating a non-stick pan.', 'Cook the vegetables and protein until safely cooked through, using only the measured oil.', 'Serve immediately with the named sides and season to taste.'],
-            snack: ['Measure the listed ingredients into one suggested portion.', 'Combine or assemble them in a clean, sealed container.', 'Keep chilled when required and check the product labels before eating.'],
-            bowl: ['Cook the protein and grain or potato according to pack guidance; cook animal proteins thoroughly.', 'Prepare the vegetables and measured dressing or seasoning.', 'Assemble one portion, or cool components quickly and store separately for the shift.']
-        };
-        return steps[kind] || steps.bowl;
-    }
-
-    function openShiftMealDetail(type, mealType, index, dateKey) {
-        const ideas = shiftMealIdeasFor(type, mealType);
-        if (!ideas.length) {
-            showToast('No compatible meal ideas for these requirements');
-            return;
-        }
-        shiftMealDetailSelection = {
-            type,
-            mealType,
-            index: Math.max(0, Math.min(ideas.length - 1, Number(index) || 0)),
-            dateKey: /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? String(dateKey) : state.viewDate
-        };
-        const modal = document.getElementById('shift-meal-detail-modal');
-        if (modal) modal.style.display = 'flex';
-        renderShiftMealDetail();
-        refreshIcons();
-    }
-
-    function closeShiftMealDetail() {
-        const modal = document.getElementById('shift-meal-detail-modal');
-        if (modal) modal.style.display = 'none';
-        shiftMealDetailSelection = null;
-    }
-
-    function selectShiftMealDetail(index) {
-        if (!shiftMealDetailSelection) return;
-        const ideas = shiftMealIdeasFor(shiftMealDetailSelection.type, shiftMealDetailSelection.mealType);
-        shiftMealDetailSelection.index = Math.max(0, Math.min(ideas.length - 1, Number(index) || 0));
-        renderShiftMealDetail();
-    }
-
-    function renderShiftMealDetail() {
-        if (!shiftMealDetailSelection) return;
-        const selection = shiftMealDetailSelection;
-        const ideas = shiftMealIdeasFor(selection.type, selection.mealType);
-        if (!ideas.length) {
-            closeShiftMealDetail();
-            showToast('No compatible recipes remain after that dietary change');
-            return;
-        }
-        selection.index = Math.max(0, Math.min(ideas.length - 1, selection.index));
-        const idea = ideas[selection.index];
-        const ingredients = Array.isArray(idea.ingredients) && idea.ingredients.length
-            ? idea.ingredients
-            : inferredShiftMealIngredients(idea);
-        const steps = shiftMealRecipeSteps(idea);
-        const profile = dietaryProfile();
-        const title = document.getElementById('shift-meal-detail-title');
-        const kicker = document.getElementById('shift-meal-detail-kicker');
-        const count = document.getElementById('shift-meal-detail-count');
-        const options = document.getElementById('shift-meal-detail-options');
-        const content = document.getElementById('shift-meal-detail-content');
-        const addButton = document.getElementById('shift-meal-detail-add');
-        if (!title || !options || !content) return;
-
-        title.textContent = idea.name;
-        if (kicker) kicker.textContent = `${aiCoachShiftLabel(getShiftForDate(selection.dateKey))} ¬∑ ${selection.mealType}`;
-        if (count) count.textContent = `${ideas.length} compatible choice${ideas.length === 1 ? '' : 's'}`;
-        options.innerHTML = ideas.map((option, index) => {
-            const active = index === selection.index;
-            return `<button onclick="selectShiftMealDetail(${index})" class="text-left p-3 rounded-xl border-2 ${active ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white'}">
-                <span class="block text-[9px] font-black uppercase ${active ? 'text-orange-600' : 'text-slate-400'}">Choice ${index + 1}</span>
-                <span class="block font-black text-xs mt-1">${escapeHtml(option.name)}</span>
-                <span class="block text-[10px] text-slate-500 mt-1">${option.calories} kcal ¬∑ ${option.protein}g protein</span>
-            </button>`;
-        }).join('');
-
-        const dateLabel = new Date(selection.dateKey + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-        const requirementLabels = (profile.requirements || []).map(value => DIETARY_REQUIREMENT_LABELS[value] || value);
-        const allergenLabels = dietaryMealAllergens(idea);
-        const loggedCount = (state.dailyMeals || []).filter(meal => meal.date === selection.dateKey && meal.shiftMealIdeaId === idea.id).length;
-        content.innerHTML = `
-            <article class="border-2 border-slate-200 rounded-[2rem] p-4 sm:p-6">
-                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                    <div>
-                        <p class="text-[10px] font-black uppercase text-orange-600">${escapeHtml(shiftMealTimingLabel(selection.type, selection.mealType))} ¬∑ ${escapeHtml(dateLabel)}</p>
-                        <h4 class="text-2xl font-black mt-1">${escapeHtml(idea.name)}</h4>
-                        <div class="flex flex-wrap gap-1.5 mt-2">${shiftMealIdeaBadgesHTML(idea)}</div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 flex-shrink-0">
-                        <span class="bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-black text-center">${idea.calories} kcal</span>
-                        <span class="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl text-xs font-black text-center">${idea.protein}g protein</span>
-                    </div>
-                </div>
-                <p class="text-sm text-slate-600 mt-4">${escapeHtml(idea.note)}</p>
-
-                <div class="grid grid-cols-4 gap-2 mt-4">
-                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Carbs</p><p class="font-black text-sm">${idea.carbs}g</p></div>
-                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Fat</p><p class="font-black text-sm">${idea.fat}g</p></div>
-                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Fibre</p><p class="font-black text-sm">${idea.fiber}g</p></div>
-                    <div class="bg-slate-50 p-2 rounded-xl text-center"><p class="text-[9px] uppercase text-slate-400 font-black">Serving</p><p class="font-black text-sm">${idea.portionAdjusted ? '85%' : '1√ó'}</p></div>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
-                    <section>
-                        <h5 class="font-black flex items-center gap-2"><i data-lucide="shopping-basket" class="w-4 h-4 text-orange-600"></i> Ingredients</h5>
-                        <ul class="mt-3 space-y-2">${ingredients.map(item => `<li class="flex items-start gap-2 text-sm text-slate-600"><span class="text-orange-500 font-black">‚Ä¢</span><span>${escapeHtml(item)}</span></li>`).join('')}</ul>
-                    </section>
-                    <section>
-                        <h5 class="font-black flex items-center gap-2"><i data-lucide="list-ordered" class="w-4 h-4 text-orange-600"></i> Instructions</h5>
-                        <ol class="mt-3 space-y-3">${steps.map((step, index) => `<li class="flex items-start gap-3 text-sm text-slate-600"><span class="w-6 h-6 bg-slate-900 text-orange-300 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0">${index + 1}</span><span>${escapeHtml(step)}</span></li>`).join('')}</ol>
-                    </section>
-                </div>
-
-                ${typeof mealSafetyHTML === 'function' ? mealSafetyHTML(idea, profile) : `
-                <div class="mt-6 bg-amber-50 border border-amber-200 p-4 rounded-xl">
-                    <p class="font-black text-xs text-amber-900">Dietary and food-safety check</p>
-                    <p class="text-[11px] text-amber-800 mt-1">${requirementLabels.length ? `Your saved requirements: ${escapeHtml(requirementLabels.join(' ¬∑ '))}. ` : ''}${profile.notes ? `Your note: ${escapeHtml(profile.notes)}. ` : ''}Possible recipe flags: ${escapeHtml(allergenLabels.length ? allergenLabels.join(', ') : 'none identified')}. Always check every label and prevent cross-contamination.</p>
-                </div>`}
-            </article>`;
-        if (addButton) addButton.textContent = loggedCount ? `‚úì Added ${loggedCount} ¬∑ Add Again` : `Add ${idea.name} to Diary`;
-        refreshIcons();
-    }
-
-    function addSelectedShiftMealIdea() {
-        if (!shiftMealDetailSelection) return;
-        const selection = Object.assign({}, shiftMealDetailSelection);
-        addShiftMealIdea(selection.type, selection.mealType, selection.index, selection.dateKey);
-        renderShiftMealDetail();
-    }
-
-
-    function rotateShiftMealIdea(type, mealType, direction, dateKey) {
-        const ideas = shiftMealIdeasFor(type, mealType);
-        if (!ideas.length) return;
-        const key = type + ':' + mealType;
-        SHIFT_MEAL_ROTATION[key] = ((Number(SHIFT_MEAL_ROTATION[key]) || 0) + Number(direction || 0) + ideas.length) % ideas.length;
-        const slot = document.getElementById('shift-meal-option-' + type + '-' + mealType);
-        if (slot) slot.innerHTML = shiftMealIdeaCardHTML(type, mealType, dateKey);
-        refreshIcons();
-    }
-
-    function addShiftMealIdea(type, mealType, index, dateKey) {
-        const ideas = shiftMealIdeasFor(type, mealType);
-        const idea = ideas && ideas[Number(index)];
-        const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? String(dateKey) : state.viewDate;
-        if (!idea || !/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || ''))) { showToast('Meal idea unavailable'); return; }
-        const base = { calories: idea.calories, protein: idea.protein, carbs: idea.carbs, fat: idea.fat, fiber: idea.fiber, sugar: 0, isCustom: true, serving: '1 suggested portion' };
-        const entry = {
-            id: Date.now() + Math.random(), date: targetDate, type: mealType, mealType,
-            name: idea.name, image: null, calories: idea.calories, protein: idea.protein,
-            carbs: idea.carbs, fat: idea.fat, fiber: idea.fiber, sugar: 0,
-            amount: 1, amountType: 'portion', base, source: 'shift-meal-idea',
-            shiftType: type, shiftMealIdeaId: idea.id, createdAt: new Date().toISOString()
-        };
-        if (!Array.isArray(state.dailyMeals)) state.dailyMeals = [];
-        state.dailyMeals.push(entry);
-        saveState();
-        autoSaveNutrition();
-        renderDiary();
-        renderDashboard();
-        const slot = document.getElementById('shift-meal-option-' + type + '-' + mealType);
-        if (slot) slot.innerHTML = shiftMealIdeaCardHTML(type, mealType, targetDate);
-        const label = new Date(targetDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-        showToast(`${idea.name} added to ${label}`);
-    }
-
-    function mealRow(time, title, desc, tone) {
-        const colors = {
-            main: 'bg-indigo-50 border-indigo-200',
-            light: 'bg-emerald-50 border-emerald-200',
-            avoid: 'bg-rose-50 border-rose-200',
-            sleep: 'bg-slate-100 border-slate-200'
-        };
-        return `
-            <div class="flex gap-3 p-3 rounded-2xl border ${colors[tone] || 'bg-slate-50 border-slate-200'} mb-2">
-                <div class="text-xs font-black text-slate-500 w-20 flex-shrink-0 pt-0.5">${time}</div>
-                <div class="min-w-0">
-                    <p class="font-bold text-sm">${title}</p>
-                    <p class="text-xs text-slate-500 mt-0.5">${desc}</p>
-                </div>
-            </div>`;
-    }
-
-    function nightShiftMealHTML(shift) {
-        const sp = shiftP();
-        const start = hmToMin((shift && shift.start) || sp.shiftStart);
-        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
-        return `
-            <div>
-                <p class="text-xs text-slate-400 mb-4">The goal: eat your main food before/early in the shift, keep the deep-night hours light, and don't go to bed on a full stomach.</p>
-                ${mealRow(minToHM(start - 120), 'Anchor meal (before shift)', 'Your biggest, most balanced meal ~2h before starting. Lean protein + complex carbs + veg for steady 4‚Äì6h energy ‚Äî this is what stops the 3am vending-machine trap.', 'main')}
-                ${mealRow(minToHM(start + 180), 'Mid-shift protein snack', 'A protein-forward snack ~3‚Äì4h in. Greek yogurt, cottage cheese, boiled eggs, or a lean-protein wrap. Keeps you full without a sugar crash.', 'light')}
-                ${mealRow('12am‚Äì6am', 'Biological night ‚Äî keep minimal', 'Try to avoid a full meal in these hours: this is when your body handles food worst (higher glucose & fat in the blood). If you must eat, keep it small and protein/veg based, not sugary or heavy.', 'avoid')}
-                ${mealRow(minToHM(end), 'Post-shift: light only', 'A small, easy-to-digest meal at most. Finish eating at least ~1h before sleep so it doesn\'t wreck your sleep quality.', 'light')}
-                ${mealRow('Daytime', 'Sleep', 'Protect your sleep window. Dark, cool, quiet room. Sleep is where fat-loss and muscle-building actually happen.', 'sleep')}
-            </div>`;
-    }
-
-    function dayShiftMealHTML(shift) {
-        const sp = shiftP();
-        const start = hmToMin((shift && shift.start) || sp.shiftStart);
-        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
-        return `
-            <div>
-                <p class="text-xs text-slate-400 mb-4">Daytime shifts are more circadian-friendly. Front-load your calories earlier and keep the evening lighter.</p>
-                ${mealRow(minToHM(start - 60), 'Breakfast', 'A solid protein + carb breakfast within ~an hour of waking. Insulin sensitivity is highest earlier in the day.', 'main')}
-                ${mealRow('Midday', 'Lunch ‚Äî main meal', 'Make lunch your largest meal where you can. Protein, complex carbs, veg.', 'main')}
-                ${mealRow(minToHM(end), 'Dinner ‚Äî lighter & earlier', 'Aim to finish your main evening eating before ~9pm. Late, large dinners are linked to worse metabolic outcomes.', 'light')}
-                ${mealRow('After 9pm', 'Wind down', 'Avoid late heavy meals and sugary snacks. A small protein snack is fine if genuinely hungry.', 'avoid')}
-            </div>`;
-    }
-
-    function earlyShiftMealHTML(shift) {
-        const sp = shiftP();
-        const start = hmToMin((shift && shift.start) || sp.shiftStart);
-        const end = hmToMin((shift && shift.end) || sp.shiftEnd);
-        return `
-            <div>
-                <p class="text-xs text-slate-400 mb-4">Protect sleep by preparing breakfast and shift food in advance, then place your main meal after work rather than skipping through the morning.</p>
-                ${mealRow(minToHM(start - 45), 'Pre-shift breakfast', 'Keep it quick but balanced: protein plus slow-release carbs. Prepare it the night before so the early start does not become a missed meal.', 'main')}
-                ${mealRow(minToHM(start + 180), 'Mid-shift meal or snack', 'Use a packed protein-forward option with fruit or wholegrain carbs to keep energy steadier through the early shift.', 'light')}
-                ${mealRow(minToHM(end + 30), 'Post-shift main meal', 'Have your largest balanced meal soon after work, while there is still plenty of daytime left for digestion and recovery.', 'main')}
-                ${mealRow('~6‚Äì7pm', 'Lighter evening meal', 'Keep dinner lighter and finish early enough to protect the earlier bedtime your next shift needs.', 'light')}
-            </div>`;
-    }
-
-    function offDayMealHTML() {
-        return `
-            <div>
-                <p class="text-xs text-slate-400 mb-4">Use rest days to nudge your body clock back toward daytime eating ‚Äî it helps recovery and metabolic health.</p>
-                ${mealRow('On waking', 'Breakfast', 'Eat within ~an hour of waking to anchor your body clock to daytime. Protein + carbs.', 'main')}
-                ${mealRow('Midday', 'Lunch ‚Äî main meal', 'Largest meal of the day around midday when your metabolism is best set up for it.', 'main')}
-                ${mealRow('~6‚Äì7pm', 'Early dinner', 'Finish your main eating earlier in the evening. Aim to stop before ~9pm.', 'light')}
-                ${mealRow('Late', 'Minimise late eating', 'Keep the late-evening hours light. This re-trains your system after nights.', 'avoid')}
-            </div>`;
-    }
-
-    function shiftTrainingHTML(onShift, isNight, isEarly) {
-        const sp = shiftP();
-        const fatLoss = sp.goal === 'fat_loss';
-        let inner = '';
-
-        if (onShift && isNight) {
-            inner = `
-                <p class="text-sm text-slate-600 mb-3">On a night-shift day, your strength peak and your available energy don't line up with a normal schedule. Best options:</p>
-                ${trainTip('Before your shift (2‚Äì4h after waking)', 'Your best window on a night-shift day. Core body temperature and neuromuscular readiness are higher a few hours after you wake ‚Äî that\'s when to do your hardest lifting or intervals, not right after rolling out of bed.', 'primary')}
-                ${trainTip('On a mid-shift break', 'A short, lower-sweat strength session (compound lifts, moderate load) works well mid-shift and can boost alertness without frying you.', 'ok')}
-                ${trainTip('After a night shift ‚Äî keep it gentle', 'Post-shift your body temp is at its lowest and cortisol can spike from hard training. Save heavy sessions for another time; a short walk to wind down is ideal before sleep.', 'avoid')}`;
-        } else if (onShift && isEarly) {
-            inner = `
-                <p class="text-sm text-slate-600 mb-3">Early shifts make sleep the priority. Do not trade sleep for a hard pre-shift workout.</p>
-                ${trainTip('After work, if energy is steady', 'Train after your shift and after a planned meal or snack. Keep the session concise so you can still wind down for an early bedtime.', 'primary')}
-                ${trainTip('Before work: mobility only', 'If moving first helps you wake up, use a short walk or mobility routine. Save heavy lifting and hard intervals for after work or an off day.', 'ok')}`;
-        } else if (onShift) {
-            inner = `
-                <p class="text-sm text-slate-600 mb-3">Day shifts fit the body clock better. Strength naturally peaks late afternoon/early evening.</p>
-                ${trainTip('Before or after your shift', 'If your job is physically tiring, train before work so fatigue doesn\'t rob the session. If it\'s a desk job, late afternoon/evening after work is your natural strength peak.', 'primary')}
-                ${trainTip('Consistency beats perfection', 'Training at the same time daily trains your muscle clocks to perform then ‚Äî even a "non-optimal" time becomes optimal with consistency.', 'ok')}`;
-        } else {
-            inner = `
-                <p class="text-sm text-slate-600 mb-3">Rest days are ideal for your hardest training ‚Äî you're not also carrying shift fatigue.</p>
-                ${trainTip('Late afternoon / early evening (~4‚Äì7pm)', 'Maximal strength peaks in the evening and is lowest early morning. If you want a heavy session, this is the window.', 'primary')}
-                ${trainTip(fatLoss ? 'Add easy cardio / steps' : 'Prioritise progressive overload', fatLoss ? 'On rest days, low-intensity cardio or a long walk adds fat-loss without denting recovery.' : 'Push your key lifts a little heavier or add a rep ‚Äî rest days are when you can genuinely progress.', 'ok')}`;
-        }
-
-        return `
-            <div>
-                <p class="text-xs text-slate-400 mb-4">Timed to your circadian phase, not the clock on the wall.</p>
-                ${inner}
-            </div>`;
-    }
-
-    function trainTip(title, desc, tone) {
-        const dot = { primary: 'bg-indigo-500', ok: 'bg-emerald-500', avoid: 'bg-rose-400' }[tone] || 'bg-slate-400';
-        return `
-            <div class="flex gap-3 mb-3">
-                <div class="w-2.5 h-2.5 rounded-full ${dot} flex-shrink-0 mt-1.5"></div>
-                <div class="min-w-0">
-                    <p class="font-bold text-sm">${title}</p>
-                    <p class="text-xs text-slate-500 mt-0.5">${desc}</p>
-                </div>
-            </div>`;
-    }
-
-function fastingGuidanceHTML(onShift, shiftType) {
-    const isNight = onShift && shiftType === 'night';
-    return `
-        <div class="border-2 border-dashed border-indigo-200 rounded-2xl p-4">
-            <p class="text-xs text-slate-500 mb-4">Your saved plan uses intermittent fasting. VFIT changes the emphasis by shift instead of applying one rigid clock window every day.</p>
-            ${isNight
-                ? `<div class="p-3 bg-amber-50 border border-amber-200 rounded-2xl mb-3"><p class="text-sm font-bold text-amber-900">Night shift: alertness and safety come first</p><p class="text-xs text-amber-800 mt-1">Do not force a fast through work if it causes dizziness, poor concentration, unusual fatigue or impaired performance. A practical option is to anchor the eating window after waking and through the early part of the shift.</p></div>`
-                : onShift
-                    ? mealRow('This shift', 'Keep the window practical', 'Place the eating window around the main work break and the training or recovery meal. Do not sacrifice fluids or adequate protein to hit a clock target.', 'light')
-                    : mealRow('Off day', 'Return the window to daytime', 'Use a consistent daytime window if it feels sustainable, while still meeting protein, energy, fibre and hydration needs.', 'main')}
-            <p class="text-[11px] text-slate-400 mt-2">Fasting is not suitable for everyone. Get appropriate clinical advice first if you have diabetes or another health condition, take medication affected by food timing, are pregnant, or have a history of disordered eating. Stop if you feel unwell.</p>
-        </div>`;
-}
-
-    function createdShiftFoodIdeasHTML(dateKey) {
-        const customMeals = (state.createdMeals || []).filter(meal => meal && (meal.showInShiftFoodIdeas === true || meal.addToShiftFoodIdeas === true));
-        if (!customMeals.length) return '';
-        const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))
-            ? String(dateKey)
-            : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.viewDate || '')) ? String(state.viewDate) : localDateKey());
-        const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
-        return `
-                <div class="mt-4 border-t border-orange-100 pt-4" data-created-shift-meals="true">
-                    <div class="flex items-start justify-between gap-3 mb-3"><div><p class="text-[10px] font-black uppercase text-orange-600">My created shift meals</p><p class="text-xs text-slate-400 mt-1">Only meals you selected in Create Meal appear here.</p></div><span class="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">${customMeals.length} saved</span></div>
-                    <div class="space-y-2">
-                        ${customMeals.map(meal => {
-                            const mealType = validSlots.includes(meal.defaultMealType) ? meal.defaultMealType : (validSlots.includes(meal.plannedMealType) ? meal.plannedMealType : 'snack');
-                            const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
-                            return `<div class="bg-orange-50 border border-orange-100 rounded-2xl p-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="font-bold text-sm truncate">${escapeHtml(meal.name || 'Created meal')}</p><p class="text-[11px] text-slate-500 mt-1">${Math.round(Number(meal.calories) || 0)} kcal ¬∑ ${(Number(meal.protein) || 0).toFixed(1)}g protein ¬∑ ${mealLabel}</p></div><button onclick="addCreatedMealToDiary('${escapeJsString(meal.id)}', '${targetDate}', '${mealType}')" class="flex-shrink-0 bg-slate-900 text-white px-3 py-2 rounded-xl font-bold text-[11px]">+ Add to diary</button></div></div>`;
-                        }).join('')}
-                    </div>
-                </div>`;
-    }
-
-function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
-    const profile = dietaryProfile();
-    const lists = {
-        vegan: [
-            ['ü´ò Beans & lentils', 'Batch-cook for bowls, soups and chilli', ''],
-            ['üå± Tofu', 'Bake or stir-fry several portions', 'soy'],
-            ['üåø Tempeh', 'High-protein option for wraps and noodles', 'soy'],
-            ['ü•ó Edamame', 'Portable savoury protein snack', 'soy'],
-            ['ü•§ Pea or soy protein', 'Measured backup for short breaks', 'soy'],
-            ['üåæ Seitan', 'Protein-rich if gluten suits your requirements', 'gluten'],
-            ['ü•£ Fortified soy yogurt', 'No-cook breakfast or snack', 'soy'],
-            ['üßÜ Chickpeas & hummus', 'Fibre plus plant protein', 'sesame']
-        ],
-        vegetarian: [
-            ['ü•ö Eggs', 'Boil ahead or use in quick meals', 'egg'],
-            ['ü•õ Greek yogurt', 'High protein and low effort', 'dairy'],
-            ['üßÄ Cottage cheese', 'Chilled snack or potato topping', 'dairy'],
-            ['üå± Tofu & tempeh', 'Plant-protein rotation for meal prep', 'soy'],
-            ['ü´ò Beans & lentils', 'Fibre plus plant protein', ''],
-            ['ü•§ Protein shake', 'Fast measured backup when busy', 'dairy'],
-            ['üßÄ Reduced-fat cheese', 'Measure portions for predictable calories', 'dairy'],
-            ['ü•ó Edamame', 'Portable savoury protein snack', 'soy']
-        ],
-        ketogenic: [
-            ['üçó Chicken or turkey', 'Batch-cook plain portions for salads', ''],
-            ['üêü Salmon or tuna', 'Protein and fats; keep chilled', 'fish'],
-            ['ü•ö Eggs', 'Portable and easy to prepare ahead', 'egg'],
-            ['üå± Tofu', 'Lower-carbohydrate plant protein', 'soy'],
-            ['ü•õ Unsweetened Greek yogurt', 'Check carbohydrate on the label', 'dairy'],
-            ['üßÄ Cottage cheese', 'Measure portions and check the label', 'dairy'],
-            ['ü•ó Edamame', 'Fibre-rich plant option', 'soy'],
-            ['üå∞ Seeds', 'Measure portions; check allergy needs', 'nuts']
-        ],
-        balanced: [
-            ['ü•ö Boiled eggs', 'Prep ahead; grab 2‚Äì3', 'egg'],
-            ['üçó Grilled chicken', 'Batch-cook and portion out', ''],
-            ['ü•õ Greek yogurt', 'High protein and low effort', 'dairy'],
-            ['üßÄ Cottage cheese', 'Slow-release protein option', 'dairy'],
-            ['ü•ú Nuts & seeds', 'Measure portions carefully', 'nuts'],
-            ['üêü Tinned tuna or salmon', 'On oatcakes or wholegrain bread', 'fish|gluten'],
-            ['ü´ò Beans & lentils', 'Fibre plus plant protein', ''],
-            ['ü•§ Protein shake', 'Fast backup when busy', 'dairy']
-        ]
-    };
-    const candidates = lists[profile.pattern] || lists.balanced;
-    const ideas = candidates.filter(([name, note, allergens]) =>
-        mealMatchesDietaryRequirements({ name, note, allergens: String(allergens || '').split('|').filter(Boolean) }, profile)
-    );
-    return `
-        <div>
-            <p class="text-xs text-slate-400 mb-4">${emphasiseNight
-                ? 'Prepare protein-forward choices before a night shift so your deepest-night break does not depend on vending-machine food.'
-                : 'A deliberate protein source at each main meal supports recovery and helps make the plan more filling.'}</p>
-            <div class="grid grid-cols-2 gap-2">
-                ${ideas.map(([name, note]) => foodIdea(name, note)).join('') || '<p class="col-span-2 text-xs text-amber-700 bg-amber-50 p-3 rounded-xl">No generic ideas match every selected exclusion. Use a product or recipe you have personally verified as safe.</p>'}
-            </div>
-            ${createdShiftFoodIdeasHTML(dateKey)}
-            <div class="mt-3 p-3 bg-slate-50 rounded-2xl">
-                <p class="text-xs text-slate-500"><b>Shift prep:</b> portion food before work, carry fluids and keep a verified backup meal available. Check every product against your saved requirements.</p>
-            </div>
-        </div>`;
-}
-
-    function foodIdea(name, note) {
-        return `
-            <div class="bg-slate-50 rounded-2xl p-3">
-                <p class="font-bold text-sm">${name}</p>
-                <p class="text-[11px] text-slate-400 mt-0.5">${note}</p>
-            </div>`;
-    }
-
-    function shiftScienceHTML() {
-        return `
-            <div class="space-y-3 text-sm text-slate-600">
-                <p><b>Your master clock ‚Äî the SCN.</b> Deep in your brain (the hypothalamus) sits the suprachiasmatic nucleus, or SCN. It's your body's master clock, and it's set mainly by <b>light</b>. It tells your body when to be alert, when to release melatonin for sleep, and when your metabolism is primed for food.</p>
-                <p><b>Zeitgebers ‚Äî "time-givers".</b> Besides light, your body takes timing cues from <b>food, activity and temperature</b>. These are called zeitgebers (German for "time-givers"). Your gut and muscles have their own "peripheral clocks" that respond to when you eat and train ‚Äî not just to light.</p>
-                <p><b>Why shift work is hard.</b> On nights, your SCN still thinks it's night (because of the light/dark cycle), but you're eating and working. This <b>desynchronises</b> your master clock from your gut and muscle clocks. Eating at 3am means digesting food when your body is metabolically set to sleep ‚Äî which is why the same meal raises blood sugar and fat more at night than in the day.</p>
-                <p><b>What we do about it.</b> We use the zeitgebers you <i>can</i> control ‚Äî food timing and training timing ‚Äî to reduce that mismatch: concentrate eating when your body is more aligned, keep the deep-night hours light, and place training near your true strength peak (a few hours after waking, when core temperature is up).</p>
-                <p class="text-xs text-slate-400">This is a simplified summary of active research. The science is still developing and individual responses vary ‚Äî another reason to work with your GP.</p>
-            </div>`;
-    }
-
-    // Only appears when the client actually has a coach.
-    async function renderCoachPlanInTraining() {
-        const card = document.getElementById('coach-plan-card');
-        const list = document.getElementById('coach-plan-list');
-        if (!card || !list) return;
-
-        // Hide entirely unless this user has a coach
-        if (currentUserRole !== 'member' || !firebaseUserData || !firebaseUserData.coachUid) {
-            card.classList.add('hidden');
-            return;
-        }
-
-        let assigned = [];
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            assigned = (meDoc.data() || {}).assignedWorkouts || [];
-        } catch (e) { /* offline ‚Äî leave hidden */ }
-
-        if (assigned.length === 0) {
-            // Has a coach but nothing assigned yet ‚Äî hide the card entirely
-            // (only show when a coach has actually set a workout).
-            card.classList.add('hidden');
-            return;
-        }
-
-        card.classList.remove('hidden');
-        list.innerHTML = assigned.slice().reverse().map((w, idx) => {
-            const realIdx = assigned.length - 1 - idx;
-            const exNames = (w.exercises || []).map(e => escapeHtml(e.name)).join(', ');
-            const hasFocus = (w.exercises || []).some(e => e.focus);
-            return `
-                <div class="bg-slate-50 rounded-2xl p-4">
-                    <div class="flex justify-between items-start mb-1">
-                        <div class="min-w-0">
-                            <p class="font-black">${escapeHtml(w.title || 'Coach Workout')}</p>
-                            <p class="text-[10px] text-slate-400">From ${escapeHtml(w.assignedBy || 'Coach')} ¬∑ ${escapeHtml((w.assignedAt || '').split('T')[0])}</p>
-                        </div>
-                        ${hasFocus ? '<span class="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full flex-shrink-0">üéØ cues</span>' : ''}
-                    </div>
-                    <p class="text-xs text-slate-500 mb-3 truncate">${exNames}</p>
-                    <button onclick="startAssignedWorkout(${realIdx})" class="w-full bg-indigo-600 text-white p-3 rounded-xl font-bold text-sm">Start This Workout</button>
-                </div>`;
-        }).join('');
-        refreshIcons();
-    }
-
-    async function openAssignedWorkouts() {
-        if (!firebaseUserData.coachUid) { showToast('No coach connected'); return; }
-        let assigned = [];
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            assigned = (meDoc.data() || {}).assignedWorkouts || [];
-        } catch (e) { /* ignore */ }
-
-        const box = document.getElementById('assigned-workouts-body');
-        if (assigned.length === 0) {
-            box.innerHTML = '<p class="text-sm text-slate-400 text-center py-8">Your coach hasn\'t assigned any workouts yet.</p>';
-        } else {
-            box.innerHTML = assigned.slice().reverse().map((w, idx) => {
-                const realIdx = assigned.length - 1 - idx;
-                return `
-                <div class="bg-slate-50 p-4 rounded-2xl mb-3">
-                    <div class="flex justify-between items-start mb-2">
-                        <div>
-                            <p class="font-black">${escapeHtml(w.title || 'Workout')}</p>
-                            <p class="text-[10px] text-slate-400">From ${escapeHtml(w.assignedBy || 'Coach')} ¬∑ ${escapeHtml((w.assignedAt || '').split('T')[0])}</p>
-                        </div>
-                    </div>
-                    <div class="space-y-2 mb-3">
-                        ${(w.exercises || []).map(ex => `
-                            <div>
-                                <p class="text-sm"><b>${escapeHtml(ex.name)}</b> ‚Äî ${(ex.sets || []).map(s => `${escapeHtml(s.weight === '' || s.weight == null ? '‚Äî' : s.weight)}kg√ó${escapeHtml(s.reps === '' || s.reps == null ? '‚Äî' : s.reps)}`).join(', ')}</p>
-                                ${ex.focus ? `<p class="text-[11px] text-indigo-600 pl-2 mt-0.5">üéØ ${escapeHtml(ex.focus)}</p>` : ''}
-                            </div>
-                        `).join('')}
-                    </div>
-                    <button onclick="startAssignedWorkout(${realIdx})" class="w-full bg-indigo-600 text-white p-3 rounded-xl font-bold text-sm">Start This Workout</button>
-                </div>`;
-            }).join('');
-        }
-        document.getElementById('assigned-workouts-modal').style.display = 'flex';
-        refreshIcons();
-    }
-
-    function closeAssignedWorkouts() {
-        document.getElementById('assigned-workouts-modal').style.display = 'none';
-    }
-
-    async function startAssignedWorkout(idx) {
-        let assigned = [];
-        try {
-            const meDoc = await db.collection('users').doc(currentUser.uid).get();
-            assigned = (meDoc.data() || {}).assignedWorkouts || [];
-        } catch (e) { /* ignore */ }
-        const w = assigned[idx];
-        if (!w) { showToast('Workout not found'); return; }
-
-        closeAssignedWorkouts();
-        switchTab('training');
-        window._activeAssignedWorkout = { title: w.title || 'Coach Workout', coachUid: firebaseUserData.coachUid };
-
-        // Set up the active workout view directly with the assigned exercises
-        currentWorkoutContext = { env: state.workoutEnv || 'gym', focus: w.title || 'Coach Workout', muscles: null };
-        workoutStartTime = Date.now();
-        workoutAccumulatedSeconds = 0;
-        startWorkoutTimer();
-        try { history.pushState({ workout: true }, ''); } catch (e) {}
-
-        document.getElementById('workout-setup').classList.add('hidden');
-        { const _cpc = document.getElementById('coach-plan-card'); if (_cpc) _cpc.classList.add('hidden'); }
-        document.getElementById('workout-active').classList.remove('hidden');
-        const titleEl = document.getElementById('active-workout-title');
-        if (titleEl) titleEl.innerText = 'üìã ' + (w.title || 'Coach Workout');
-        document.getElementById('exercise-list').innerHTML = '';
-
-        // Build a name‚Üífocus map so each exercise card shows the coach's focus note.
-        window._assignedFocusByName = Object.create(null);
-        (w.exercises || []).forEach(ex => {
-            if (ex.focus) window._assignedFocusByName[ex.name] = ex.focus;
-        });
-
-        (w.exercises || []).forEach(ex => {
-            addExercise(ex.name || '', { skipInitialSet: true });
-            const cards = document.querySelectorAll('#exercise-list > div');
-            const card = cards[cards.length - 1];
-            if (!card) return;
-            // Directly attach this exercise's focus note (handles duplicate names too)
-            if (ex.focus) {
-                const nameContainer = card.querySelector('.relative');
-                if (nameContainer && !card.querySelector('.coach-focus-note')) {
-                    const note = document.createElement('div');
-                    note.className = "coach-focus-note mt-2 p-3 bg-indigo-50 border-l-4 border-indigo-500 rounded-r-xl";
-                    note.innerHTML = `
-                        <p class="text-[10px] font-black uppercase text-indigo-600 mb-0.5">üéØ Coach's Focus</p>
-                        <p class="text-sm text-slate-700">${escapeHtml(ex.focus)}</p>`;
-                    nameContainer.appendChild(note);
-                }
-            }
-            const setsContainer = card.querySelector('[id^="sets-"]');
-            const exId = setsContainer ? setsContainer.id.replace('sets-', '') : null;
-            const assignedSets = Array.isArray(ex.sets) && ex.sets.length ? ex.sets : [{ weight: '', reps: '' }];
-            assignedSets.forEach(s => {
-                if (exId) addSetToExercise(exId, ex.name ? getPersonalRecord(ex.name) : null, ex.name || '');
-                const rows = card.querySelectorAll('.set-row');
-                const row = rows[rows.length - 1];
-                if (row) {
-                    const w2 = row.querySelector('.set-weight');
-                    const r2 = row.querySelector('.set-reps');
-                    if (w2) w2.value = s.weight || '';
-                    if (r2) r2.value = s.reps || '';
-                }
-            });
-        });
-        // Step through it one exercise at a time like other workouts
-        setTimeout(() => enterWizardMode(), 120);
-        persistActiveWorkout();
-        showToast('Following your coach\'s workout üí™');
-    }
-
-    function openMemberNotes() {
-        if (!firebaseUserData.coachUid) { showToast('No coach connected'); return; }
-        const modal = document.getElementById('member-notes-modal');
-        if (modal) {
-            modal.style.display = 'flex';
-            document.getElementById('member-notes-coach-name').textContent = firebaseUserData.coachName || 'Coach';
-            loadMemberNotesThread();
-        }
-    }
-
-    function closeMemberNotes() {
-        const modal = document.getElementById('member-notes-modal');
-        if (modal) modal.style.display = 'none';
-    }
-
-    async function loadMemberNotesThread() {
-        const threadEl = document.getElementById('member-notes-thread');
-        if (!threadEl) return;
-        const coachUid = firebaseUserData.coachUid;
-        const memberUid = currentUser.uid;
-        if (!coachUid) { threadEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No coach connected.</p>'; return; }
-        try {
-            const noteDoc = await db.collection('notes').doc(notesDocId(coachUid, memberUid)).get();
-            const notes = (noteDoc.exists && noteDoc.data().messages) ? noteDoc.data().messages : [];
-            if (notes.length === 0) {
-                threadEl.innerHTML = '<p class="text-sm text-slate-400 text-center py-3">No notes yet. Start the conversation below.</p>';
-                return;
-            }
-            threadEl.innerHTML = renderNoteMessages(notes);
-            threadEl.scrollTop = threadEl.scrollHeight;
-        } catch (error) {
-            console.error('Error loading member notes:', error);
-            threadEl.innerHTML = '<p class="text-sm text-rose-500 text-center py-3">Could not load notes (check Firestore rules).</p>';
-        }
-    }
-
-    async function postMemberNote() {
-        const input = document.getElementById('member-note-input');
-        const text = (input.value || '').trim().slice(0, 1000);
-        if (!text) return;
-        const coachUid = firebaseUserData.coachUid;
-        const memberUid = currentUser.uid;
-        if (!coachUid) { showToast('No coach connected'); return; }
-        const message = {
-            fromUid: currentUser.uid,
-            fromName: firebaseUserData.name || (currentUser.displayName) || 'You',
-            fromRole: 'member',
-            text: text,
-            at: new Date().toISOString()
-        };
-        try {
-            await appendNote(coachUid, memberUid, message);
-            await pushNotification(coachUid, {
-                type: 'note',
-                title: 'New message from ' + (firebaseUserData.name || 'your client'),
-                body: text.length > 60 ? text.slice(0, 57) + '...' : text,
-                fromName: firebaseUserData.name || 'Client'
-            });
-            input.value = '';
-            loadMemberNotesThread();
-        } catch (error) {
-            console.error('Error posting member note:', error);
-            showToast('Note failed: ' + (error.code || error.message || 'unknown'), 6000);
-        }
-    }
-
-    // Render profile with Firebase data
-    function renderProfile() {
-        if (!currentUser) return;
-
-        const name = (currentUser.displayName) || (firebaseUserData && firebaseUserData.name) || 'User';
-        document.getElementById('profile-name').textContent = name;
-        document.getElementById('profile-email').textContent = currentUser.email;
-
-        if (firebaseUserData && firebaseUserData.createdAt) {
-            try {
-                const date = firebaseUserData.createdAt.toDate
-                    ? firebaseUserData.createdAt.toDate()
-                    : new Date(firebaseUserData.createdAt);
-                document.getElementById('profile-created').textContent = date.toLocaleDateString();
-            } catch (e) {
-                document.getElementById('profile-created').textContent = 'Recently';
-            }
-        } else {
-            document.getElementById('profile-created').textContent = 'Recently';
-        }
-
-        document.getElementById('profile-workouts').textContent = state.workoutHistory.length;
-        const accountStatus = document.getElementById('profile-account-status');
-        const verifyButton = document.getElementById('verify-email-btn');
-        if (accountStatus) {
-            accountStatus.textContent = currentUser.emailVerified ? '‚úì Active ¬∑ Email verified' : 'Active ¬∑ Email verification needed';
-            accountStatus.className = currentUser.emailVerified ? 'font-bold text-emerald-600' : 'font-bold text-amber-600';
-        }
-        if (verifyButton) verifyButton.classList.toggle('hidden', !!currentUser.emailVerified);
-    }
-
-    // ==========================================================================
-    // STATE MANAGEMENT
-    // ==========================================================================
-
-    const DEFAULT_STATE = {
-        meta: {
-            schemaVersion: VFIT_STATE_SCHEMA_VERSION,
-            updatedAt: null,
-            lastCloudSyncAt: null
-        },
-        viewDate: localDateKey(),
-        metricsDate: localDateKey(),
-        goals: { calories: 2500, water: 2500, steps: 10000 },
-        waterLogs: {},
-        stepsLogs: {},
-        dailyMeals: [],
-        workoutHistory: [],
-        nutritionHistory: [],
-        metricsHistory: [],
-        createdMeals: [],
-        customFoods: [], // offline cache of the owner-managed shared food database
-        barcodeFoods: [],
-        // Seven-day shift-aware planner and its persistent manual/scanned shopping items.
-        weeklyMealPlan: {},
-        shoppingItems: [],
-        shoppingChecks: {},
-        workoutEnv: 'gym',
-        currentPhotos: { front: null, side: null, back: null },
-        habits: [],
-        habitsEnabled: false,
-        habitCompletions: {},
-        hydrationGoalCompletions: {},
-        stepsGoalCompletions: {},
-        trackHydration: true,
-        trackSteps: true,
-        userGoals: [],
-        // Diet goal for calorie targeting: 'lose' | 'maintain' | 'gain'
-        dietGoal: { mode: '', rate: 1, rateUnit: 'lbs', gainRate: 250 },
-        // Saved coaching answers used to personalise shift nutrition and meal ideas.
-        dietaryProfile: {
-            completed: false,
-            pattern: 'balanced',       // 'balanced' | 'vegan' | 'vegetarian' | 'ketogenic'
-            approaches: [],            // 'intermittent_fasting' and/or 'calorie_deficit'
-            requirements: [],          // dietary exclusions or certification needs
-            notes: '',
-            source: null,
-            updatedAt: null
-        },
-        cardioLogs: [],
-        hydrationLogs: {},
-        aiCoachEnabled: true,
-        proteinGoal: 150,
-        weightUnit: 'kg', // user's preferred display unit: 'kg' | 'lbs' | 'st'
-        foodRegion: 'uk', // food search region: 'uk' | 'us' | 'world'
-        // Shift-worker mode: null until set up. When enabled, drives chrono-nutrition
-        // meal-timing guidance and training suggestions keyed to the shift pattern.
-        shiftProfile: {
-            enabled: false,
-            acknowledgedDisclaimer: false,
-            shiftType: 'nights',      // 'days' | 'nights' | 'rotating' | 'earlies'
-            shiftStart: '19:00',      // clock time the shift starts
-            shiftEnd: '07:00',        // clock time the shift ends
-            workDays: [1, 2, 3, 4, 5],// 0=Sun..6=Sat that they're on shift
-            goal: 'fat_loss',         // 'fat_loss' | 'muscle_gain'
-            useFasting: false,        // optional 5:2-style fasting (rest days only)
-            rota: {}                  // date-keyed overrides
-        },
-        checkIns: [],
-        coachConversations: [],
-        readinessLogs: {},
-        // One completed daily nutrition/training readiness plan per local date.
-        // This is separate from the Coaching Hub's longer readiness score so
-        // the 10am check-in can tailor today's calories and training safely.
-        dailyReadiness: {},
-        coachingTargets: {
-            workoutsPerWeek: 3,
-            calorieTolerancePercent: 10,
-            proteinAdherencePercent: 90
-        },
-        progressionSettings: {
-            enabled: true,
-            targetRir: 2,
-            plateauSessions: 3,
-            deloadPercent: 10
-        },
-        deloadPlan: {
-            active: false,
-            startDate: null,
-            endDate: null,
-            source: null,
-            createdAt: null
-        },
-        notificationSettings: {
-            enabled: false,
-            reminderTime: '18:00',
-            workouts: true,
-            checkIns: true,
-            hydration: false,
-            coachMessages: true,
-            deviceId: null
-        },
-        privacySettings: {
-            cloudHealthData: true,
-            noticeVersion: null,
-            acknowledgedAt: null
-        },
-        // Progress-update reminders. Three independent trackers (weight, body
-        // measurements, progress photos), each with its own schedule + delivery.
-        // frequency: 'daily' | 'weekly' | 'monthly' | 'custom'
-        // customDays: array of weekday numbers (0=Sun..6=Sat) for weekly/custom
-        // customDate: day-of-month (1..31) for monthly, or a chosen recurring date
-        // delivery: 'ai' (AI coach mentions it) | 'alert' (sign-in acknowledgement)
-        // lastDone: ISO date string of the last time that update was logged
-        updateReminders: {
-            weight:      { enabled: false, frequency: 'weekly', customDays: [1], customDate: 1, delivery: 'alert', lastDone: null },
-            measurement: { enabled: false, frequency: 'monthly', customDays: [1], customDate: 1, delivery: 'alert', lastDone: null },
-            photo:       { enabled: false, frequency: 'monthly', customDays: [1], customDate: 1, delivery: 'alert', lastDone: null }
-        },
-        exerciseRatings: {}, // { 'Bench Press': { total: 14, count: 4 }, ... }  ‚Äî average = total/count
-        // User-created exercises: { name, env, focus, muscles:[], type:'compound'|'isolation' }
-        customExercises: [],
-        // Exercises the user has turned OFF (not available at their gym).
-        // Stored as { gym: ['Machine Bicep Curl', ...], home: [...] }
-        disabledExercises: { gym: [], home: [] },
-        // A refresh-safe snapshot of the workout currently being logged.
-        activeWorkout: null,
-        userProfile: {
-            gender: '',         // 'male' | 'female' | ''
-            heightCm: null,     // number
-            age: null,          // number
-            yearsTraining: null, // number ‚Äî used to derive experience level
-            activityLevel: ''   // 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active' | ''
-        },
-        equipment: {
-            gym: {
-                'Barbell': true,
-                'Dumbbells': true,
-                'Cable Machine': true,
-                'Weighted Machine': true,
-                'Leg Press': true,
-                'Pull Up Bar': true,
-                'Bench': true
-            },
-            home: {
-                'Dumbbells': false,
-                'Resistance Bands': false,
-                'Pull Up Bar': false,
-                'Yoga Mat': true
-            }
-        }
-    };
-
-    let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-
-    let workoutTimer = null;
-    let workoutStartTime = null;       // absolute wall-clock timestamp when the workout began
-    let workoutAccumulatedSeconds = 0; // legacy restore fallback for pre-beta.5 snapshots
-    let currentWorkoutContext = null; // {env, focus, muscles} ‚Äî set when a workout starts
-    let showAllExercisesInPicker = false; // toggled by the "Show all" link in the dropdown
-    let currentFoodItem = null;
-    let lastCheckDate = null;
-    let midnightCheckInterval = null;
-    let selectedPreviousMeals = [];
-    let currentEditingMeal = null;
-    let editAmountType = 'portion';
-    let currentAmountType = 'portion';
-    let searchResults = [];
-    let mealIngredients = [];
-    let shiftMealDetailSelection = null;
-    let html5QrCode = null;
-    let metricsChart = null;
-    let currentPhotoType = null;
-    let manualFoodImageData = null;
-    let midnightSaveTimeout = null;
-    let localSaveCounter = 0;
-    let cloudSyncTimer = null;
-    let cloudSyncPromise = null;
-    let cloudDirty = false;
-    let cloudSyncError = null;
-
-    // ==========================================================================
-    // PERSISTENCE
-    // ==========================================================================
-
-    /** A photo is either legacy inline image data or a durable IndexedDB reference. */
-    function isValidPhotoData(v) {
-        return typeof v === 'string'
-            && (v.indexOf('data:image/') === 0 || v.indexOf('vfit-photo:') === 0);
-    }
-
-    function deepClone(value) {
-        return JSON.parse(JSON.stringify(value));
-    }
-
-    function isPlainRecord(value) {
-        return !!value && typeof value === 'object' && !Array.isArray(value);
-    }
-
-    function sanitizeStoredValue(value, depth) {
-        const level = depth || 0;
-        if (level > 40) return null;
-        if (Array.isArray(value)) return value.map(item => sanitizeStoredValue(item, level + 1));
-        if (!isPlainRecord(value)) return value;
-        const clean = {};
-        Object.keys(value).forEach(key => {
-            if (key === '__proto__' || key === 'prototype' || key === 'constructor') return;
-            clean[key] = sanitizeStoredValue(value[key], level + 1);
-        });
-        return clean;
-    }
-
-    /** Keep only the state fields VFIT owns and repair older data shapes. */
-    function normalizeState(input) {
-        const raw = isPlainRecord(input) ? sanitizeStoredValue(input) : {};
-        const normalized = deepClone(DEFAULT_STATE);
-
-        Object.keys(DEFAULT_STATE).forEach(key => {
-            if (Object.prototype.hasOwnProperty.call(raw, key)) normalized[key] = deepClone(raw[key]);
-        });
-
-        normalized.meta = Object.assign({}, DEFAULT_STATE.meta, isPlainRecord(raw.meta) ? raw.meta : {}, {
-            schemaVersion: VFIT_STATE_SCHEMA_VERSION
-        });
-        normalized.goals = Object.assign({}, DEFAULT_STATE.goals, isPlainRecord(raw.goals) ? raw.goals : {});
-        normalized.dietGoal = Object.assign({}, DEFAULT_STATE.dietGoal, isPlainRecord(raw.dietGoal) ? raw.dietGoal : {});
-        normalized.dietaryProfile = Object.assign({}, DEFAULT_STATE.dietaryProfile, isPlainRecord(raw.dietaryProfile) ? raw.dietaryProfile : {});
-        normalized.dietaryProfile.pattern = ['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(normalized.dietaryProfile.pattern)
-            ? normalized.dietaryProfile.pattern
-            : 'balanced';
-        normalized.dietaryProfile.approaches = Array.isArray(normalized.dietaryProfile.approaches)
-            ? normalized.dietaryProfile.approaches.filter(value => ['intermittent_fasting', 'calorie_deficit'].includes(value))
-            : [];
-        normalized.dietaryProfile.requirements = Array.isArray(normalized.dietaryProfile.requirements)
-            ? normalized.dietaryProfile.requirements.filter(value => typeof value === 'string').slice(0, 16)
-            : [];
-        normalized.dietaryProfile.notes = String(normalized.dietaryProfile.notes || '').slice(0, 750);
-        normalized.userProfile = Object.assign({}, DEFAULT_STATE.userProfile, isPlainRecord(raw.userProfile) ? raw.userProfile : {});
-        normalized.shiftProfile = Object.assign({}, DEFAULT_STATE.shiftProfile, isPlainRecord(raw.shiftProfile) ? raw.shiftProfile : {});
-        normalized.shiftProfile.rota = isPlainRecord(raw.shiftProfile && raw.shiftProfile.rota)
-            ? deepClone(raw.shiftProfile.rota)
-            : {};
-        normalized.coachingTargets = Object.assign({}, DEFAULT_STATE.coachingTargets, isPlainRecord(raw.coachingTargets) ? raw.coachingTargets : {});
-        normalized.progressionSettings = Object.assign({}, DEFAULT_STATE.progressionSettings, isPlainRecord(raw.progressionSettings) ? raw.progressionSettings : {});
-        normalized.deloadPlan = Object.assign({}, DEFAULT_STATE.deloadPlan, isPlainRecord(raw.deloadPlan) ? raw.deloadPlan : {});
-        normalized.notificationSettings = Object.assign({}, DEFAULT_STATE.notificationSettings, isPlainRecord(raw.notificationSettings) ? raw.notificationSettings : {});
-        normalized.privacySettings = Object.assign({}, DEFAULT_STATE.privacySettings, isPlainRecord(raw.privacySettings) ? raw.privacySettings : {});
-        normalized.currentPhotos = Object.assign({}, DEFAULT_STATE.currentPhotos, isPlainRecord(raw.currentPhotos) ? raw.currentPhotos : {});
-        normalized.equipment = {
-            gym: Object.assign({}, DEFAULT_STATE.equipment.gym, isPlainRecord(raw.equipment && raw.equipment.gym) ? raw.equipment.gym : {}),
-            home: Object.assign({}, DEFAULT_STATE.equipment.home, isPlainRecord(raw.equipment && raw.equipment.home) ? raw.equipment.home : {})
-        };
-        normalized.updateReminders = {
-            weight: Object.assign({}, DEFAULT_STATE.updateReminders.weight, isPlainRecord(raw.updateReminders && raw.updateReminders.weight) ? raw.updateReminders.weight : {}),
-            measurement: Object.assign({}, DEFAULT_STATE.updateReminders.measurement, isPlainRecord(raw.updateReminders && raw.updateReminders.measurement) ? raw.updateReminders.measurement : {}),
-            photo: Object.assign({}, DEFAULT_STATE.updateReminders.photo, isPlainRecord(raw.updateReminders && raw.updateReminders.photo) ? raw.updateReminders.photo : {})
-        };
-        normalized.disabledExercises = {
-            gym: Array.isArray(raw.disabledExercises && raw.disabledExercises.gym) ? raw.disabledExercises.gym.filter(v => typeof v === 'string') : [],
-            home: Array.isArray(raw.disabledExercises && raw.disabledExercises.home) ? raw.disabledExercises.home.filter(v => typeof v === 'string') : []
-        };
-
-        const arrayFields = [
-            'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
-            'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns', 'coachConversations'
-        ];
-        arrayFields.forEach(key => {
-            if (!Array.isArray(normalized[key])) normalized[key] = [];
-        });
-        const recordFields = [
-            'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
-            'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
-            'weeklyMealPlan', 'shoppingChecks'
-        ];
-        recordFields.forEach(key => {
-            if (!isPlainRecord(normalized[key])) normalized[key] = {};
-        });
-
-        // Migration: older meals used `type`; all current views use `mealType`.
-        normalized.dailyMeals.forEach(meal => {
-            if (isPlainRecord(meal) && !meal.mealType && meal.type) meal.mealType = meal.type;
-        });
-
-        // Remove invalid photo sentinels while preserving every real image.
-        normalized.metricsHistory.forEach(metric => {
-            if (!isPlainRecord(metric) || !isPlainRecord(metric.photos)) return;
-            const cleanPhotos = {};
-            Object.entries(metric.photos).forEach(([angle, value]) => {
-                if (['front', 'side', 'back'].includes(angle) && isValidPhotoData(value)) cleanPhotos[angle] = value;
-            });
-            if (Object.keys(cleanPhotos).length) metric.photos = cleanPhotos;
-            else delete metric.photos;
-        });
-
-        normalized.customExercises.forEach(exercise => {
-            if (exercise && exercise.name && Array.isArray(exercise.muscles) && typeof EXERCISE_TO_MUSCLES !== 'undefined') {
-                EXERCISE_TO_MUSCLES[exercise.name] = exercise.muscles.slice();
-            }
-        });
-        return normalized;
-    }
-
-    function stateStorageKey(uid) {
-        return STATE_KEY_PREFIX + String(uid || (currentUser && currentUser.uid) || 'guest');
-    }
-
-    function recoveryStorageKey(uid) {
-        return STATE_BACKUP_PREFIX + String(uid || (currentUser && currentUser.uid) || 'guest');
-    }
-
-    function readStoredJson(key) {
-        try {
-            const value = localStorage.getItem(key);
-            if (!value) return null;
-            const parsed = JSON.parse(value);
-            return isPlainRecord(parsed) ? parsed : null;
-        } catch (error) {
-            console.warn('Ignored an unreadable VFIT save:', key, error);
-            return null;
-        }
-    }
-
-    /** A small recovery copy excludes local-only image data to avoid doubling storage use. */
-    function stateWithoutLocalImages(value) {
-        return JSON.parse(JSON.stringify(value, (key, item) => {
-            if (key === 'photos' || key === 'currentPhotos') return undefined;
-            if (typeof item === 'string' && item.indexOf('data:image/') === 0) return undefined;
-            return item;
-        }));
-    }
-
-    function saveState(options) {
-        const config = options || {};
-        if (!isPlainRecord(state.meta)) state.meta = deepClone(DEFAULT_STATE.meta);
-        state.meta.schemaVersion = VFIT_STATE_SCHEMA_VERSION;
-        if (!config.preserveUpdatedAt) state.meta.updatedAt = new Date().toISOString();
-
-        const key = stateStorageKey(config.uid);
-        try {
-            localStorage.setItem(key, JSON.stringify(state));
-            localSaveCounter += 1;
-            if (config.forceBackup || localSaveCounter % 10 === 1 || !localStorage.getItem(recoveryStorageKey(config.uid))) {
-                try {
-                    localStorage.setItem(recoveryStorageKey(config.uid), JSON.stringify(stateWithoutLocalImages(state)));
-                } catch (backupError) {
-                    console.warn('Recovery save skipped:', backupError);
-                }
-            }
-            if (!config.skipCloud) scheduleCloudSnapshotSync();
-            updateDataSyncStatus();
-            return true;
-        } catch (error) {
-            console.error('Save error:', error);
-            // Preserve the full in-memory state and at least refresh the photo-free
-            // recovery record. Never delete older photos automatically.
-            try {
-                localStorage.setItem(recoveryStorageKey(config.uid), JSON.stringify(stateWithoutLocalImages(state)));
-            } catch (backupError) {
-                console.warn('Recovery save also failed:', backupError);
-            }
-            if (error && (error.name === 'QuotaExceededError' || error.code === 22)) {
-                showToast('App storage is full. Your photo gallery is kept separately ‚Äî export a backup and free device space.', 7000);
-            } else {
-                showToast('Could not save on this device. Export a backup now.', 6000);
-            }
-            updateDataSyncStatus();
-            return false;
-        }
-    }
-
-    /** Load only this signed-in account. A legacy shared save is claimed once. */
-    function loadState(uid) {
-        const accountId = uid || (currentUser && currentUser.uid) || 'guest';
-        let parsed = readStoredJson(stateStorageKey(accountId));
-        let source = 'device';
-
-        if (!parsed) {
-            parsed = readStoredJson(recoveryStorageKey(accountId));
-            source = parsed ? 'recovery' : 'default';
-        }
-
-        if (!parsed && accountId !== 'guest') {
-            let migratedUid = null;
-            try { migratedUid = localStorage.getItem(LEGACY_MIGRATION_KEY); } catch (error) {}
-            if (!migratedUid || migratedUid === accountId) {
-                const legacy = readStoredJson(LEGACY_STATE_KEY);
-                if (legacy) {
-                    parsed = legacy;
-                    source = 'legacy';
-                    try { localStorage.setItem(LEGACY_MIGRATION_KEY, accountId); } catch (error) {}
-                }
-            }
-        }
-
-        state = normalizeState(parsed || DEFAULT_STATE);
-        if (source === 'legacy' || source === 'recovery') {
-            saveState({ uid: accountId, skipCloud: true, preserveUpdatedAt: true, forceBackup: true });
-        }
-        return source;
-    }
-
-    function exportVfitBackup() {
-        try {
-            const payload = {
-                app: 'VFIT',
-                appVersion: VFIT_APP_VERSION,
-                schemaVersion: VFIT_STATE_SCHEMA_VERSION,
-                exportedAt: new Date().toISOString(),
-                accountEmail: currentUser ? (currentUser.email || '') : '',
-                state: state
-            };
-            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `vfit-backup-${localDateKey()}.json`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-            showToast('Backup downloaded ‚Äî keep it private', 5000);
-        } catch (error) {
-            console.error('Backup export failed:', error);
-            showToast('Could not create the backup', 5000);
-        }
-    }
-
-    async function importVfitBackup(event) {
-        const input = event && event.target;
-        const file = input && input.files && input.files[0];
-        if (!file) return;
-        try {
-            if (file.size > 50 * 1024 * 1024) throw new Error('Backup is larger than 50 MB');
-            const parsed = JSON.parse(await file.text());
-            const imported = isPlainRecord(parsed && parsed.state) ? parsed.state : parsed;
-            if (!isPlainRecord(imported)) throw new Error('This is not a VFIT state backup');
-            const sourceEmail = parsed && parsed.accountEmail ? String(parsed.accountEmail) : '';
-            const accountWarning = sourceEmail && currentUser && sourceEmail.toLowerCase() !== (currentUser.email || '').toLowerCase()
-                ? `\n\nThis backup was exported for ${sourceEmail}.`
-                : '';
-            const approved = confirm(
-                'Restore this VFIT backup? Imported history will be merged with this account, so existing workouts and photos are kept.' + accountWarning
-            );
-            if (!approved) return;
-            const preferredImport = normalizeState(imported);
-            preferredImport.meta.updatedAt = new Date(Date.now() + 1000).toISOString();
-            state = mergeStateSnapshots(state, preferredImport);
-            if (!saveState({ forceBackup: true })) throw new Error('The restored data could not be saved on this device');
-            await flushCloudSync({ silent: true });
-            showToast('Backup restored ‚úì');
-            setTimeout(() => window.location.reload(), 500);
-        } catch (error) {
-            console.error('Backup restore failed:', error);
-            showToast(error.message || 'Could not restore that backup', 6000);
-        } finally {
-            if (input) input.value = '';
-        }
-    }
-
-    let deferredInstallPrompt = null;
-
-    function isStandaloneApp() {
-        return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-    }
-
-    function requestPersistentDeviceStorage() {
-        if (navigator.storage && typeof navigator.storage.persist === 'function') {
-            navigator.storage.persist().catch(() => false);
-        }
-    }
-
-    function updateInstallButton() {
-        const button = document.getElementById('install-app-btn');
-        if (!button) return;
-        if (isStandaloneApp()) {
-            button.textContent = 'App Installed';
-            button.disabled = true;
-        } else {
-            button.textContent = deferredInstallPrompt ? 'Install VFIT App' : 'Add to Home Screen';
-            button.disabled = false;
-        }
-    }
-
-    async function installVfitApp() {
-        if (isStandaloneApp()) {
-            showToast('VFIT is already installed');
-            return;
-        }
-        if (deferredInstallPrompt) {
-            deferredInstallPrompt.prompt();
-            const choice = await deferredInstallPrompt.userChoice;
-            deferredInstallPrompt = null;
-            updateInstallButton();
-            if (choice && choice.outcome === 'accepted') {
-                requestPersistentDeviceStorage();
-                showToast('VFIT installed ‚úì');
-            }
-            return;
-        }
-        showToast('In Chrome, open ‚ãÆ then tap ‚ÄúAdd to Home screen‚Äù or ‚ÄúInstall app‚Äù', 7000);
-    }
-
-    function registerVfitServiceWorker() {
-        if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
-        navigator.serviceWorker.register('./sw.js', { scope: './' })
-            .then(registration => registration.update().catch(() => {}))
-            .catch(error => console.warn('Offline app setup unavailable:', error));
-    }
-
-    window.addEventListener('beforeinstallprompt', event => {
-        event.preventDefault();
-        deferredInstallPrompt = event;
-        updateInstallButton();
-    });
-    window.addEventListener('appinstalled', () => {
-        deferredInstallPrompt = null;
-        updateInstallButton();
-    });
-    window.addEventListener('online', () => {
-        updateNetworkStatus(true);
-        if (currentUser) scheduleCloudSnapshotSync(250);
-    });
-    window.addEventListener('offline', () => updateNetworkStatus(false));
-
-    function setupMidnightSave() {
-        if (midnightSaveTimeout) clearTimeout(midnightSaveTimeout);
-        const now = new Date();
-        const tomorrow = new Date(now);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(0, 0, 0, 0);
-        const msUntilMidnight = tomorrow - now;
-
-        midnightSaveTimeout = setTimeout(() => {
-            saveDailyNutrition();
-            setupMidnightSave();
-        }, msUntilMidnight);
-    }
-
-    function saveDailyNutrition() {
-        const dateToSave = state.viewDate;
-        const mealsForDate = state.dailyMeals.filter(m => m.date === dateToSave);
-
-        if (mealsForDate.length > 0) {
-            const totalCals = mealsForDate.reduce((sum, m) => sum + (m.calories || 0), 0);
-            const totalProtein = mealsForDate.reduce((sum, m) => sum + (m.protein || 0), 0);
-            const totalCarbs = mealsForDate.reduce((sum, m) => sum + (m.carbs || 0), 0);
-            const totalFat = mealsForDate.reduce((sum, m) => sum + (m.fat || 0), 0);
-            const totalFiber = mealsForDate.reduce((sum, m) => sum + (m.fiber || 0), 0);
-
-            state.nutritionHistory = state.nutritionHistory.filter(h => h.date !== dateToSave);
-
-            const entry = {
-                date: dateToSave,
-                calories: totalCals,
-                protein: totalProtein,
-                carbs: totalCarbs,
-                fat: totalFat,
-                fiber: totalFiber,
-                meals: mealsForDate,
-                savedAt: new Date().toISOString()
-            };
-            state.nutritionHistory.unshift(entry);
-
-            state.nutritionHistory = state.nutritionHistory.slice(0, 365);
-
-            saveState();
-        } else {
-            state.nutritionHistory = state.nutritionHistory.filter(h => h.date !== dateToSave);
-            saveState();
-        }
-    }
-
-    /**
-     * Auto-save nutrition whenever a meal is added or removed.
-     */
-    function autoSaveNutrition() {
-        saveDailyNutrition();
-        if (currentUser && db) {
-            syncToFirebase();
-        }
-    }
-
-    // ==========================================================================
-    // TAB MANAGEMENT
-    // ==========================================================================
-
-    const SETTINGS_PAGE_DETAILS = Object.freeze({
-        coaching: {
-            title: 'Coaching Hub',
-            description: 'Daily advice, readiness, shift rota, check-ins and progression.'
-        },
-        personal: {
-            title: 'Personal Details',
-            description: 'Update body stats, maintenance calories and progress reminders.'
-        },
-        goals: {
-            title: 'Goals & Nutrition Targets',
-            description: 'Set your focus, calorie target and longer-term goals.'
-        },
-        equipment: {
-            title: 'Equipment & Exercises',
-            description: 'Choose the gym, home and custom exercises available to you.'
-        },
-        'ai-coach': {
-            title: 'AI Coach Preferences',
-            description: 'Control personalised training, nutrition and recovery advice.'
-        },
-        habits: {
-            title: 'Daily Habits',
-            description: 'Create and manage the habits shown on your dashboard.'
-        },
-        tracking: {
-            title: 'Tracking Options',
-            description: 'Choose whether hydration and steps appear in daily tracking.'
-        },
-        notifications: {
-            title: 'Android Notifications',
-            description: 'Set shift-aware workout, check-in and hydration reminders.'
-        },
-        privacy: {
-            title: 'Privacy & Account',
-            description: 'Review cloud privacy, exports and account controls.'
-        },
-        data: {
-            title: 'Data & Offline App',
-            description: 'Sync, back up, restore or install VFIT on your device.'
-        },
-        feedback: {
-            title: 'Beta Feedback & Readiness',
-            description: 'Report bugs or ideas with safe diagnostics and review launch checks.'
-        }
-    });
-    let activeSettingsPage = 'home';
-
-    function openSettingsPage(pageId, options) {
-        const config = options || {};
-        const requested = String(pageId || 'home');
-        const nextPage = requested === 'home' || SETTINGS_PAGE_DETAILS[requested]
-            ? requested
-            : 'home';
-        const isHome = nextPage === 'home';
-        const menu = document.getElementById('settings-menu');
-        const shell = document.getElementById('settings-subpage-shell');
-        const contentCard = document.getElementById('settings-content-card');
-        const title = document.getElementById('settings-subpage-title');
-        const description = document.getElementById('settings-subpage-description');
-
-        if (!menu || !shell) return false;
-        menu.classList.toggle('hidden', !isHome);
-        shell.classList.toggle('hidden', isHome);
-
-        document.querySelectorAll('#settings [data-settings-page]').forEach(panel => {
-            const visible = !isHome && panel.dataset.settingsPage === nextPage;
-            panel.classList.toggle('hidden', !visible);
-            panel.setAttribute('aria-hidden', visible ? 'false' : 'true');
-        });
-
-        if (contentCard) {
-            contentCard.classList.toggle('hidden', isHome || nextPage === 'coaching');
-        }
-
-        if (!isHome) {
-            const details = SETTINGS_PAGE_DETAILS[nextPage];
-            if (title) title.textContent = details.title;
-            if (description) description.textContent = details.description;
-            if (nextPage === 'coaching') {
-                mountCoachingHubInSettings();
-                if (config.render !== false) renderCoachingHub();
-                openCoachingPage('home', { scroll: false, focus: false, render: false });
-            } else if (config.render !== false) {
-                renderSettings();
-            }
-        }
-
-        activeSettingsPage = nextPage;
-        if (config.scroll !== false) window.scrollTo({ top: 0, behavior: 'auto' });
-        if (config.focus !== false) {
-            const focusTarget = isHome ? document.getElementById('settings-menu-title') : title;
-            if (focusTarget && focusTarget.focus) {
-                try { focusTarget.focus({ preventScroll: true }); } catch (error) { focusTarget.focus(); }
-            }
-        }
-        scheduleAccessibleDomRefresh();
-        refreshIcons();
-        return true;
-    }
-
-    function closeSettingsPage() {
-        saveState();
-        return openSettingsPage('home');
-    }
-
-    function openPreferencesAndGoals(pageId) {
-        return switchTab('settings', { settingsPage: pageId || 'home' });
-    }
-
-    const COACHING_PAGE_DETAILS = Object.freeze({
-        daily: ['Today‚Äôs Coaching', 'Daily conversation, readiness and advice based on today‚Äôs shift.'],
-        training: ['Training & Goals', 'Weekly set targets, progression, plateaus and deload guidance.'],
-        shifts: ['Shift Plan & Advice', 'Set the rota that powers today‚Äôs shift-aware coaching guidance.'],
-        diet: ['Dietary Plan & Meals', 'Dietary requirements, eating approach and meals adapted to your shift.'],
-        coach: ['Coach & Check-ins', 'Coach messages, shared plans and your weekly check-in.'],
-        reports: ['Progress Reports', 'Review or download your weekly training and nutrition report.'],
-        membership: ['Membership', 'View your current plan and available membership options.']
-    });
-    let activeCoachingPage = 'home';
-
-    function openCoachingPage(pageId, options) {
-        const config = options || {};
-        const requested = String(pageId || 'home');
-        const nextPage = requested === 'home' || COACHING_PAGE_DETAILS[requested] ? requested : 'home';
-        const isHome = nextPage === 'home';
-        const menu = document.getElementById('coaching-menu');
-        const header = document.getElementById('coaching-subpage-header');
-        const title = document.getElementById('coaching-subpage-title');
-        const description = document.getElementById('coaching-subpage-description');
-        if (!menu || !header) return false;
-
-        if (!isHome && config.render !== false) renderCoachingHub();
-        menu.classList.toggle('hidden', !isHome);
-        header.classList.toggle('hidden', isHome);
-        document.querySelectorAll('#coaching [data-coaching-page]').forEach(panel => {
-            const visible = !isHome && panel.dataset.coachingPage === nextPage;
-            panel.classList.toggle('hidden', !visible);
-            panel.setAttribute('aria-hidden', visible ? 'false' : 'true');
-        });
-        if (!isHome) {
-            const details = COACHING_PAGE_DETAILS[nextPage];
-            if (title) title.textContent = details[0];
-            if (description) description.textContent = details[1];
-        }
-        activeCoachingPage = nextPage;
-        if (config.scroll !== false) window.scrollTo({ top: 0, behavior: 'auto' });
-        if (config.focus !== false) {
-            const target = isHome ? document.getElementById('coaching-menu-title') : title;
-            if (target && target.focus) {
-                try { target.focus({ preventScroll: true }); } catch (error) { target.focus(); }
-            }
-        }
-        scheduleAccessibleDomRefresh();
-        refreshIcons();
-        return true;
-    }
-
-    function closeCoachingPage() {
-        return openCoachingPage('home');
-    }
-
-    function mountCoachingHubInSettings() {
-        const hub = document.getElementById('coaching');
-        const slot = document.getElementById('coaching-settings-slot');
-        if (!hub || !slot) return false;
-        if (hub.parentNode !== slot) slot.appendChild(hub);
-        hub.classList.remove('hidden');
-        return true;
-    }
-
-    function openCoachingHub() {
-        return switchTab('coaching');
-    }
-
-    function switchTab(tabId, options) {
-        const config = options || {};
-        if (!VALID_TAB_IDS.has(tabId)) {
-            console.warn('Ignored unknown tab:', tabId);
-            return false;
-        }
-        const requestedTabId = tabId;
-        const targetTabId = tabId === 'coaching' ? 'settings' : tabId;
-        if (targetTabId === 'settings') mountCoachingHubInSettings();
-        const tab = document.getElementById(targetTabId);
-        if (!tab || !tab.classList.contains('tab-content')) return false;
-
-        document.querySelectorAll('.tab-content').forEach(content => {
-            const active = content === tab;
-            content.classList.toggle('active', active);
-            content.setAttribute('aria-hidden', active ? 'false' : 'true');
-        });
-        document.querySelectorAll('[onclick*="switchTab("]').forEach(control => {
-            const handler = control.getAttribute('onclick') || '';
-            const active = handler.includes(`switchTab('${targetTabId}')`) || handler.includes(`switchTab("${targetTabId}")`);
-            if (active) control.setAttribute('aria-current', 'page');
-            else control.removeAttribute('aria-current');
-        });
-        try { sessionStorage.setItem('vfit_active_tab', requestedTabId); } catch (error) {}
-
-        const renders = {
-            logs: () => { renderLogs(); filterWorkouts(); },
-            profile: renderProfile,
-            settings: () => { renderSettings(); renderCoachingHub(); },
-            dashboard: renderDashboard,
-            training: renderCoachPlanInTraining,
-            metrics: () => {
-                const picker = document.getElementById('metrics-date-picker');
-                if (picker && !picker.value) picker.value = state.metricsDate || localDateKey();
-                renderMetricsStatusLines();
-                renderMetricsHistory();
-            }
-        };
-        if (renders[targetTabId]) safeInvoke(`${targetTabId} tab`, renders[targetTabId]);
-        if (targetTabId === 'settings') {
-            const settingsPage = requestedTabId === 'coaching'
-                ? 'coaching'
-                : (config.settingsPage || 'home');
-            openSettingsPage(settingsPage, { scroll: false, focus: false, render: false });
-        }
-        if (config.scroll !== false) window.scrollTo({ top: 0, behavior: 'auto' });
-        if (requestedTabId === 'coaching' && config.scroll !== false) {
-            setTimeout(() => {
-                const hub = document.getElementById('coaching');
-                if (hub && hub.scrollIntoView) hub.scrollIntoView({ block: 'start', behavior: 'auto' });
-            }, 0);
-        }
-        scheduleAccessibleDomRefresh();
-        refreshIcons();
-        return true;
-    }
-
-    // ==========================================================================
-    // SIDEBAR
-    // ==========================================================================
-
-    function toggleSidebar(forceOpen) {
-        const sidebar = document.getElementById('sidebar');
-        const overlay = document.getElementById('sidebar-overlay');
-        const trigger = document.getElementById('sidebar-menu-button');
-        if (!sidebar || !overlay) return;
-        const isOpen = sidebar.classList.contains('translate-x-0');
-        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : !isOpen;
-        if (!shouldOpen) {
-            sidebar.classList.remove('translate-x-0');
-            sidebar.classList.add('-translate-x-full');
-            overlay.classList.add('hidden');
-            sidebar.setAttribute('aria-hidden', 'true');
-            overlay.setAttribute('aria-hidden', 'true');
-            if (trigger) {
-                trigger.setAttribute('aria-expanded', 'false');
-                trigger.setAttribute('aria-label', 'Open menu');
-                if (isOpen) trigger.focus({ preventScroll: true });
-            }
-        } else {
-            sidebar.classList.add('translate-x-0');
-            sidebar.classList.remove('-translate-x-full');
-            overlay.classList.remove('hidden');
-            sidebar.setAttribute('aria-hidden', 'false');
-            overlay.setAttribute('aria-hidden', 'false');
-            if (trigger) {
-                trigger.setAttribute('aria-expanded', 'true');
-                trigger.setAttribute('aria-label', 'Close menu');
-            }
-            setTimeout(() => document.getElementById('sidebar-close-button')?.focus({ preventScroll: true }), 0);
-        }
-        refreshIcons();
-    }
-
-    // ==========================================================================
-    // TOAST
-    // ==========================================================================
-
-    function showToast(message, duration) {
-        if (duration === undefined) duration = 3000;
-        const toast = document.getElementById('toast');
-        toast.textContent = message;
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), duration);
-    }
+Y™Áäx-ÆÈ‹j◊ù¢Îi∫⁄+äßj[hëÈ‹¢ÈÌ◊^πÛ‘Ëµ©h∫⁄n∂XßzÕHÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»Tì’SëUS”à8†%ô\ú⁄[€ö[ôÀÿYôHô[ô\ö[ô»[ôô\⁄[Y[ùRH[\ú¬àÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBà€€ú›ëíU–T’ëTî“S”àH	ÃãåKåXô]KåM	Œ¬à€€ú›ëíU‘’UW‘–“SPW’ëTî“S”àH¬à€€ú›êSQ’Pó“Q»Hô]»Ÿ]
+…Ÿ\⁄õÿ\ô	À	ÿ€ÿX⁄[ô…À	‹õŸö[IÀ	›òZ[ö[ô…À	€ù]ö][€âÀ	€Ÿ‹…À	€Y]öX‹…À	‹Ÿ][ô‹…◊JN¬à€€ú›ïSïSQW–””ëíQ»HÿöôX›ôúôY^ôJÿöôX›ò\‹⁄Y€ä¬àù[ò›[€ú‘ôY⁄[€éà	Ÿ]\õ‹K]Ÿ\›âÀà\⁄X⁄‘⁄]RŸ^Nà	…Ààò€Uò\YŸ^Nà	…Àà^[Y[ù—[òXõYàò[ŸKà\⁄[òXõYàò[ŸKàö]òXﬁUô\ú⁄[€éà	ÃåçãLKLM	¬àK⁄[ô›ÀïëíU–””ëíQ»ﬂJJN¬à€€ú›Q–P÷W‘’UW“—VHH	Ÿö]òX⁄◊‹›]IŒ¬à€€ú›’UW“—VW‘ëQíVH	›ôö]‹›]W›åéâŒ¬à€€ú›’UW–êP“’T‘ëQíVH	›ôö]‹›]WÿòX⁄›\›åéâŒ¬à€€ú›Q–P÷W”RQ‘êUS”ó“—VHH	›ôö]€YÿXﬁW‹›]W€ZY‹ò]Y›ZY	Œ¬Çà]X€€îôYúô\⁄[ô[ô»Hò[ŸN¬à]XÿŸ\‹⁄Xö[]TôYúô\⁄[ô[ô»Hò[ŸN¬à]ô]€‹ö‘›]\’[Y\àHù[¬à]Z\‹⁄[ô–⁄\ùõ›XŸT⁄›€àHò[ŸN¬Çà äà]öXŸK[ÿÿ[VVVKSSKQŸ^H\ŸYôYõ‹ôH›]H\»[ö]X[\ŸYà
+ã¬àù[ò›[€àÿÿ[]RŸ^Jò[YJH¬à€€ú›]HHò[YH[ú›[òŸ[Ÿà]H»ò[YHàô]»]Jò[YH]Kõõ› 
+JN¬à€€ú›ÿÿ[Hô]»]J]KôŸ][YJ
+HH]KôŸ][Y^õ€ôSŸôúŸ]
+
+H
+àå
+N¬àô]\õàÿÿ[ù“T”‘›ö[ô 
+Kú€XŸJL
+N¬àBÇà äàò]⁄X⁄YI‹»^[ú⁄]ôHù[Yÿ›[Y[ùÿÿ[à[ô€\ò]Hö\ú›[ÿYŸôõ[ôH[ŸKà
+ã¬àù[ò›[€àôYúô\⁄X€€ú 
+H¬àYà
+X€€îôYúô\⁄[ô[ô Hô]\õé¬àX€€îôYúô\⁄[ô[ô»HùYN¬à€€ú›ÿ⁄Y[HH⁄[ô›Àúô\]Y\›[ö[X][€ëúò[YH
+
+õäHOàŸ][Y[›]
+õã
+JN¬àÿ⁄Y[J
+
+HOà¬àX€€îôYúô\⁄[ô[ô»Hò[ŸN¬àûH¬àYà
+⁄[ô›ÀõX⁄YH	âà\[Ÿà⁄[ô›ÀõX⁄YKò‹ôX]RX€€ú»OOH	Ÿù[ò›[€â H¬à⁄[ô›ÀõX⁄YKò‹ôX]RX€€ú 
+N¬àBàHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	“X€€àôYúô\⁄⁄⁄\YâÀ\úõ‹äN¬àBàJN¬àBÇàù[ò›[€à\ÿÿ\Rú‘›ö[ô ò[YJH¬àô]\õà›ö[ô ò[YHOHù[»	…»àò[YJBàúô\XŸJ◊ŸÀ	◊	 Bàúô\XŸJ…ÀŸÀó	»äBàúô\XŸJ»ãŸÀ	◊åâ Bàúô\XŸJœŸÀ	◊–… Bàúô\XŸJœãŸÀ	◊—I Bàúô\XŸJ…ãŸÀ	◊çâ Bàúô\XŸJ◊ãŸÀ	◊â Bàúô\XŸJ◊ãŸÀ	◊â Bàúô\XŸJ◊LåéŸÀ	◊Låé	 Bàúô\XŸJ◊LåéKŸÀ	◊LåéI N¬àBÇàù[ò›[€àÿYôRú€€ëõ‹í[õ[ôJò[YJH¬à€€ú›ú€€àHî””ãú›ö[ô⁄YûJò[YJN¬àYà
+ú€€àOOH[ôYö[ôY
+Hô]\õà	€ù[	Œ¬àô]\õàú€€Çàúô\XŸJ…ãŸÀ	◊Lçâ Bàúô\XŸJœŸÀ	◊Lÿ… Bàúô\XŸJœãŸÀ	◊LŸI Bàúô\XŸJ…ÀŸÀ	◊Lç… N¬àBÇà äà[›»€õH[XYŸHÿ⁄[Y\»úõ›‹Ÿ\ú»ÿ[à\‹^HÿYô[H[à\»\à
+ã¬àù[ò›[€àÿYôR[XYŸU\õ
+ò[YJH¬àYà
+]ò[YJHô]\õà	…Œ¬à€€ú›ò]»H›ö[ô ò[YJKùö[J
+N¬àYà
+◊ô]Nö[XYŸW ŒúôﬂúOŸﬂŸXú⁄YäNÿò\ŸMç⁄Kù\›
+ò] JHô]\õàò]Œ¬àYà
+◊òõÿéã⁄Kù\›
+ò] JHô]\õàò]Œ¬àûH¬à€€ú›\õHô]»Tì
+ò]À⁄[ô›Àõÿÿ][€ãöôYäN¬àô]\õà
+\õúõ›ÿ€€OOH	⁄Œâ»\õúõ›ÿ€€OOH	⁄â H»\õöôYàà	…Œ¬àHÿ]⁄
+\úõ‹äH¬àô]\õà	…Œ¬àBàBÇàù[ò›[€àÿYôR[ùõ⁄ŸJXô[ÿ[òX⁄ H¬àûH¬àô]\õàÿ[òX⁄ 
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹äXô[
+»	»òZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+	’]ÿ‹ôY[à]Hõÿõ[Kà[›\àÿ]ôY]H\»ÿYôKâÀL
+N¬àô]\õà[ôYö[ôY¬àBàBÇàù[ò›[€à⁄\ùXúò\ûTôXYJÿ[ùò\ H¬àYà
+\[Ÿà⁄[ô›Àê⁄\ùOOH	Ÿù[ò›[€â Hô]\õàùYN¬àYà
+ÿ[ùò\ Hÿ[ùò\ÀúŸ]]öXù]J	ÿ\öXK[Xô[	À	–⁄\ù[ò]òZ[XõH[ù[H\\»ÿYY€òŸH⁄[H€õ[ôI N¬àYà
+[Z\‹⁄[ô–⁄\ùõ›XŸT⁄›€äH¬àZ\‹⁄[ô–⁄\ùõ›XŸT⁄›€àHùYN¬à⁄›’ÿ\›
+	–⁄\ù»⁄[ôH]òZ[XõHYù\àëíUÿY»€òŸH⁄[H€õ[ôIÀå
+N¬àBàô]\õàò[ŸN¬àBÇà äàYÿYôHYò][»»›]X»[ô[ò[ZXÿ[K\ô[ô\ôY€€ùõ€Àà
+ã¬àù[ò›[€à[ú›\ôPXÿŸ\‹⁄XõQ€Jõ€›
+H¬à€€ú›ÿ€‹HHõ€›	âàõ€›ú]Y\ûTŸ[X›‹ê[»õ€›àÿ›[Y[ù¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	ÿù]€éõõ›
+›\WJI Kôõ‹ëXX⁄
+ù]€àOà»ù]€ãù\HH	ÿù]€âŒ»JN¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	⁄[YŒõõ›
+ÿ[JI Kôõ‹ëXX⁄
+[Y»Oà»[YÀò[H	…Œ»JN¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	⁄[Y… Kôõ‹ëXX⁄
+[Y»Oà¬àYà
+Z[YÀö\–]öXù]J	ŸX€Ÿ[ô… JH[YÀôX€Ÿ[ô»H	ÿ\ﬁ[ò…Œ¬àJN¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	Àõ[Ÿ[[›ô\õ^I Kôõ‹ëXX⁄
+[Ÿ[Oà¬à[Ÿ[úŸ]]öXù]J	‹õ€IÀ	ŸX[Ÿ… N¬à[Ÿ[úŸ]]öXù]J	ÿ\öXK[[Ÿ[	À	›ùYI N¬àYà
+[[Ÿ[ö\–]öXù]J	ÿ\öXK[Xô[	 H	âà[[Ÿ[ö\–]öXù]J	ÿ\öXK[Xô[YûI JH¬à€€ú›XY[ô»H[Ÿ[ú]Y\ûTŸ[X›‹ä	⁄Kã… N¬àYà
+XY[ô H¬àYà
+ZXY[ôÀöY
+HXY[ôÀöYH	€[Ÿ[öY	›ôö][[Ÿ[	ﬂK]]X¬à[Ÿ[úŸ]]öXù]J	ÿ\öXK[Xô[YûIÀXY[ôÀöY
+N¬àH[ŸH¬à[Ÿ[úŸ]]öXù]J	ÿ\öXK[Xô[	À	’ëíUX[Ÿ… N¬àBàBàJN¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	⁄[ú]õõ›
+ÿ\öXK[Xô[JNõõ›
+ÿ\öXK[Xô[YûWJKŸ[X›õõ›
+ÿ\öXK[Xô[JNõõ›
+ÿ\öXK[Xô[YûWJK^\ôXNõõ›
+ÿ\öXK[Xô[JNõõ›
+ÿ\öXK[Xô[YûWJI Kôõ‹ëXX⁄
+€€ùõ€Oà¬àYà
+€€ùõ€õXô[»	âà€€ùõ€õXô[Àõ[ô›à
+Hô]\õé¬à€€ú›Xô[H€€ùõ€ôŸ]]öXù]J	‹XŸZ€\â H€€ùõ€öYúô\XŸJ÷ÀW◊KŸÀ	»	 H	“[ú]	Œ¬à€€ùõ€úŸ]]öXù]J	ÿ\öXK[Xô[	ÀXô[
+N¬àJN¬àÿ€‹Kú]Y\ûTŸ[X›‹ê[
+	÷€€ò€X⁄◊Nõõ›
+ù]€äNõõ›
+JNõõ›
+[ú]
+Nõõ›
+Ÿ[X›
+Nõõ›
+^\ôXJI Kôõ‹ëXX⁄
+€€ùõ€Oà¬àYà
+X€€ùõ€ö\–]öXù]J	‹õ€I JH€€ùõ€úŸ]]öXù]J	‹õ€IÀ	ÿù]€â N¬àYà
+X€€ùõ€ö\–]öXù]J	›Xö[ô^	 JH€€ùõ€ùXí[ô^H¬àYà
+€€ùõ€ô]\Ÿ]öŸ^Xõÿ\ô€X⁄»OOH	›ùYI Hô]\õé¬à€€ùõ€ô]\Ÿ]öŸ^Xõÿ\ô€X⁄»H	›ùYIŒ¬à€€ùõ€òY]ô[ù\›[ô\ä	⁄Ÿ^Y›€âÀ]ô[ùOà¬àYà
+]ô[ùöŸ^HOOH	—[ù\â»]ô[ùöŸ^HOOH	»	 H¬à]ô[ùúô]ô[ùYò][
+
+N¬à€€ùõ€ò€X⁄ 
+N¬àBàJN¬àJN¬àBÇàù[ò›[€àÿ⁄Y[PXÿŸ\‹⁄XõQ€TôYúô\⁄
+
+H¬àYà
+XÿŸ\‹⁄Xö[]TôYúô\⁄[ô[ô Hô]\õé¬àXÿŸ\‹⁄Xö[]TôYúô\⁄[ô[ô»HùYN¬à€€ú›ÿ⁄Y[HH⁄[ô›Àúô\]Y\›YPÿ[òX⁄»
+
+õäHOàŸ][Y[›]
+õã
+JN¬àÿ⁄Y[J
+
+HOà¬àXÿŸ\‹⁄Xö[]TôYúô\⁄[ô[ô»Hò[ŸN¬à[ú›\ôPXÿŸ\‹⁄XõQ€Jÿ›[Y[ù
+N¬àK»[Y[›]àLJN¬àBÇàù[ò›[€à\]Sô]€‹ö‘›]\ [õõ›[òŸS€õ[ôJH¬à€€ú›ò[õô\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	€ô]€‹öÀ\›]\… N¬àYà
+Xò[õô\äHô]\õé¬à€X\ï[Y[›]
+ô]€‹ö‘›]\’[Y\äN¬àYà
+ò]öYÿ]‹ãõ€ì[ôJH¬àò[õô\ãù^€€ù[ùH	–òX⁄»€õ[ôH8†%ﬁ[ò⁄[ô»ÿ]ôY⁄[ôŸ\…Œ¬àò[õô\ãò€\‹”ò[YHH	ÿôÀY[Y\ò[ML^XõX⁄»MKLàõ›[ôYYù[^^»õ€ùXõX⁄»⁄Y›À^	Œ¬àYà
+[õõ›[òŸS€õ[ôJH¬àô]€‹ö‘›]\’[Y\àHŸ][Y[›]
+
+
+HOàò[õô\ãò€\‹”\›òY
+	⁄Y[â KÃ
+N¬àH[ŸH¬àò[õô\ãò€\‹”\›òY
+	⁄Y[â N¬àBàYà
+[õõ›[òŸS€õ[ôH	âà›\úô[ù\Ÿ\à	âà\⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôJH¬àô\€€ôQõ€Ÿ]Xò\ŸPXÿŸ\‹ ›\úô[ù\Ÿ\äBàù[ä
+
+HOàÿY⁄\ôYõ€Ÿ]Xò\ŸJ
+JBàòÿ]⁄
+\úõ‹àOà€€ú€€Kùÿ\õä	—õ€Ÿ]Xò\ŸHôX€€õôX›ﬁ[ò»[ô[ôŒâÀ\úõ‹äJN¬àBàH[ŸH¬àò[õô\ãù^€€ù[ùH	”Ÿôõ[ôH8†%⁄[ôŸ\»\ôHÿ]ôY€à\»]öXŸIŒ¬àò[õô\ãò€\‹”ò[YHH	ÿôÀX[Xô\ãML^XõX⁄»MKLàõ›[ôYYù[^^»õ€ùXõX⁄»⁄Y›À^	Œ¬àBà\]Q]Tﬁ[ò‘›]\ 
+N¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»íTëPêT—H””ëíQ’TêUS”ÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBà€€ú›ö\ôXò\ŸP€€ôöY»H¬à\RŸ^NàêR^òTﬁPNRZ]ôúî[XÃù“]€îÃöê‘ŸVú]TVHãà]]€XZ[éàùôö]X\\õÀôö\ôXò\ŸX\ò€€Hãàõ⁄ôX›Yàùôö]X\\õ»ãà›‹òYŸPùX⁄Ÿ]àùôö]X\\õÀôö\ôXò\Ÿ\›‹òYŸKò\ãàY\‹ÿY⁄[ô‘Ÿ[ô\íYàéMMÃÃééHãà\YàåNéMMÃÃééNùŸXéåÕçNŸŸôMåòååÿÃYåãàYX\›\ô[Y[ùYàëÀMÕLñëNÇàN¬Çà€€ú›ö\ôXò\ŸP\Hö\ôXò\ŸKö[ö]X[^ôP\
+ö\ôXò\ŸP€€ôöY N¬à€€ú›]]Hö\ôXò\ŸKò]]
+
+N¬à€€ú›àHö\ôXò\ŸKôö\ô\›‹ôJ
+N¬à]ù[ò›[€ú–\HHù[¬à]Y\‹ÿY⁄[ô–\HHù[¬à]\⁄X⁄‘ôXYHHò[ŸN¬à]õ‹ôY‹õ›[ôY\‹ÿY⁄[ô–õ›[ôHò[ŸN¬à]Xÿ€›[ùY[Xô\ú⁄\H»Y\éà	ŸúôYIÀ›]\Œà	⁄[òX›]ôI»N¬ÇàYà
+\[Ÿàö\ôXò\ŸKôù[ò›[€ú»OOH	Ÿù[ò›[€â H¬àûH»ù[ò›[€ú–\HHö\ôXò\ŸKôù[ò›[€ú ïSïSQW–””ëíQÀôù[ò›[€ú‘ôY⁄[€äN»Bàÿ]⁄
+\úõ‹äH»€€ú€€Kùÿ\õä	–€›YX›[€ú»[ò]òZ[XõNâÀ\úõ‹äN»BàBÇàYà
+ïSïSQW–””ëíQÀò\⁄X⁄‘⁄]RŸ^H	âà\[Ÿàö\ôXò\ŸKò\⁄X⁄»OOH	Ÿù[ò›[€â H¬àûH¬à€€ú›õ›öY\àHô]»ö\ôXò\ŸKò\⁄X⁄ÀîôPÿ\⁄Q[ù\úö\ŸTõ›öY\äïSïSQW–””ëíQÀò\⁄X⁄‘⁄]RŸ^JN¬àö\ôXò\ŸKò\⁄X⁄ 
+KòX›]ò]Jõ›öY\ãùYJN¬à\⁄X⁄‘ôXYHHùYN¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	—ö\ôXò\ŸH\⁄X⁄»\»õ›ôXYNâÀ\úõ‹äN¬àBàBÇàù[ò›[€àŸ]òX⁄Ÿ[ôÿ[XõJò[YJH¬àYà
+Yù[ò›[€ú–\H\[Ÿàù[ò›[€ú–\Kö–ÿ[XõHOOH	Ÿù[ò›[€â Hô]\õàù[¬àûH»ô]\õàù[ò›[€ú–\Kö–ÿ[XõJò[YJN»Bàÿ]⁄
+\úõ‹äH»ô]\õàù[»BàBÇàÀ»XZŸH⁄Y€ãZ[à›\ùö]ôH[à[ôõ⁄Yúõ›‹Ÿ\ãÿ\ô\›\ùàö\ôXò\ŸHYò][»¬àÀ»ÿÿ[\ú⁄\›[òŸH€àŸXãù]Ÿ][ô»]^X⁄]H]õ⁄Y»[ö\ö]YàÀ»Ÿ\‹⁄[€ã[€õHôZ]ö[›\àúõ€H[àX\õY\àùZ[Çà€€ú›]]\ú⁄\›[òŸTôXYHH]]úŸ]\ú⁄\›[òŸJö\ôXò\ŸKò]]ê]]î\ú⁄\›[òŸKì––S
+Bàòÿ]⁄
+\úõ‹àOà€€ú€€Kùÿ\õä	–€›[õ›[òXõH\ú⁄\›[ù⁄Y€ãZ[éâÀ\úõ‹äJN¬ÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»T—Hì”—UH—SïêSTH—VBàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»Ÿ][›\à›€àúôYHŸ^H]àŒãÀŸôÀõò[ù\ŸKô€›ãÿ\KZŸ^K\⁄Y€ù\ö[àÀ»]\úö]ô\»ûH[XZ[[ú›[ùKà\›H]ô]ŸY[àH][›\»ô[›ÀàÀ»ô\X⁄[ô»SS◊“—VKàHSS◊“—VH€‹ö‹»ù]\»X]ö[Hò]K[[Z]YàÀ»
+⁄\ôYX‹õ‹‹»]ô\û[€ôJK€»õ€ŸŸX\ò⁄X^H[ù\õZ][ùHòZ[[ù[àÀ»[›HY[›\à›€àŸ^KÇà€€ú›T—W–TW“—VHHëSS◊“—VHé¬Çà]›\úô[ù\Ÿ\àHù[¬à]ö\ôXò\ŸU\Ÿ\ë]HHﬂN¬à]›\úô[ù\Ÿ\îõ€HH	€Y[Xô\âŒ»À»ô\€€ôYXX⁄Ÿ⁄[àúõ€HH€ÿX⁄Y[XZ[[›€\›à]›\úô[ù\Ÿ\í\”›€ô\àHò[ŸN»À»ô\€€ôYúõ€HHö]ò]HYZ[úÀﬁ›ZYHôX€‹ôà]›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHHò[ŸN¬à]⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôHHù[¬à]õ€Ÿ]Xò\ŸQY]‹ú’[ú›Xúÿ‹öXôHHù[¬à]öY]⁄[ô–€Y[ù]HHù[¬à]]]Ÿ\‹⁄[€ëŸ[ô\ò][€àH¬Çàù[ò›[€à\”›€ô\ä
+H¬àô]\õàõ€€X[ä›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\í\”›€ô\äN¬àBÇàÀ»›€ô\àXÿŸ\‹»\»Ÿ^YY»ö\ôXò\ŸH]]RQ[ú›XYŸà[à[XZ[Yô\‹ÀÇàÀ»HYZ[ú»ôX€‹ô\»‹ôX]YŸ\ùô\ã\⁄YH[ôÿ[õõ›ôH⁄[ôŸYûH€Y[ùÀÇà\ﬁ[ò»ù[ò›[€àô\€€ôS›€ô\êXÿŸ\‹ \Ÿ\äH¬àYà
+]\Ÿ\äHô]\õàò[ŸN¬àûH¬à€€ú›ÿ»H]ÿZ]ãò€€X›[€ä	ÿYZ[ú… Kôÿ \Ÿ\ãùZY
+KôŸ]
+
+N¬à€€ú›[›ŸYHÿÀô^\›»	âàÿÀô]J
+OÀòX›]ôHOOHùYN¬àYà
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZYOOH\Ÿ\ãùZY
+H›\úô[ù\Ÿ\í\”›€ô\àH[›ŸY¬àô]\õà[›ŸY¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	”›€ô\àXÿŸ\‹»€›[õ›ôHô\öYöYYâÀ\úõ‹äN¬àYà
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZYOOH\Ÿ\ãùZY
+H›\úô[ù\Ÿ\í\”›€ô\àHò[ŸN¬àô]\õàò[ŸN¬àBàBÇàù[ò›[€àÿ[ìX[òYŸQõ€Ÿ]Xò\ŸJ
+H¬àô]\õàõ€€X[ä›\úô[ù\Ÿ\à	âà
+\”›€ô\ä
+H›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸJJN¬àBÇàù[ò›[€à\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+H¬à€€ú›ÿ[ìX[òYŸHHÿ[ìX[òYŸQõ€Ÿ]Xò\ŸJ
+N¬à€€ú›Yù]€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ€ŸY]Xò\ŸKXYXù]€â N¬àYà
+Yù]€äHYù]€ãò€\‹”\›ùŸŸ€J	⁄Y[âÀXÿ[ìX[òYŸJN¬à€€ú›X[ùX[ù]€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ€Ÿ[X[ùX[Y[ùûKXù]€â N¬àYà
+X[ùX[ù]€äHX[ùX[ù]€ãò€\‹”\›ùŸŸ€J	⁄Y[âÀXÿ[ìX[òYŸJN¬à€€ú›XÿŸ\‹”Xô[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ€ŸY]Xò\ŸKXXÿŸ\‹À[Xô[	 N¬àYà
+XÿŸ\‹”Xô[
+H¬àXÿŸ\‹”Xô[ù^€€ù[ùHÿ[ìX[òYŸH»	—Y]‹àXÿŸ\‹…»à	‘ôXY€õIŒ¬àXÿŸ\‹”Xô[ò€\‹”ò[YHHÿ[ìX[òYŸBà»	›^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^Y[Y\ò[Må	¬àà	›^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KM	Œ¬àBà€€ú›‹\X›[€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹‹\Y]Xò\ŸKXX›[€â N¬àYà
+‹\X›[€äH‹\X›[€ãò€\‹”\›ùŸŸ€J	⁄Y[âÀXÿ[ìX[òYŸJN¬àYà
+\[Ÿàô[ô\ëõ€Ÿ]Xò\ŸHOOH	Ÿù[ò›[€â H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ€ŸY]Xò\ŸK[[Ÿ[	 N¬àYà
+[Ÿ[	âà[Ÿ[ú›[Kô\‹^HOOH	Ÿõ^	 Hô[ô\ëõ€Ÿ]Xò\ŸJ
+N¬àBàBÇà\ﬁ[ò»ù[ò›[€àô\€€ôQõ€Ÿ]Xò\ŸPXÿŸ\‹ \Ÿ\äH¬àYà
+]\Ÿ\äH¬à›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHHò[ŸN¬à\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+N¬àô]\õàò[ŸN¬àBàYà
+\”›€ô\ä
+JH¬à›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHHùYN¬à\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+N¬àô]\õàùYN¬àBàûH¬à€€ú›ÿ»H]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	Ÿõ€Ÿ]Xò\ŸQY]‹ú… KôŸ]
+
+N¬à€€ú›ZY»HÿÀô^\›»	âà\úò^Kö\–\úò^JÿÀô]J
+KùZY H»ÿÀô]J
+KùZY»à◊N¬à›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHHZYÀú€€YJZYOà›ö[ô ZY
+HOOH›ö[ô \Ÿ\ãùZY
+JN¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	—õ€Ÿ]Xò\ŸHXÿŸ\‹»€›[õ›ôHô\öYöYYâÀ\úõ‹äN¬à›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHHò[ŸN¬àBà\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+N¬àô]\õà›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸN¬àBÇàù[ò›[€à›‹⁄\ôYõ€Ÿ]Xò\ŸTﬁ[ò 
+H¬àYà
+\[Ÿà⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôHOOH	Ÿù[ò›[€â H⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôJ
+N¬àYà
+\[Ÿàõ€Ÿ]Xò\ŸQY]‹ú’[ú›Xúÿ‹öXôHOOH	Ÿù[ò›[€â Hõ€Ÿ]Xò\ŸQY]‹ú’[ú›Xúÿ‹öXôJ
+N¬à⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôHHù[¬àõ€Ÿ]Xò\ŸQY]‹ú’[ú›Xúÿ‹öXôHHù[¬àBÇàù[ò›[€à⁄\ôYõ€Ÿù[Xô\äò[YKX^
+H¬à€€ú›ù[Xô\àHù[Xô\äò[YJN¬àô]\õàù[Xô\ãö\—ö[ö]Jù[Xô\äH	âàù[Xô\àèH»X]õZ[äù[Xô\ãX^L
+Hà¬àBÇàù[ò›[€àõ‹õX[\ŸT⁄\ôYõ€Ÿ]Xò\ŸR][J[ú]ò[òX⁄“Y
+H¬à€€ú›õ€ŸH\‘Z[îôX€‹ô
+[ú]
+H»[ú]àﬂN¬à€€ú›ò]“YH›ö[ô õ€ŸöYò[òX⁄“Y
+	ÿŸãI»
+»]Kõõ› 
+JJN¬à€€ú›YHò]“Yúô\XŸJ÷◊òK^êKVåNWÀWKŸÀ	ÀI Kú€XŸJLå
+H
+	ÿŸãI»
+»]Kõõ› 
+JN¬à€€ú›Ÿ\ùö[ô—‹ò[\»H⁄\ôYõ€Ÿù[Xô\äõ€ŸúŸ\ùö[ô—‹ò[\»LL
+N¬à€€ú›\åL[ú]H\‘Z[îôX€‹ô
+õ€Ÿú\åL H»õ€Ÿú\åL»àﬂN¬à€€ú›‹ù[€ëòX›‹àHŸ\ùö[ô—‹ò[\»à»L»Ÿ\ùö[ô—‹ò[\»àN¬à€€ú›ôXY\åLHŸ^HOà⁄\ôYõ€Ÿù[Xô\äà\åL[ú]⁄Ÿ^WHOOH[ôYö[ôY»\åL[ú]⁄Ÿ^WHà⁄\ôYõ€Ÿù[Xô\äõ€Ÿ⁄Ÿ^WJH
+à‹ù[€ëòX›‹Çà
+N¬à€€ú›€Ÿ][SY»H⁄\ôYõ€Ÿù[Xô\äõ€Ÿú€Ÿ][SY»OOH[ôYö[ôY»õ€Ÿú€Ÿ][SY»à⁄\ôYõ€Ÿù[Xô\äõ€Ÿú€Ÿ][JH
+àL
+N¬à€€ú›\åL»H¬àÿ[‹öY\ŒàôXY\åL
+	ÿÿ[‹öY\… Kàõ›Z[éàôXY\åL
+	‹õ›Z[â Kàÿ\òúŒàôXY\åL
+	ÿÿ\òú… Kàò]àôXY\åL
+	Ÿò]	 KàöXô\éàôXY\åL
+	ŸöXô\â Kà›Yÿ\éàôXY\åL
+	‹›Yÿ\â Kàÿ]ò]àôXY\åL
+	‹ÿ]ò]	 Kà€Ÿ][SYŒà⁄\ôYõ€Ÿù[Xô\ä\åL[ú]ú€Ÿ][SY»OOH[ôYö[ôY»\åL[ú]ú€Ÿ][SY»à€Ÿ][SY»
+à‹ù[€ëòX›‹äKà⁄€\›\õ€àôXY\åL
+	ÿ⁄€\›\õ€	 BàN¬à€€ú›[›ŸYÿ]Y€‹öY\»Hô]»Ÿ]
+…ŸŸ[ô\ò[	À	‹õ›Z[âÀ	ÿÿ\òõ⁄Yò]IÀ	ŸúùZ]]ôY…À	ŸZ\ûIÀ	‹€òX⁄…À	Ÿö[ö…À	€YX[	◊JN¬à€€ú›ÿ]Y€‹ûHH[›ŸYÿ]Y€‹öY\Àö\ õ€Ÿòÿ]Y€‹ûJH»õ€Ÿòÿ]Y€‹ûHà	ŸŸ[ô\ò[	Œ¬à€€ú›‹ôX]Y]H⁄\ôYõ€Ÿù[Xô\äõ€Ÿò‹ôX]Y]
+H]Kõõ› 
+N¬à€€ú›\]Y]HX]õX^
+‹ôX]Y]⁄\ôYõ€Ÿù[Xô\äõ€Ÿù\]Y]
+H‹ôX]Y]
+N¬àô]\õà¬àYàò[YNà›ö[ô õ€Ÿõò[YH	—õ€Ÿ	 Kùö[J
+Kú€XŸJMå
+H	—õ€Ÿ	Ààúò[ôà›ö[ô õ€Ÿòúò[ôõ€Ÿú›‹ôH	… Kùö[J
+Kú€XŸJMå
+Kà›‹ôNà›ö[ô õ€Ÿú›‹ôHõ€Ÿòúò[ô	… Kùö[J
+Kú€XŸJMå
+Kàÿ]Y€‹ûKàò\ò€ŸNà›ö[ô õ€Ÿòò\ò€ŸH	… Kúô\XŸJ◊ŸÀ	… Kú€XŸJÃäKà[XYŸNàÿYôR[XYŸU\õ
+õ€Ÿö[XYŸH	… Kú€XŸJÃ
+Kàÿ[‹öY\Œà⁄\ôYõ€Ÿù[Xô\äõ€Ÿòÿ[‹öY\ Kàõ›Z[éà⁄\ôYõ€Ÿù[Xô\äõ€Ÿúõ›Z[äKàÿ\òúŒà⁄\ôYõ€Ÿù[Xô\äõ€Ÿòÿ\òú Kàò]à⁄\ôYõ€Ÿù[Xô\äõ€Ÿôò]
+KàöXô\éà⁄\ôYõ€Ÿù[Xô\äõ€ŸôöXô\äKà›Yÿ\éà⁄\ôYõ€Ÿù[Xô\äõ€Ÿú›Yÿ\äKàÿ]ò]à⁄\ôYõ€Ÿù[Xô\äõ€Ÿúÿ]ò]
+Kà€Ÿ][SYÀà€Ÿ][Nà€Ÿ][SY»»Là⁄€\›\õ€à⁄\ôYõ€Ÿù[Xô\äõ€Ÿò⁄€\›\õ€
+KàŸ\ùö[ôŒà›ö[ô õ€ŸúŸ\ùö[ô»	ÃH‹ù[€â Kùö[J
+Kú€XŸJ
+H	ÃH‹ù[€âÀàŸ\ùö[ô—‹ò[\ŒàŸ\ùö[ô—‹ò[\»Là\åLÀà€›\òŸNà	‹\ú€€ò[Y]Xò\ŸIÀà‹ôX]Y]à\]Y]àN¬àBÇàù[ò›[€à\T⁄\ôYõ€Ÿ]Xò\ŸT€ò\⁄›
+€ò\⁄›
+H¬à€€ú›õ€Ÿ»H◊N¬à€ò\⁄›ôõ‹ëXX⁄
+ÿ»Oàõ€ŸÀú\⁄
+õ‹õX[\ŸT⁄\ôYõ€Ÿ]Xò\ŸR][JÿÀô]J
+KÿÀöY
+JJN¬àõ€ŸÀú€‹ù
+
+KäHOàKõò[YKõÿÿ[P€€\\ôJãõò[YJJN¬à›]Kò›\›€Qõ€Ÿ»Hõ€ŸŒ¬àÿ]ôT›]J»⁄⁄\€›YàùYKô\Ÿ\ùôU\]Y]àùYHJN¬àYà
+\[Ÿàô[ô\ëö[\ê€€ù[ùOOH	Ÿù[ò›[€â Hô[ô\ëö[\ê€€ù[ù
+
+N¬àYà
+\[Ÿàô[ô\ëõ€Ÿ]Xò\ŸHOOH	Ÿù[ò›[€â H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ€ŸY]Xò\ŸK[[Ÿ[	 N¬àYà
+[Ÿ[	âà[Ÿ[ú›[Kô\‹^HOOH	Ÿõ^	 Hô[ô\ëõ€Ÿ]Xò\ŸJ
+N¬àBàBÇà\ﬁ[ò»ù[ò›[€àZY‹ò]S›€ô\ëõ€Ÿ]Xò\ŸJÿÿ[õ€Ÿ H¬à€€ú›õ€Ÿ»H
+\úò^Kö\–\úò^Jÿÿ[õ€Ÿ H»ÿÿ[õ€Ÿ»à◊JKú€XŸJL
+BàõX\
+õ€ŸOàõ‹õX[\ŸT⁄\ôYõ€Ÿ]Xò\ŸR][Jõ€Ÿ
+JN¬àõ‹à
+]›\ùH»›\ùõ€ŸÀõ[ô›»›\ù
+œHå
+H¬à€€ú›ò]⁄Hãòò]⁄
+
+N¬àõ€ŸÀú€XŸJ›\ù›\ù
+»å
+Kôõ‹ëXX⁄
+õ€ŸOà¬àò]⁄úŸ]
+ãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kôÿ õ€ŸöY
+Kõ€Ÿ
+N¬àJN¬à]ÿZ]ò]⁄ò€€[Z]
+
+N¬àBàô]\õàõ€ŸŒ¬àBÇàù[ò›[€à›\ù⁄\ôYõ€Ÿ]Xò\ŸS\›[ô\ú 
+H¬à›‹⁄\ôYõ€Ÿ]Xò\ŸTﬁ[ò 
+N¬àYà
+X›\úô[ù\Ÿ\äHô]\õé¬à⁄\ôYõ€Ÿ]Xò\ŸU[ú›Xúÿ‹öXôHHãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kõ[Z]
+L
+Kõ€î€ò\⁄›
+à\T⁄\ôYõ€Ÿ]Xò\ŸT€ò\⁄›à\úõ‹àOà€€ú€€Kùÿ\õä	—õ€Ÿ]Xò\ŸH]ôHﬁ[ò»]\ŸYâÀ\úõ‹äBà
+N¬àõ€Ÿ]Xò\ŸQY]‹ú’[ú›Xúÿ‹öXôHHãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	Ÿõ€Ÿ]Xò\ŸQY]‹ú… Kõ€î€ò\⁄›
+ÿ»Oà¬à€€ú›ZY»HÿÀô^\›»	âà\úò^Kö\–\úò^JÿÀô]J
+KùZY H»ÿÀô]J
+KùZY»à◊N¬à›\úô[ù\Ÿ\êÿ[ìX[òYŸQõ€Ÿ]Xò\ŸHH\”›€ô\ä
+HZYÀú€€YJZYOà›ö[ô ZY
+HOOH›ö[ô ›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZY
+JN¬à\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+N¬àK\úõ‹àOà€€ú€€Kùÿ\õä	—õ€Ÿ]Xò\ŸH\õZ\‹⁄[€àﬁ[ò»]\ŸYâÀ\úõ‹äJN¬àBÇà\ﬁ[ò»ù[ò›[€àÿY⁄\ôYõ€Ÿ]Xò\ŸJ
+H¬àYà
+X›\úô[ù\Ÿ\äHô]\õàò[ŸN¬à€€ú›ÿX⁄Yõ€Ÿ»H\úò^Kö\–\úò^J›]Kò›\›€Qõ€Ÿ H»›]Kò›\›€Qõ€ŸÀú€XŸJ
+Hà◊N¬àûH¬à]€ò\⁄›H]ÿZ]ãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kõ[Z]
+L
+KôŸ]
+
+N¬àYà
+€ò\⁄›ô[\H	âà\”›€ô\ä
+H	âàÿX⁄Yõ€ŸÀõ[ô›à
+H¬à]ÿZ]ZY‹ò]S›€ô\ëõ€Ÿ]Xò\ŸJÿX⁄Yõ€Ÿ N¬à€ò\⁄›H]ÿZ]ãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kõ[Z]
+L
+KôŸ]
+
+N¬àBà\T⁄\ôYõ€Ÿ]Xò\ŸT€ò\⁄›
+€ò\⁄›
+N¬à›\ù⁄\ôYõ€Ÿ]Xò\ŸS\›[ô\ú 
+N¬àô]\õàùYN¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	’\⁄[ô»HÿX⁄Yõ€Ÿ]Xò\ŸH[ù[ŸX›\ôHﬁ[ò»\»]òZ[XõNâÀ\úõ‹äN¬à\]Qõ€Ÿ]Xò\ŸT\õZ\‹⁄[€ïRJ
+N¬àô]\õàò[ŸN¬àBàBÇà\ﬁ[ò»ù[ò›[€àÿ]ôT⁄\ôYõ€Ÿ]Xò\ŸR][Jõ€Ÿ
+H¬àYà
+Xÿ[ìX[òYŸQõ€Ÿ]Xò\ŸJ
+JHõ›»ô]»\úõ‹ä	—ì”——UPêT—W‘ëPQ””ìI N¬àYà
+X›\úô[ù\Ÿ\à[ò]öYÿ]‹ãõ€ì[ôJHõ›»ô]»\úõ‹ä	—ì”——UPêT—W”—ëìSëI N¬à€€ú›õ‹õX[\ŸYHõ‹õX[\ŸT⁄\ôYõ€Ÿ]Xò\ŸR][Jõ€Ÿ
+N¬à]ÿZ]ãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kôÿ õ‹õX[\ŸYöY
+KúŸ]
+õ‹õX[\ŸY
+N¬à€€ú›^\›[ô“[ô^H
+›]Kò›\›€Qõ€Ÿ»◊JKôö[ô[ô^
+][HOà›ö[ô ][KöY
+HOOHõ‹õX[\ŸYöY
+N¬àYà
+^\›[ô“[ô^èH
+H›]Kò›\›€Qõ€Ÿ÷Ÿ^\›[ô“[ô^HHõ‹õX[\ŸY¬à[ŸH›]Kò›\›€Qõ€ŸÀù[ú⁄Yù
+õ‹õX[\ŸY
+N¬àÿ]ôT›]J»⁄⁄\€›YàùYHJN¬àô]\õàõ‹õX[\ŸY¬àBÇà\ﬁ[ò»ù[ò›[€à[]T⁄\ôYõ€Ÿ]Xò\ŸR][Jõ€ŸY
+H¬àYà
+Xÿ[ìX[òYŸQõ€Ÿ]Xò\ŸJ
+JHõ›»ô]»\úõ‹ä	—ì”——UPêT—W‘ëPQ””ìI N¬àYà
+X›\úô[ù\Ÿ\à[ò]öYÿ]‹ãõ€ì[ôJHõ›»ô]»\úõ‹ä	—ì”——UPêT—W”—ëìSëI N¬à€€ú›YH›ö[ô õ€ŸY	… Kúô\XŸJ÷◊òK^êKVåNWÀWKŸÀ	ÀI Kú€XŸJLå
+N¬àYà
+ZY
+Hõ›»ô]»\úõ‹ä	—ì”——UPêT—W“SïêSQ“Q	 N¬à]ÿZ]ãò€€X›[€ä	Ÿõ€Ÿ]Xò\ŸI Kôÿ Y
+Kô[]J
+N¬à›]Kò›\›€Qõ€Ÿ»H
+›]Kò›\›€Qõ€Ÿ»◊JKôö[\ä][HOà›ö[ô ][KöY
+HOOHY
+N¬àÿ]ôT›]J»⁄⁄\€›YàùYHJN¬àô]\õàùYN¬àBÇàù[ò›[€àô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+H¬àYà
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	 Hô]\õàùYN¬à⁄›’ÿ\›
+	–€ÿX⁄XÿŸ\‹»€õI N¬àô]\õàò[ŸN¬àBÇà\ﬁ[ò»ù[ò›[€àﬁ[ò’\Ÿ\ë\ôX›‹ûJ\Ÿ\ãõ€Kò[YJH¬àYà
+]\Ÿ\äHô]\õàò[ŸN¬àûH¬à]ÿZ]ãò€€X›[€ä	Ÿ\ôX›‹ûI Kôÿ \Ÿ\ãùZY
+KúŸ]
+¬àZYà\Ÿ\ãùZYàò[YNà›ö[ô ò[YH\Ÿ\ãô\‹^Sò[YH	’\Ÿ\â Kú€XŸJLå
+Kà[XZ[à\Ÿ\ãô[XZ[	…Àà[XZ[›Ÿ\éà
+\Ÿ\ãô[XZ[	… Kù”›Ÿ\êÿ\ŸJ
+Kàõ€Nàõ€HOOH	ÿ€ÿX⁄	»»	ÿ€ÿX⁄	»à	€Y[Xô\âÀà\]Y]àö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+BàK»Y\ôŸNàùYHJN¬àô]\õàùYN¬àHÿ]⁄
+\úõ‹äH¬àÀ»€\àö\ôXò\ŸHù[\»X^Hõ›€õ›»Xõ›]H\ôX›‹ûH€€X›[€àY]Çà€€ú€€Kùÿ\õä	’\Ÿ\à\ôX›‹ûHﬁ[ò»[ô[ôŒâÀ\úõ‹äN¬àô]\õàò[ŸN¬àBàBÇà äÇà
+à€ÿX⁄›]\»\»]\õZ[ôYûH[à[›€\›Ÿà\õ›ôY[XZ[»H›€ô\Çà
+àX[òYŸ\À›‹ôY]€€ôöYÀÿ€ÿX⁄[XZ[»
+öY[à[XZ[»H\úò^HŸà›ö[ô‹ KÇà
+àô]\õú»ùYHYàH⁄]ô[à[XZ[\»€àH\›
+ÿ\ŸKZ[úŸ[ú⁄]]ôJKÇà
+ã¬à\ﬁ[ò»ù[ò›[€à\–\õ›ôY€ÿX⁄
+[XZ[
+H¬àYà
+Y[XZ[
+Hô]\õàò[ŸN¬àûH¬à€€ú›ÿ»H]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	ÿ€ÿX⁄[XZ[… KôŸ]
+
+N¬àYà
+YÿÀô^\› Hô]\õàò[ŸN¬à€€ú›]HHÿÀô]J
+HﬂN¬à€€ú›\›H\úò^Kö\–\úò^J]Kô[XZ[ H»]Kô[XZ[ÀõX\
+HOàKù‘›ö[ô 
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JHà◊N¬àô]\õà\›ö[ò€Y\ [XZ[ùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JN¬àHÿ]⁄
+JH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à⁄X⁄⁄[ô»€ÿX⁄[›€\›âÀJN¬àô]\õàò[ŸN¬àBàBÇàÀ»KKKKKKKKKH’”ëTàQRSéàX[òYŸHH€ÿX⁄Y[XZ[[›€\›KKKKKKKKKBÇà äÇà
+àùZ[HYZ[àÿ\ôSà\ò[Y]ö\ŸYûH[[Y[ùY»€»]ÿ[àôH⁄›€Çà
+à[à[‹ôH[à€ôHXŸH
+Y[Xô\àõŸö[H[ô€ÿX⁄\⁄õÿ\ô
+KÇà
+ã¬àù[ò›[€à›€ô\êYZ[íS
+[ú]Y\›Yõ€ŸY]‹ì\›Y
+H¬àô]\õàà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\LàXãL»èÇàH]K[X⁄YOHú⁄Y[X⁄X⁄»à€\‹œHùÀMHMH^Z[ôY€ÀMåèè⁄OÇà»€\‹œHù^[»õ€ùXõX⁄»èê€ÿX⁄XÿŸ\‹»YZ[è⁄œÇàŸ]èÇà€\‹œHù^^»^\€]KMXãL»èê\õ›ôH⁄X⁄[XZ[»ÿ[àŸ»[à\»€ÿX⁄\ÀàH⁄[ôŸHZŸ\»YôôX›Hô^[YH]\ú€€à⁄Y€ú»[ãàô[[›ôH[à[XZ[»õ‹[HòX⁄»»HY[Xô\ãè‹Çà]à€\‹œHôõ^ÿ\LàXãL»èÇà[ú]YHâ⁄[ú]YHà\OHô[XZ[àX^[ô›HåçMàXŸZ€\èHô[XZ[^[\Kò€€Hà]]ÿ€€\]OHõŸôàà€\‹œHôõ^LHL»ôÀ\€]KMLõ›[ôY^õ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôHõ€ù[YY][Hà€öŸ^Y›€èHöYä]ô[ùöŸ^OOOI—[ù\â XY€ÿX⁄[XZ[
+	…⁄[ú]YIÀ	…€\›YI HèÇàù]€à€ò€X⁄œHòY€ÿX⁄[XZ[
+	…⁄[ú]YIÀ	…€\›YI Hà€\‹œHòôÀZ[ôY€ÀMå^]⁄]HMHKL»õ›[ôY^õ€ùXõ€›ô\éòôÀZ[ôY€ÀMÃèêYÿù]€èÇàŸ]èÇà]àYHâ€\›YHà€\‹œHú‹XŸK^KLàèÇà€\‹œHù^\€H^\€]KM^XŸ[ù\àKLàèìÿY[ôÀããè‹ÇàŸ]èÇà]à€\‹œHòõ‹ô\ã]õ‹ô\ã\€]KLå]MàMHèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\LàXãLàèÇàH]K[X⁄YOHô]Xò\ŸHà€\‹œHùÀMHMH^[‹ò[ôŸKMåèè⁄OÇà»€\‹œHù^[»õ€ùXõX⁄»èëõ€Ÿ]Xò\ŸH\õZ\‹⁄[€úœ⁄œÇàŸ]èÇà€\‹œHù^^»^\€]KMXãL»èë]ô\û[€ôHÿ[àŸX\ò⁄[ô\ŸHõ€ŸÀà€õH[›H[ôH[‹H[›H[›»ô[›»ÿ[àYY]‹à[]H]Xò\ŸH][\Àè‹Çà]àYHâŸõ€ŸY]‹ì\›YHà€\‹œHú‹XŸK^KLàX^ZN›ô\ôõ›À^KX]]»ãLHèÇà€\‹œHù^\€H^\€]KM^XŸ[ù\àKLàèìÿY[ô»ôY⁄\›\ôY\Ÿ\úÀããè‹ÇàŸ]èÇàŸ]èò¬àBÇà äÇà
+àô[ô\àHYZ[à‹XŸH[ù»HY[Xô\ã\õŸö[H€€ùZ[ô\ãù]”ìHõ‹àBà
+à›€ô\àXÿ€›[ùà]ô\û[€ôH[ŸHŸY\»õ›[ôÀÇà
+ã¬à\ﬁ[ò»ù[ò›[€àô[ô\ì›€ô\êYZ[ä
+H¬à€€ú›€€ùZ[ô\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	€›€ô\ãXYZ[ã\ŸX›[€â N¬àYà
+X€€ùZ[ô\äHô]\õé¬àYà
+Z\”›€ô\ä
+JH»€€ùZ[ô\ãú›[Kô\‹^HH	€õ€ôIŒ»€€ùZ[ô\ãö[õô\íSH	…Œ»ô]\õé»Bà€€ùZ[ô\ãú›[Kô\‹^HH	ÿõÿ⁄…Œ¬à€€ùZ[ô\ãö[õô\íSH›€ô\êYZ[íS
+	ÿYZ[ãY[XZ[\õŸö[IÀ	ÿYZ[ã[\›\õŸö[IÀ	Ÿõ€ŸYY]‹ã[\›\õŸö[I N¬àôYúô\⁄X€€ú 
+N¬à]ÿZ]õ€Z\ŸKò[
+¬àÿY€ÿX⁄[XZ[\›
+	ÿYZ[ã[\›\õŸö[I KàÿYõ€Ÿ]Xò\ŸQY]‹ì\›
+	Ÿõ€ŸYY]‹ã[\›\õŸö[I BàJN¬àBÇà\ﬁ[ò»ù[ò›[€àÿY€ÿX⁄[XZ[\›
+\›Y
+H¬à€€ú›[Hÿ›[Y[ùôŸ][[Y[ùûRY
+\›Y
+N¬àYà
+Y[
+Hô]\õé¬àûH¬à€€ú›ÿ»H]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	ÿ€ÿX⁄[XZ[… KôŸ]
+
+N¬à€€ú›[XZ[»H
+ÿÀô^\›»	âà\úò^Kö\–\úò^JÿÀô]J
+Kô[XZ[ JH»ÿÀô]J
+Kô[XZ[»à◊N¬àYà
+[XZ[Àõ[ô›OOH
+H¬à[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKLàèìõ»€ÿX⁄[XZ[»\õ›ôYY]àY€ôHXõ›ôKè‹âŒ¬àô]\õé¬àBà[ö[õô\íSH[XZ[ÀõX\
+HOà¬à€€ú›ÿYôHH\ÿÿ\R[
+JN¬à€€ú›\ô»H\ÿÿ\Rú‘›ö[ô JN¬àô]\õàà]à€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àôÀ\€]KMLL»õ›[ôY^èÇà‹[à€\‹œHù^\€Hõ€ù[YY][Hù[òÿ]Hèâ‹ÿYô_O‹‹[èÇàù]€à€ò€X⁄œHúô[[›ôP€ÿX⁄[XZ[
+	…ÿ\ôﬂIÀ	…€\›YI Hà€\‹œHù^\õ‹ŸKML^^»õ€ùXõ€›ô\éù^\õ‹ŸKMåõ^\⁄ö[öÀL[Làèîô[[›ôOÿù]€èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àôYúô\⁄X€€ú 
+N¬àHÿ]⁄
+JH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àÿY[ô»€ÿX⁄[XZ[\›âÀJN¬à[ö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKML^XŸ[ù\àKLàèê€›[õ›ÿY\›8†%⁄X⁄»[›H\ôHH›€ô\à[ôù[\»\ôHXõ\⁄Yè‹âŒ¬àBàBÇà\ﬁ[ò»ù[ò›[€àY€ÿX⁄[XZ[
+[ú]Y\›Y
+H¬àYà
+Z\”›€ô\ä
+JH»⁄›’ÿ\›
+	”›€ô\àXÿŸ\‹»€õI N»ô]\õé»Bà€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+[ú]Y
+N¬à€€ú›[XZ[H
+[ú]ùò[YH	… Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Kú€XŸJçM
+N¬àYà
+K◊ñÿK^åNKàH…	Iâ äÀœO◊óÿﬂ_ãWJ–ÿK^åNKãWJ◊ñÿK^ó^ÃãI⁄Kù\›
+[XZ[
+JH¬à⁄›’ÿ\›
+	—[ù\àHò[Y[XZ[	 N»ô]\õé¬àBàûH¬àÀ»Ÿ]
+€Y\ôŸH⁄]\úò^U[ö[€à‹ôX]\»Hÿ»Yà]Ÿ\€â›^\›Y]à]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	ÿ€ÿX⁄[XZ[… KúŸ]
+¬à[XZ[Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€ä[XZ[
+BàK»Y\ôŸNàùYHJN¬à[ú]ùò[YHH	…Œ¬à⁄›’ÿ\›
+	–\õ›ôY	»
+»[XZ[
+»	»\»H€ÿX⁄8ß$… N¬à]ÿZ]ÿY€ÿX⁄[XZ[\›
+\›Y
+N¬àHÿ]⁄
+JH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àY[ô»€ÿX⁄[XZ[âÀJN¬à⁄›’ÿ\›
+	–€›[õ›Y8†%€õHH›€ô\àÿ[àY]\»
+⁄X⁄»ù[\ I N¬àBàBÇà\ﬁ[ò»ù[ò›[€àô[[›ôP€ÿX⁄[XZ[
+[XZ[\›Y
+H¬àYà
+Z\”›€ô\ä
+JH»⁄›’ÿ\›
+	”›€ô\àXÿŸ\‹»€õI N»ô]\õé»BàûH¬à]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	ÿ€ÿX⁄[XZ[… Kù\]J¬à[XZ[Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^Tô[[›ôJ[XZ[
+BàJN¬à⁄›’ÿ\›
+	‘ô[[›ôY	»
+»[XZ[
+N¬à]ÿZ]ÿY€ÿX⁄[XZ[\›
+\›Y
+N¬àHÿ]⁄
+JH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àô[[›ö[ô»€ÿX⁄[XZ[âÀJN¬à⁄›’ÿ\›
+	–€›[õ›ô[[›ôH8†%⁄X⁄»ù[\… N¬àBàBÇà\ﬁ[ò»ù[ò›[€àÿYõ€Ÿ]Xò\ŸQY]‹ì\›
+\›Y
+H¬à€€ú›[Hÿ›[Y[ùôŸ][[Y[ùûRY
+\›Y
+N¬àYà
+Y[Z\”›€ô\ä
+JHô]\õé¬àûH¬à€€ú›ÿ€€ôöY—ÿÀ\ôX›‹ûT€ò\⁄›HH]ÿZ]õ€Z\ŸKò[
+¬àãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	Ÿõ€Ÿ]Xò\ŸQY]‹ú… KôŸ]
+
+Kàãò€€X›[€ä	Ÿ\ôX›‹ûI Kõ[Z]
+å
+KôŸ]
+
+BàJN¬à€€ú›Ÿ[X›YHô]»Ÿ]
+à€€ôöY—ÿÀô^\›»	âà\úò^Kö\–\úò^J€€ôöY—ÿÀô]J
+KùZY Bà»€€ôöY—ÿÀô]J
+KùZYÀõX\
+ZYOà›ö[ô ZY
+JBàà◊Bà
+N¬à€€ú›[‹HH◊N¬à\ôX›‹ûT€ò\⁄›ôõ‹ëXX⁄
+ÿ»Oà¬àYà
+›\úô[ù\Ÿ\à	âàÿÀöYOOH›\úô[ù\Ÿ\ãùZY
+Hô]\õé¬à€€ú›]HHÿÀô]J
+HﬂN¬à[‹Kú\⁄
+¬àZYàÿÀöYàò[YNà›ö[ô ]Kõò[YH	’ëíU\Ÿ\â Kú€XŸJLå
+Kà[XZ[à›ö[ô ]Kô[XZ[	… Kú€XŸJçM
+Kàõ€Nà]Kúõ€HOOH	ÿ€ÿX⁄	»»	–€ÿX⁄	»à	”Y[Xô\â¬àJN¬àJN¬à€€ú›\›YZY»Hô]»Ÿ]
+[‹KõX\
+\ú€€àOà\ú€€ãùZY
+JN¬àŸ[X›Yôõ‹ëXX⁄
+ZYOà¬àYà
+
+X›\úô[ù\Ÿ\àZYOOH›\úô[ù\Ÿ\ãùZY
+H	âà[\›YZYÀö\ ZY
+JH¬à[‹Kú\⁄
+»ZYò[YNà	’[ò]òZ[XõHXÿ€›[ù	À[XZ[àZYõ€Nà	‘ÿ]ôYRQ	»JN¬àBàJN¬à[‹Kú€‹ù
+
+KäHOàKõò[YKõÿÿ[P€€\\ôJãõò[YJHKô[XZ[õÿÿ[P€€\\ôJãô[XZ[
+JN¬àYà
+[‹Kõ[ô›OOH
+H¬à[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»›\àôY⁄\›\ôY\Ÿ\ú»\ôH]òZ[XõHY]è‹âŒ¬àô]\õé¬àBà[ö[õô\íSH[‹KõX\
+\ú€€àOà¬à€€ú›[›ŸYHŸ[X›Yö\ \ú€€ãùZY
+N¬à€€ú›ZYH\ÿÿ\Rú‘›ö[ô \ú€€ãùZY
+N¬à€€ú›\ôŸ]\›H\ÿÿ\Rú‘›ö[ô \›Y
+N¬àô]\õà]à€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àÿ\L»ôÀ\€]KMLL»õ›[ôY^èÇà]à€\‹œHõZ[ã]ÀLèÇà€\‹œHù^\€Hõ€ùXõ€ù[òÿ]HèâŸ\ÿÿ\R[
+\ú€€ãõò[YJ_O‹Çà€\‹œHù^VÃL\H^\€]KMù[òÿ]HèâŸ\ÿÿ\R[
+\ú€€ãô[XZ[\ú€€ãùZY
+_H0≠»	‹\ú€€ãúõ€_O‹ÇàŸ]èÇàù]€à€ò€X⁄œHúŸ]õ€Ÿ]Xò\ŸQY]‹êXÿŸ\‹ 	…›ZYIÀ	ÿ[›ŸY»	Ÿò[ŸI»à	›ùYIﬂK	…›\ôŸ]\›I Hà€\‹œHôõ^\⁄ö[öÀLL»KLàõ›[ôY^^^»õ€ùXõX⁄»	ÿ[›ŸY»	ÿôÀ\õ‹ŸKML^\õ‹ŸKMå	»à	ÿôÀY[Y\ò[Må^]⁄]IﬂHèÇà	ÿ[›ŸY»	‘ô[[›ôI»à	–[›…ﬂBàÿù]€èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àôYúô\⁄X€€ú 
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àÿY[ô»õ€Ÿ]Xò\ŸHY]‹úŒâÀ\úõ‹äN¬à[ö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKML^XŸ[ù\àKLàèê€›[õ›ÿY]Xò\ŸH\õZ\‹⁄[€ú»8†%⁄X⁄»Hö\ôXò\ŸHù[\»\ôHXõ\⁄Yè‹âŒ¬àBàBÇà\ﬁ[ò»ù[ò›[€àŸ]õ€Ÿ]Xò\ŸQY]‹êXÿŸ\‹ ZY[›ŸY\›Y
+H¬àYà
+Z\”›€ô\ä
+JH»⁄›’ÿ\›
+	”›€ô\àXÿŸ\‹»€õI N»ô]\õé»Bà€€ú›ÿYôUZYH›ö[ô ZY	… Kùö[J
+Kú€XŸJLé
+N¬àYà
+\ÿYôUZYÿYôUZYOOH
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZY
+JHô]\õé¬àûH¬à]ÿZ]ãò€€X›[€ä	ÿ€€ôöY… Kôÿ 	Ÿõ€Ÿ]Xò\ŸQY]‹ú… KúŸ]
+¬àZYŒà[›ŸYà»ö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€äÿYôUZY
+Bààö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^Tô[[›ôJÿYôUZY
+BàK»Y\ôŸNàùYHJN¬à⁄›’ÿ\›
+[›ŸY»	—õ€Ÿ]Xò\ŸHY]‹àXÿŸ\‹»‹ò[ùY8ß$…»à	—õ€Ÿ]Xò\ŸHY]‹àXÿŸ\‹»ô[[›ôY	 N¬à]ÿZ]ÿYõ€Ÿ]Xò\ŸQY]‹ì\›
+\›Y
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à\][ô»õ€Ÿ]Xò\ŸHY]‹éâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–€›[õ›\]Hõ€Ÿ]Xò\ŸHXÿŸ\‹»8†%⁄X⁄»HXõ\⁄Yù[\…ÀML
+N¬àBàBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»UUì‘ìHSTî¬àÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇàù[ò›[€à⁄›”Ÿ⁄[ä
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ãYõ‹õI Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ãYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ‹ô€›\\‹›€‹ôYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àŸ][Y[›]
+
+
+HOàÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ãY[XZ[	 OÀôõÿ›\ 
+K
+N¬àBÇàù[ò›[€à⁄›‘ôY⁄\›\ä
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ãYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ãYõ‹õI Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ‹ô€›\\‹›€‹ôYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àŸ][Y[›]
+
+
+HOàÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ã[ò[YI OÀôõÿ›\ 
+K
+N¬àBÇàù[ò›[€à⁄›—õ‹ô€›\‹›€‹ô
+
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ãYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ãYõ‹õI Kò€\‹”\›òY
+	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ‹ô€›\\‹›€‹ôYõ‹õI Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬àŸ][Y[›]
+
+
+HOàÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ‹ô€›Y[XZ[	 OÀôõÿ›\ 
+K
+N¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»UUïSê’S”î¬àÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇà]]]ô\]Y\›[ëõY⁄Hò[ŸN¬Çàù[ò›[€àŸ]]]ù\ﬁJõ‹õRYù\ﬁKù\ﬁSXô[
+H¬à]]ô\]Y\›[ëõY⁄Hù\ﬁN¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	÷Ÿ]KX]]\›XõZ]I Kôõ‹ëXX⁄
+ù]€àOà¬àù]€ãô\ÿXõYHù\ﬁN¬àJN¬à€€ú›ù]€àHÿ›[Y[ùú]Y\ûTŸ[X›‹ä…Ÿõ‹õRYHŸ]KX]]\›XõZ]X
+N¬àYà
+Xù]€äHô]\õé¬àYà
+Xù]€ãô]\Ÿ]ôYò][Xô[
+Hù]€ãô]\Ÿ]ôYò][Xô[Hù]€ãù^€€ù[ùùö[J
+N¬àù]€ãù^€€ù[ùHù\ﬁH»ù\ﬁSXô[àù]€ãô]\Ÿ]ôYò][Xô[¬àù]€ãúŸ]]öXù]J	ÿ\öXKXù\ﬁIÀù\ﬁH»	›ùYI»à	Ÿò[ŸI N¬àBÇàù[ò›[€àúöY[ôP]]\úõ‹ä\úõ‹ãò[òX⁄ H¬à€€ú›Y\‹ÿYŸ\»H¬à	ÿ]]Ÿ[XZ[X[ôXYKZ[ã]\ŸIŒà	’][XZ[[ôXYH\»[àXÿ€›[ù	Àà	ÿ]]⁄[ùò[YY[XZ[	Œà	—[ù\àHò[Y[XZ[Yô\‹…Àà	ÿ]]⁄[ùò[YX‹ôY[ùX[	Œà	“[ùò[Y[XZ[‹à\‹›€‹ô	Àà	ÿ]]›‹õ€ôÀ\\‹›€‹ô	Œà	“[ùò[Y[XZ[‹à\‹›€‹ô	Àà	ÿ]]›\Ÿ\ã[õ›Yõ›[ô	Œà	“[ùò[Y[XZ[‹à\‹›€‹ô	Àà	ÿ]]›€À[X[ûK\ô\]Y\›…Œà	’€»X[ûH][\»8†%ÿZ]H[€Y[ù[ôûHYÿZ[âÀà	ÿ]]€ô]€‹öÀ\ô\]Y\›YòZ[Y	Œà	”õ»€€õôX›[€à8†%⁄X⁄»[›\à[ù\õô][ôûHYÿZ[âÀà	ÿ]]›ŸXZÀ\\‹›€‹ô	Œà	–⁄€‹ŸHH›õ€ôŸ\à\‹›€‹ô⁄]]X\›à⁄\òX›\ú…¬àN¬àô]\õàY\‹ÿYŸ\÷Ÿ\úõ‹à	âà\úõ‹ãò€ŸWHò[òX⁄Œ¬àBÇà\ﬁ[ò»ù[ò›[€àôY⁄\›\ï\Ÿ\ä
+H¬àYà
+]]ô\]Y\›[ëõY⁄
+Hô]\õé¬à€€ú›ò[YHHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ã[ò[YI Kùò[YKùö[J
+N¬à€€ú›[XZ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ãY[XZ[	 Kùò[YKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›\‹›€‹ôHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ã\\‹›€‹ô	 Kùò[YN¬à€€ú›€€ôö\õHHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ãX€€ôö\õI Kùò[YN¬à€€ú›ö]òXﬁP€€úŸ[ùHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ôY⁄\›\ã\ö]òXﬁKX€€úŸ[ù	 N¬ÇàYà
+[ò[YJH»⁄›’ÿ\›
+	‘X\ŸH[ù\à[›\àò[YI N»ô]\õé»BàYà
+Y[XZ[\\‹›€‹ô
+H»⁄›’ÿ\›
+	‘X\ŸHö[[öY[… N»ô]\õé»BàYà
+\‹›€‹ôõ[ô›äH»⁄›’ÿ\›
+	‘\‹›€‹ô]\›ôH]X\›à⁄\òX›\ú… N»ô]\õé»BàYà
+\‹›€‹ôOOH€€ôö\õJH»⁄›’ÿ\›
+	‘\‹›€‹ô»»õ›X]⁄	 N»ô]\õé»BàYà
+\ö]òXﬁP€€úŸ[ù\ö]òXﬁP€€úŸ[ùò⁄X⁄ŸY
+H»⁄›’ÿ\›
+	‘X\ŸHô]öY]»[ôXÿŸ\Hö]òXﬁH]Z[… N»ô]\õé»BÇàÀ»]ô\û[€ôH⁄Y€ú»\\»HY[Xô\ãà€ÿX⁄›]\»\»‹ò[ùYûHH›€ô\â‹¬àÀ»[XZ[[›€\›[ô\YY]]€X]Xÿ[H€àŸ⁄[à8†%€»Yà\»[XZ[àÀ»\»\õ›ôYHXÿ€›[ùôX€€Y\»H€ÿX⁄H[€Y[ù^H⁄Y€à[ãÇàŸ]]]ù\ﬁJ	‹ôY⁄\›\ãYõ‹õIÀùYK	–‹ôX][ô»Xÿ€›[ù8†)â N¬àûH¬à]ÿZ]]]\ú⁄\›[òŸTôXYN¬à€€ú›\Ÿ\ê‹ôY[ùX[H]ÿZ]]]ò‹ôX]U\Ÿ\ï⁄][XZ[[ô\‹›€‹ô
+[XZ[\‹›€‹ô
+N¬à€€ú›\Ÿ\àH\Ÿ\ê‹ôY[ùX[ù\Ÿ\é¬à]ÿZ]\Ÿ\ãù\]TõŸö[J»\‹^Sò[YNàò[YHJN¬Çà]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ \Ÿ\ãùZY
+KúŸ]
+¬àò[YNàò[YKà[XZ[à[XZ[àõ€Nà	€Y[Xô\âÀà[XZ[›Ÿ\éà[XZ[ù”›Ÿ\êÿ\ŸJ
+KÀ»õ‹àÿ\ŸKZ[úŸ[ú⁄]]ôH€⁄›\⁄[à[ö⁄[ô¬à‹ôX]Y]àö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+Kàÿ[‹öYQ€ÿ[àçLà€‹ö€›]Œà◊KàYX[Œà◊KàY]öX‹Œà◊Kà€ÿX⁄ZYàù[à€ÿX⁄ò[YNàù[à€Y[ùZYŒà◊Kà[ô[ô‘ô\]Y\›Œà◊KàÀ»^\ò⁄\ŸH]Xò\ŸH\»Xÿ€›[ù[]ô[€»]õ€›‹»H\Ÿ\àX‹õ‹‹»]öXŸ\¬à›\›€Q^\ò⁄\Ÿ\Œà◊Kàò\ò€ŸQõ€ŸŒà◊Kà\ÿXõY^\ò⁄\Ÿ\Œà»ﬁ[Nà◊K€YNà◊HKàö]òXﬁNà¬àõ›XŸUô\ú⁄[€éàïSïSQW–””ëíQÀúö]òXﬁUô\ú⁄[€ãàX⁄€õ›€YŸY]àö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+BàBàJN¬à]ÿZ]ﬁ[ò’\Ÿ\ë\ôX›‹ûJ\Ÿ\ã	€Y[Xô\âÀò[YJN¬ÇàûH»]ÿZ]\Ÿ\ãúŸ[ô[XZ[ô\öYöXÿ][€ä
+N»Bàÿ]⁄
+ô\öYöXÿ][€ë\úõ‹äH»€€ú€€Kùÿ\õä	’ô\öYöXÿ][€à[XZ[€›[õ›ôHŸ[ùY]âÀô\öYöXÿ][€ë\úõ‹äN»BÇà⁄›’ÿ\›
+	–Xÿ€›[ù‹ôX]Y8†%⁄X⁄»[›\à[XZ[»ô\öYûH]<'„¢IÀå
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	‘ôY⁄\›ò][€à\úõ‹éâÀ\úõ‹äN¬à⁄›’ÿ\›
+úöY[ôP]]\úõ‹ä\úõ‹ã	–€›[õ›‹ôX]HHXÿ€›[ù8†%ûHYÿZ[â KL
+N¬àHö[ò[H¬àŸ]]]ù\ﬁJ	‹ôY⁄\›\ãYõ‹õIÀò[ŸK	… N¬àBàBÇà\ﬁ[ò»ù[ò›[€àŸ⁄[ï\Ÿ\ä
+H¬àYà
+]]ô\]Y\›[ëõY⁄
+Hô]\õé¬à€€ú›[XZ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ãY[XZ[	 Kùò[YKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›\‹›€‹ôHÿ›[Y[ùôŸ][[Y[ùûRY
+	€Ÿ⁄[ã\\‹›€‹ô	 Kùò[YN¬àYà
+Y[XZ[\\‹›€‹ô
+H»⁄›’ÿ\›
+	‘X\ŸH[ù\à[XZ[[ô\‹›€‹ô	 N»ô]\õé»BàŸ]]]ù\ﬁJ	€Ÿ⁄[ãYõ‹õIÀùYK	‘⁄Y€ö[ô»[∏†)â N¬àûH¬à]ÿZ]]]\ú⁄\›[òŸTôXYN¬à]ÿZ]]]ú⁄Y€í[ï⁄][XZ[[ô\‹›€‹ô
+[XZ[\‹›€‹ô
+N¬à⁄›’ÿ\›
+	’Ÿ[€€YHòX⁄»H<'‰™â N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	”Ÿ⁄[à\úõ‹éâÀ\úõ‹äN¬à⁄›’ÿ\›
+úöY[ôP]]\úõ‹ä\úõ‹ã	‘⁄Y€ãZ[àòZ[Y8†%ûHYÿZ[â KL
+N¬àHö[ò[H¬àŸ]]]ù\ﬁJ	€Ÿ⁄[ãYõ‹õIÀò[ŸK	… N¬àBàBÇà\ﬁ[ò»ù[ò›[€àô\Ÿ]\‹›€‹ô
+
+H¬àYà
+]]ô\]Y\›[ëõY⁄
+Hô]\õé¬à€€ú›[XZ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿõ‹ô€›Y[XZ[	 Kùò[YKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Y[XZ[
+H»⁄›’ÿ\›
+	‘X\ŸH[ù\à[›\à[XZ[	 N»ô]\õé»BàŸ]]]ù\ﬁJ	Ÿõ‹ô€›\\‹›€‹ôYõ‹õIÀùYK	‘Ÿ[ô[ô¯†)â N¬àûH¬à]ÿZ]]]úŸ[ô\‹›€‹ôô\Ÿ][XZ[
+[XZ[
+N¬à⁄›’ÿ\›
+	‘\‹›€‹ôô\Ÿ][XZ[Ÿ[ùH⁄X⁄»[›\à[òõﬁâ N¬à⁄›”Ÿ⁄[ä
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	‘ô\Ÿ]\úõ‹éâÀ\úõ‹äN¬à⁄›’ÿ\›
+úöY[ôP]]\úõ‹ä\úõ‹ã	–€›[õ›Ÿ[ôHô\Ÿ][XZ[	 KL
+N¬àHö[ò[H¬àŸ]]]ù\ﬁJ	Ÿõ‹ô€›\\‹›€‹ôYõ‹õIÀò[ŸK	… N¬àBàBÇà\ﬁ[ò»ù[ò›[€àŸ€›]\Ÿ\ä
+H¬àYà
+€€ôö\õJ	–\ôH[›H›\ôH[›Hÿ[ù»⁄Y€à›]… JH¬àûH¬àÀ»XZŸH€ôHô\›YYôõ‹ùö[ò[€›Yÿ]ôKù]ô]ô\à⁄\HH\Ÿ\â‹¬àÀ»]öXŸH]HYàH€ôH\»Ÿôõ[ôH‹àö\ôXò\ŸH\»[ò]òZ[XõKÇà]ÿZ]õ€Z\ŸKúòXŸJ¬àõ\⁄€›Yﬁ[ò »⁄[[ùàùYHJKàô]»õ€Z\ŸJô\€€ôHOàŸ][Y[›]
+ô\€€ôKçL
+JBàJN¬à]ÿZ]]]ú⁄Y€ì›]
+
+N¬à⁄›’ÿ\›
+	‘⁄Y€ôY›]›XÿŸ\‹Ÿù[I N¬à›]HHî””ãú\úŸJî””ãú›ö[ô⁄YûJQêUS‘’UJJN¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	”Ÿ€›]\úõ‹éâÀ\úõ‹äN¬à⁄›’ÿ\›
+	”Ÿ€›]òZ[Y	 N¬àBàBàBÇàù[ò›[€àò[YU[YJò[YJH¬àYà
+]ò[YJHô]\õà¬àYà
+\[Ÿàò[YKù”Z[\»OOH	Ÿù[ò›[€â Hô]\õàò[YKù”Z[\ 
+N¬àYà
+\[Ÿàò[YKù—]HOOH	Ÿù[ò›[€â Hô]\õàò[YKù—]J
+KôŸ][YJ
+N¬à€€ú›[YHHô]»]Jò[YJKôŸ][YJ
+N¬àô]\õàù[Xô\ãö\—ö[ö]J[YJH»[YHà¬àBÇàù[ò›[€àY\ôŸU[ö\]YR][\ ÿÿ[][\Àô[[›R][\ÀŸ^Qõ‹í][KôYô\îô[[›K€€Xö[ôJH¬à€€ú›ÿÿ[H\úò^Kö\–\úò^Jÿÿ[][\ H»ÿÿ[][\»à◊N¬à€€ú›ô[[›HH\úò^Kö\–\úò^Jô[[›R][\ H»ô[[›R][\»à◊N¬à€€ú›ôYô\úôYHôYô\îô[[›H»ô[[›Hàÿÿ[¬à€€ú›ŸX€€ô\ûHHôYô\îô[[›H»ÿÿ[àô[[›N¬à€€ú›ô\›[Hô]»X\
+
+N¬à€€ú›]H
+][K[ô^€›\òŸJHOà¬àYà
+Z][H\[Ÿà][HOOH	€ÿöôX›	 Hô]\õé¬à€€ú›Ÿ^HH›ö[ô Ÿ^Qõ‹í][J][K[ô^
+H€›\òŸH
+»	Œâ»
+»[ô^
+N¬àYà
+ô\›[ö\ Ÿ^JH	âà€€Xö[ôJHô\›[úŸ]
+Ÿ^K€€Xö[ôJô\›[ôŸ]
+Ÿ^JK][K€›\òŸJJN¬à[ŸHô\›[úŸ]
+Ÿ^KY\€€ôJ][JJN¬àN¬àŸX€€ô\ûKôõ‹ëXX⁄
+
+][K[ô^
+HOà]
+][K[ô^	‹ŸX€€ô\ûI JN¬àôYô\úôYôõ‹ëXX⁄
+
+][K[ô^
+HOà]
+][K[ô^	‹ôYô\úôY	 JN¬ÇàÀ»ŸY\HôYô\úôY]öXŸI‹»‹ô\ö[ôÀ[à\[ô[û][ô»õ›[ô€õBàÀ»€àH›\à]öXŸKà\»]õ⁄Y»ô[‹ô\à⁄\õà€à]ô\ûH€›Yﬁ[òÀÇà€€ú›‹ô\ôYH◊N¬à€€ú›\ŸYHô]»Ÿ]
+
+N¬àôYô\úôYò€€òÿ]
+ŸX€€ô\ûJKôõ‹ëXX⁄
+
+][K[ô^
+HOà¬àYà
+Z][H\[Ÿà][HOOH	€ÿöôX›	 Hô]\õé¬à€€ú›€›\òŸHH[ô^ôYô\úôYõ[ô›»	‹ôYô\úôY	»à	‹ŸX€€ô\ûIŒ¬à€€ú›ÿÿ[[ô^H[ô^ôYô\úôYõ[ô›»[ô^à[ô^HôYô\úôYõ[ô›¬à€€ú›Ÿ^HH›ö[ô Ÿ^Qõ‹í][J][Kÿÿ[[ô^
+H€›\òŸH
+»	Œâ»
+»ÿÿ[[ô^
+N¬àYà
+]\ŸYö\ Ÿ^JH	âàô\›[ö\ Ÿ^JJH¬à\ŸYòY
+Ÿ^JN¬à‹ô\ôYú\⁄
+ô\›[ôŸ]
+Ÿ^JJN¬àBàJN¬àô]\õà‹ô\ôY¬àBÇà äàôX€€ò⁄[H€»€€\]K‹\ùX[€ò\⁄›»⁄]›]\ÿÿ\ô[ô»Z]\à\›‹ûKà
+ã¬àù[ò›[€àY\ôŸT›]T€ò\⁄› ÿÿ[[ú]ô[[›R[ú]
+H¬à€€ú›ÿÿ[Hõ‹õX[^ôT›]Jÿÿ[[ú]
+N¬à€€ú›ô[[›Tò]»H\‘Z[îôX€‹ô
+ô[[›R[ú]
+H»ô[[›R[ú]àﬂN¬à€€ú›ô[[›HHõ‹õX[^ôT›]Jô[[›Tò] N¬à€€ú›ÿÿ[[YHHò[YU[YJÿÿ[õY]H	âàÿÿ[õY]Kù\]Y]
+N¬à€€ú›ô[[›U[YHHò[YU[YJ
+ô[[›Tò]ÀõY]H	âàô[[›Tò]ÀõY]Kù\]Y]
+Hô[[›Tò]Àù\]Y]
+N¬à€€ú›ôYô\îô[[›HHô[[›U[YHàÿÿ[[YN¬à€€ú›Y\ôŸYHõ‹õX[^ôT›]Jÿÿ[
+N¬Çà€€ú›\úò^QöY[»Hô]»Ÿ]
+¬à	ŸZ[SYX[…À	›€‹ö€›]\›‹ûIÀ	€ù]ö][€í\›‹ûIÀ	€Y]öX‹“\›‹ûIÀà	ÿ‹ôX]YYX[…À	ÿ›\›€Qõ€Ÿ…À	ÿò\ò€ŸQõ€Ÿ…À	‹⁄‹[ô“][\…À	⁄Xö]…À	›\Ÿ\ë€ÿ[…À	ÿÿ\ô[”Ÿ‹…Àà	ÿ›\›€Q^\ò⁄\Ÿ\…À	ÿ⁄X⁄“[ú…À	ÿ€ÿX⁄€€ùô\úÿ][€ú…¬àJN¬à€€ú›ôX€‹ôöY[»Hô]»Ÿ]
+¬à	›ÿ]\ìŸ‹…À	‹›\”Ÿ‹…À	⁄Xö]€€\][€ú…À	⁄Yò][€ë€ÿ[€€\][€ú…Àà	‹›\—€ÿ[€€\][€ú…À	⁄Yò][€ìŸ‹…À	Ÿ^\ò⁄\ŸTò][ô‹…À	‹ôXY[ô\‹”Ÿ‹…À	ŸZ[TôXY[ô\‹…Àà	›ŸYZ€SYX[[âÀ	‹⁄‹[ô–⁄X⁄‹…¬àJN¬àYà
+ôYô\îô[[›JH¬àÿöôX›öŸ^\ QêUS‘’UJKôõ‹ëXX⁄
+Ÿ^HOà¬àYà
+X\úò^QöY[Àö\ Ÿ^JH	âà\ôX€‹ôöY[Àö\ Ÿ^JH	âàŸ^HOOH	Ÿ\ÿXõY^\ò⁄\Ÿ\…»	âàŸ^HOOH	ÿX›]ôU€‹ö€›]	»	âÇàÿöôX›úõ››\Kö\”›€îõ‹\ùKòÿ[
+ô[[›Tò]ÀŸ^JJH¬àY\ôŸY⁄Ÿ^WHHY\€€ôJô[[›V⁄Ÿ^WJN¬àBàJN¬àBÇà€€ú›][RŸ^HH
+][K[ô^
+HOà][KöY][Kò‹ôX]Y]][Kô]H	⁄][Kõò[YH][Kôõÿ›\»	⁄][IﬂNâ⁄[ô^X¬à€€ú›YX[Ÿ^HH
+][K[ô^
+HOà][KöY	⁄][Kô]H	…ﬂNâ⁄][KõYX[\H][Kù\H	…ﬂNâ⁄][Kò‹ôX]Y]][Kõò[YH[ô^X¬à€€ú›€‹ö€›]Ÿ^HH
+][K[ô^
+HOà][KöY	⁄][Kô]H	…ﬂNâ⁄][Kú›\ù[YH][Kò€€\]Y]	…ﬂNâ⁄][Kôõÿ›\»][Kõò[YH[ô^X¬à€€ú›Y]öX“Ÿ^HH
+][K[ô^
+HOà][Kô]H][KöYY]öXŒâ⁄[ô^X¬à€€ú›ò[YYŸ^HH
+][K[ô^
+HOà][KöY][Kòò\ò€ŸH›ö[ô ][Kõò[YH[ô^
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬ÇàY\ôŸYôZ[SYX[»HY\ôŸU[ö\]YR][\ ÿÿ[ôZ[SYX[Àô[[›KôZ[SYX[ÀYX[Ÿ^KôYô\îô[[›JN¬àY\ôŸYù€‹ö€›]\›‹ûHHY\ôŸU[ö\]YR][\ ÿÿ[ù€‹ö€›]\›‹ûKô[[›Kù€‹ö€›]\›‹ûK€‹ö€›]Ÿ^KôYô\îô[[›JN¬àY\ôŸYõù]ö][€í\›‹ûHHY\ôŸU[ö\]YR][\ ÿÿ[õù]ö][€í\›‹ûKô[[›Kõù]ö][€í\›‹ûKY]öX“Ÿ^KôYô\îô[[›JN¬àY\ôŸYò‹ôX]YYX[»HY\ôŸU[ö\]YR][\ ÿÿ[ò‹ôX]YYX[Àô[[›Kò‹ôX]YYX[Àò[YYŸ^KôYô\îô[[›JN¬àY\ôŸYò›\›€Qõ€Ÿ»HY\ôŸU[ö\]YR][\ ÿÿ[ò›\›€Qõ€ŸÀô[[›Kò›\›€Qõ€ŸÀò[YYŸ^KôYô\îô[[›JN¬à€€ú›ò\ò€ŸRŸ^HH
+][K[ô^
+HOà¬à€€ú›€ŸHH›ö[ô ][H	âà
+][Kúÿÿ[õôYò\ò€ŸH][Kòò\ò€ŸJH	… Kúô\XŸJ÷◊åNWKŸÀ	… N¬àô]\õà
+€ŸH»
+€ŸKõ[ô›HM»€ŸKúY›\ù
+M	Ã	 Hà€ŸJHà	… Hò\ò€ŸNâ⁄[ô^X¬àN¬àY\ôŸYòò\ò€ŸQõ€Ÿ»HY\ôŸU[ö\]YR][\ ÿÿ[òò\ò€ŸQõ€ŸÀô[[›Kòò\ò€ŸQõ€ŸÀò\ò€ŸRŸ^KôYô\îô[[›JN¬à€€ú›⁄‹[ô“Ÿ^HH
+][K[ô^
+HOà][H	âà
+][KöY][Kòò\ò€ŸH›ö[ô ][Kõò[YH[ô^
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JN¬àY\ôŸYú⁄‹[ô“][\»HY\ôŸU[ö\]YR][\ ÿÿ[ú⁄‹[ô“][\Àô[[›Kú⁄‹[ô“][\À⁄‹[ô“Ÿ^KôYô\îô[[›JN¬àY\ôŸYöXö]»HY\ôŸU[ö\]YR][\ ÿÿ[öXö]Àô[[›KöXö]À][RŸ^KôYô\îô[[›JN¬àY\ôŸYù\Ÿ\ë€ÿ[»HY\ôŸU[ö\]YR][\ ÿÿ[ù\Ÿ\ë€ÿ[Àô[[›Kù\Ÿ\ë€ÿ[À][RŸ^KôYô\îô[[›JN¬àY\ôŸYòÿ\ô[”Ÿ‹»HY\ôŸU[ö\]YR][\ ÿÿ[òÿ\ô[”Ÿ‹Àô[[›Kòÿ\ô[”Ÿ‹À][RŸ^KôYô\îô[[›JN¬àY\ôŸYò›\›€Q^\ò⁄\Ÿ\»HY\ôŸU[ö\]YR][\ ÿÿ[ò›\›€Q^\ò⁄\Ÿ\Àô[[›Kò›\›€Q^\ò⁄\Ÿ\Àò[YYŸ^KôYô\îô[[›JN¬àY\ôŸYò⁄X⁄“[ú»HY\ôŸU[ö\]YR][\ ÿÿ[ò⁄X⁄“[úÀô[[›Kò⁄X⁄“[úÀ][RŸ^KôYô\îô[[›JN¬àY\ôŸYò€ÿX⁄€€ùô\úÿ][€ú»HY\ôŸU[ö\]YR][\ ÿÿ[ò€ÿX⁄€€ùô\úÿ][€úÀô[[›Kò€ÿX⁄€€ùô\úÿ][€úÀ][RŸ^KôYô\îô[[›JN¬àY\ôŸYõY]öX‹“\›‹ûHHY\ôŸU[ö\]YR][\ àÿÿ[õY]öX‹“\›‹ûKàô[[›KõY]öX‹“\›‹ûKàY]öX“Ÿ^KàôYô\îô[[›Kà
+€\ãô]Ÿ\äHOà¬à€€ú›€€Xö[ôYHÿöôX›ò\‹⁄Y€äﬂK€\ãô]Ÿ\äN¬àÀ»õŸ‹ô\‹»›‹»[ù[ù[€ò[Hô[XZ[à]öXŸK[ÿÿ[€»H€›YàÀ»ôX€‹ôÿ[àô]ô\à\ò\ŸH[H\ö[ô»ôX€€ò⁄[X][€ãÇà€€ú›ÿÿ[Y]öX»Hÿÿ[õY]öX‹“\›‹ûKôö[ô
+][HOàY]öX“Ÿ^J][JHOOHY]öX“Ÿ^J€€Xö[ôY
+JN¬àYà
+ÿÿ[Y]öX»	âàÿÿ[Y]öXÀú›‹ H€€Xö[ôYú›‹»HY\€€ôJÿÿ[Y]öXÀú›‹ N¬àô]\õà€€Xö[ôY¬àBà
+N¬ÇàôX€‹ôöY[Àôõ‹ëXX⁄
+Ÿ^HOà¬à€€ú›€\àHôYô\îô[[›H»ÿÿ[⁄Ÿ^WHàô[[›V⁄Ÿ^WN¬à€€ú›ô]Ÿ\àHôYô\îô[[›H»ô[[›V⁄Ÿ^WHàÿÿ[⁄Ÿ^WN¬àY\ôŸY⁄Ÿ^WHHÿöôX›ò\‹⁄Y€äﬂK€\àﬂKô]Ÿ\àﬂJN¬àJN¬àY\ôŸYô\ÿXõY^\ò⁄\Ÿ\»H¬àﬁ[Nà\úò^Kôúõ€Jô]»Ÿ]
+Àããäÿÿ[ô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[H◊JKããäô[[›Kô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[H◊JWJJKà€YNà\úò^Kôúõ€Jô]»Ÿ]
+Àããäÿÿ[ô\ÿXõY^\ò⁄\Ÿ\Àö€YH◊JKããäô[[›Kô\ÿXõY^\ò⁄\Ÿ\Àö€YH◊JWJJBàN¬àÀ»[à[ã\õŸ‹ô\‹»€‹ö€›]€à\»€ôH⁄[ú»ôXÿ]\ŸH]»õ‹õHöY[»[ôàÀ»[Y\à\ôHYY»H›\úô[ùúõ›‹Ÿ\àŸ\‹⁄[€ãÇàY\ôŸYòX›]ôU€‹ö€›]Hÿÿ[òX›]ôU€‹ö€›]ô[[›KòX›]ôU€‹ö€›]ù[¬àY\ôŸYõY]HHÿöôX›ò\‹⁄Y€äﬂKY\ôŸYõY]K¬àÿ⁄[XUô\ú⁄[€éàëíU‘’UW‘–“SPW’ëTî“S”ãà\]Y]àô]»]JX]õX^
+ÿÿ[[YKô[[›U[YK]Kõõ› 
+JJKù“T”‘›ö[ô 
+BàJN¬àô]\õàõ‹õX[^ôT›]JY\ôŸY
+N¬àBÇàù[ò›[€àùZ[€›Y€ò\⁄›
+
+H¬à]€ò\⁄›H›]U⁄]›]ÿÿ[[XYŸ\ õ‹õX[^ôT›]J›]JJN¬à]ú€€àHî””ãú›ö[ô⁄YûJ€ò\⁄›
+N¬àÀ»Hö\ô\›‹ôHÿ›[Y[ù\»H\ô⁄^ôH[Z]à\»€õHö[\»H€›YàÀ»Z\úõ‹é»H€€\]H]öXŸHÿ]ôH[ô^‹ù»ô[XZ[à[ù›X⁄YÇàYà
+ô]»õÿä⁄ú€€óJKú⁄^ôHàL
+H¬à€ò\⁄›ù€‹ö€›]\›‹ûHH
+€ò\⁄›ù€‹ö€›]\›‹ûH◊JKú€XŸJçL
+N¬à€ò\⁄›õù]ö][€í\›‹ûHH
+€ò\⁄›õù]ö][€í\›‹ûH◊JKú€XŸJÕçJN¬à€ò\⁄›ôZ[SYX[»H
+€ò\⁄›ôZ[SYX[»◊JKú€XŸJLLå
+N¬à€ò\⁄›òÿ\ô[”Ÿ‹»H
+€ò\⁄›òÿ\ô[”Ÿ‹»◊JKú€XŸJL
+N¬à€ò\⁄›ò⁄X⁄“[ú»H
+€ò\⁄›ò⁄X⁄“[ú»◊JKú€XŸJL
+N¬à€ò\⁄›ò€ÿX⁄€€ùô\úÿ][€ú»H
+€ò\⁄›ò€ÿX⁄€€ùô\úÿ][€ú»◊JKú€XŸJÃ
+KõX\
+€€ùô\úÿ][€àOàÿöôX›ò\‹⁄Y€äﬂK€€ùô\úÿ][€ã¬àY\‹ÿYŸ\Œà
+€€ùô\úÿ][€ãõY\‹ÿYŸ\»◊JKú€XŸJLLäKõX\
+Y\‹ÿYŸHOàÿöôX›ò\‹⁄Y€äﬂKY\‹ÿYŸK¬à^à›ö[ô Y\‹ÿYŸKù^	… Kú€XŸJå
+BàJJBàJJN¬à€ò\⁄›õY]Kò€›Yö[[YYHùYN¬àú€€àHî””ãú›ö[ô⁄YûJ€ò\⁄›
+N¬àBàYà
+ô]»õÿä⁄ú€€óJKú⁄^ôHàML
+H¬àõ›»ô]»\úõ‹ä	–€›Y€ò\⁄›\»€»\ôŸKà^‹ùHòX⁄›\[ôô[[›ôH[ù\›X[H\ôŸH›\›€H[ùöY\Àâ N¬àBàô]\õà€ò\⁄›¬àBÇàù[ò›[€à\]Q]Tﬁ[ò‘›]\ 
+H¬à€€ú››]\»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿ]K\ﬁ[òÀ\›]\… N¬à€€ú›ô\ú⁄[€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	›ôö]]ô\ú⁄[€â N¬àYà
+ô\ú⁄[€äHô\ú⁄[€ãù^€€ù[ùHëíU	’ëíU–T’ëTî“S”üX¬àYà
+\›]\ Hô]\õé¬àYà
+X›\úô[ù\Ÿ\äH¬à›]\Àù^€€ù[ùH	‘⁄Y€à[à»[òXõHXÿ€›[ùﬁ[ò…Œ¬àH[ŸHYà
+›]Kúö]òXﬁTŸ][ô‹»	âà›]Kúö]òXﬁTŸ][ô‹Àò€›YX[]HOOHò[ŸJH¬à›]\Àù^€€ù[ùH	–€›YX[Y]Hﬁ[ò»\»Ÿôà8†%ÿ]ôY€à\»]öXŸIŒ¬àH[ŸHYà
+[ò]öYÿ]‹ãõ€ì[ôJH¬à›]\Àù^€€ù[ùH	”Ÿôõ[ôH8†%⁄[ôŸ\»\ôHÿ]ôY€à\»]öXŸIŒ¬àH[ŸHYà
+€›Yﬁ[ò‘õ€Z\ŸJH¬à›]\Àù^€€ù[ùH	‘ﬁ[ò⁄[ô»ŸX›\ô[x†)âŒ¬àH[ŸHYà
+€›Yﬁ[ò—\úõ‹à€›Y\ùJH¬à›]\Àù^€€ù[ùH	‘ÿ]ôY€à]öXŸH8†%€›Yﬁ[ò»[ô[ô…Œ¬àH[ŸHYà
+›]KõY]H	âà›]KõY]Kõ\›€›Yﬁ[ò–]
+H¬à€€ú›⁄[àHô]»]J›]KõY]Kõ\›€›Yﬁ[ò–]
+N¬à›]\Àù^€€ù[ùH€›Yﬁ[òŸY	›⁄[ãù”ÿÿ[T›ö[ô 
+_X¬àH[ŸH¬à›]\Àù^€€ù[ùH	‘ÿ]ôY€à]öXŸH8†%ôXYH»ﬁ[ò…Œ¬àBàBÇàù[ò›[€àÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò [^JH¬àYà
+X›\úô[ù\Ÿ\äHô]\õé¬àYà
+›]Kúö]òXﬁTŸ][ô‹»	âà›]Kúö]òXﬁTŸ][ô‹Àò€›YX[]HOOHò[ŸJH¬à€›Y\ùHHò[ŸN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õé¬àBà€›Y\ùHHùYN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬à€X\ï[Y[›]
+€›Yﬁ[ò’[Y\äN¬àYà
+[ò]öYÿ]‹ãõ€ì[ôJHô]\õé¬à€›Yﬁ[ò’[Y\àHŸ][Y[›]
+
+
+HOàõ\⁄€›Yﬁ[ò »⁄[[ùàùYHJKù[Xô\ãö\—ö[ö]J[^JH»[^HàMå
+N¬àBÇà\ﬁ[ò»ù[ò›[€à‹ö]P€›Y€ò\⁄›
+
+H¬àYà
+›]Kúö]òXﬁTŸ][ô‹»	âà›]Kúö]òXﬁTŸ][ô‹Àò€›YX[]HOOHò[ŸJH¬à€›Y\ùHHò[ŸN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàò[ŸN¬àBàYà
+X›\úô[ù\Ÿ\à[ò]öYÿ]‹ãõ€ì[ôJH¬à€›Y\ùHHHX›\úô[ù\Ÿ\é¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàò[ŸN¬àBàYà
+€›Yﬁ[ò‘õ€Z\ŸJHô]\õà€›Yﬁ[ò‘õ€Z\ŸN¬à€€ú›ZYH›\úô[ù\Ÿ\ãùZY¬à€›Y\ùHHò[ŸN¬à€›Yﬁ[ò—\úõ‹àHù[¬à\]Q]Tﬁ[ò‘›]\ 
+N¬à€›Yﬁ[ò‘õ€Z\ŸHH
+\ﬁ[ò»
+
+HOà¬à€€ú›€ò\⁄›HùZ[€›Y€ò\⁄›
+
+N¬à]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ZY
+KúŸ]
+¬àò[YNà›\úô[ù\Ÿ\ãô\‹^Sò[YH
+ö\ôXò\ŸU\Ÿ\ë]H	âàö\ôXò\ŸU\Ÿ\ë]Kõò[YJH	’\Ÿ\âÀà[XZ[à›\úô[ù\Ÿ\ãô[XZ[	…Àà[XZ[›Ÿ\éà
+›\úô[ù\Ÿ\ãô[XZ[	… Kù”›Ÿ\êÿ\ŸJ
+Kàÿ[‹öYQ€ÿ[à›]Kô€ÿ[Àòÿ[‹öY\Àà›\›€Q^\ò⁄\Ÿ\Œà›]Kò›\›€Q^\ò⁄\Ÿ\»◊Kàò\ò€ŸQõ€ŸŒà›]Kòò\ò€ŸQõ€Ÿ»◊Kà\ÿXõY^\ò⁄\Ÿ\Œà›]Kô\ÿXõY^\ò⁄\Ÿ\»»ﬁ[Nà◊K€YNà◊HKà]T€ò\⁄›à€ò\⁄›à€ò\⁄›ÿ⁄[XUô\ú⁄[€éàëíU‘’UW‘–“SPW’ëTî“S”ãà€ò\⁄›\]Y]àö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+Kà\›ﬁ[òŒàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+BàK»Y\ôŸNàùYHJN¬àYà
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZYOOHZY
+H¬à›]KõY]Kõ\›€›Yﬁ[ò–]Hô]»]J
+Kù“T”‘›ö[ô 
+N¬àÿ]ôT›]J»⁄⁄\€›YàùYKô\Ÿ\ùôU\]Y]àùYHJN¬àBàô]\õàùYN¬àJJ
+Kòÿ]⁄
+\úõ‹àOà¬à€›Y\ùHHùYN¬à€›Yﬁ[ò—\úõ‹àH\úõ‹é¬à€€ú€€Kùÿ\õä	–€›Yﬁ[ò»[ô[ôŒâÀ\úõ‹äN¬àô]\õàò[ŸN¬àJKôö[ò[J
+
+HOà¬à€›Yﬁ[ò‘õ€Z\ŸHHù[¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àYà
+€›Y\ùH	âà›\úô[ù\Ÿ\à	âàò]öYÿ]‹ãõ€ì[ôJHÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò L
+N¬àJN¬àô]\õà€›Yﬁ[ò‘õ€Z\ŸN¬àBÇà\ﬁ[ò»ù[ò›[€àõ\⁄€›Yﬁ[ò ‹[€ú H¬à€€ú›€€ôöY»H‹[€ú»ﬂN¬à€X\ï[Y[›]
+€›Yﬁ[ò’[Y\äN¬à€›Yﬁ[ò’[Y\àHù[¬àYà
+X›\úô[ù\Ÿ\äHô]\õàò[ŸN¬àYà
+›]Kúö]òXﬁTŸ][ô‹»	âà›]Kúö]òXﬁTŸ][ô‹Àò€›YX[]HOOHò[ŸJH¬à€›Y\ùHHò[ŸN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àYà
+X€€ôöYÀú⁄[[ù
+H⁄›’ÿ\›
+	–€›YX[Y]Hﬁ[ò»\»Ÿôà[àö]òXﬁHŸ[ùôIÀL
+N¬àô]\õàò[ŸN¬àBà€›Y\ùHHùYN¬à€€ú››XÿŸ\‹»H]ÿZ]‹ö]P€›Y€ò\⁄›
+
+N¬àYà
+X€€ôöYÀú⁄[[ù
+H⁄›’ÿ\›
+›XÿŸ\‹»»	‘ﬁ[òŸY»€›Y8¶ {Ó#…»à	‘ÿ]ôY€à]öXŸH8†%€›Yﬁ[ò»⁄[ô]ûIÀL
+N¬àô]\õà›XÿŸ\‹Œ¬àBÇà\ﬁ[ò»ù[ò›[€àﬁ[ò’–€›Y
+
+H¬àYà
+X›\úô[ù\Ÿ\äH»⁄›’ÿ\›
+	‘⁄Y€à[à»ﬁ[ò… N»ô]\õàò[ŸN»BàYà
+›]Kúö]òXﬁTŸ][ô‹»	âà›]Kúö]òXﬁTŸ][ô‹Àò€›YX[]HOOHò[ŸJH¬à⁄›’ÿ\›
+	–€›YX[Y]Hﬁ[ò»\»Ÿôà[àö]òXﬁHŸ[ùôIÀL
+N¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàò[ŸN¬àBàYà
+[ò]öYÿ]‹ãõ€ì[ôJH¬à€›Y\ùHHùYN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬à⁄›’ÿ\›
+	”Ÿôõ[ôH8†%⁄[ôŸ\»\ôHÿYô[Hÿ]ôY€à\»]öXŸIÀL
+N¬àô]\õàò[ŸN¬àBàô]\õàõ\⁄€›Yﬁ[ò »⁄[[ùàò[ŸHJN¬àBÇàù[ò›[€àﬁ[ò’—ö\ôXò\ŸJ
+H¬àÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò 
+N¬àBÇàÀ»ÿYHXÿ€›[ùÿ›[Y[ùôX€€ò⁄[H]»ù[€ò\⁄›⁄]\»]öXŸKàÀ»[ô€õH[à[›»Hô]»€›Y‹ö]KÇà\ﬁ[ò»ù[ò›[€àÿYö\ôXò\ŸU\Ÿ\ë]J
+H¬àYà
+X›\úô[ù\Ÿ\äHô]\õàò[ŸN¬à€€ú›ZYH›\úô[ù\Ÿ\ãùZY¬à€€ú›\Ÿ\îôYàHãò€€X›[€ä	›\Ÿ\ú… Kôÿ ZY
+N¬à]^\›»Hò[ŸN¬àûH¬à€€ú›ÿ»H]ÿZ]\Ÿ\îôYãôŸ]
+
+N¬àYà
+X›\úô[ù\Ÿ\à›\úô[ù\Ÿ\ãùZYOOHZY
+Hô]\õàò[ŸN¬à^\›»HÿÀô^\›Œ¬àö\ôXò\ŸU\Ÿ\ë]HHÿÀô^\›»»
+ÿÀô]J
+HﬂJHàﬂN¬àXÿ€›[ùY[Xô\ú⁄\H\‘Z[îôX€‹ô
+ö\ôXò\ŸU\Ÿ\ë]KõY[Xô\ú⁄\
+Bà»ÿöôX›ò\‹⁄Y€ä»Y\éà	ŸúôYIÀ›]\Œà	⁄[òX›]ôI»Kö\ôXò\ŸU\Ÿ\ë]KõY[Xô\ú⁄\
+Bàà»Y\éà	ŸúôYIÀ›]\Œà	⁄[òX›]ôI»N¬àYà
+ÿÀô^\› H¬à€€ú›ô[[›T€ò\⁄›H\‘Z[îôX€‹ô
+ö\ôXò\ŸU\Ÿ\ë]Kô]T€ò\⁄›
+Bà»Y\€€ôJö\ôXò\ŸU\Ÿ\ë]Kô]T€ò\⁄›
+BààﬂN¬àYà
+\ô[[›T€ò\⁄›ô€ÿ[»	âàö\ôXò\ŸU\Ÿ\ë]Kòÿ[‹öYQ€ÿ[
+H¬àô[[›T€ò\⁄›ô€ÿ[»H»ÿ[‹öY\Œàö\ôXò\ŸU\Ÿ\ë]Kòÿ[‹öYQ€ÿ[N¬àBàYà
+\ô[[›T€ò\⁄›ò›\›€Q^\ò⁄\Ÿ\»	âà\úò^Kö\–\úò^Jö\ôXò\ŸU\Ÿ\ë]Kò›\›€Q^\ò⁄\Ÿ\ JH¬àô[[›T€ò\⁄›ò›\›€Q^\ò⁄\Ÿ\»Hö\ôXò\ŸU\Ÿ\ë]Kò›\›€Q^\ò⁄\Ÿ\Œ¬àBàYà
+\ô[[›T€ò\⁄›ô\ÿXõY^\ò⁄\Ÿ\»	âàö\ôXò\ŸU\Ÿ\ë]Kô\ÿXõY^\ò⁄\Ÿ\ H¬àô[[›T€ò\⁄›ô\ÿXõY^\ò⁄\Ÿ\»Hö\ôXò\ŸU\Ÿ\ë]Kô\ÿXõY^\ò⁄\Ÿ\Œ¬àBàYà
+\ô[[›T€ò\⁄›òò\ò€ŸQõ€Ÿ»	âà\úò^Kö\–\úò^Jö\ôXò\ŸU\Ÿ\ë]Kòò\ò€ŸQõ€Ÿ JH¬àô[[›T€ò\⁄›òò\ò€ŸQõ€Ÿ»Hö\ôXò\ŸU\Ÿ\ë]Kòò\ò€ŸQõ€ŸŒ¬àBàYà
+\ô[[›T€ò\⁄›õY]JHô[[›T€ò\⁄›õY]HHﬂN¬àYà
+\ô[[›T€ò\⁄›õY]Kù\]Y]	âàö\ôXò\ŸU\Ÿ\ë]Kú€ò\⁄›\]Y]
+H¬à€€ú›€›Y[YHHò[YU[YJö\ôXò\ŸU\Ÿ\ë]Kú€ò\⁄›\]Y]
+N¬àYà
+€›Y[YJHô[[›T€ò\⁄›õY]Kù\]Y]Hô]»]J€›Y[YJKù“T”‘›ö[ô 
+N¬àBàYà
+ÿöôX›öŸ^\ ô[[›T€ò\⁄›
+Kõ[ô›àJH›]HHY\ôŸT›]T€ò\⁄› ›]Kô[[›T€ò\⁄›
+N¬àYà
+\‘Z[îôX€‹ô
+ö\ôXò\ŸU\Ÿ\ë]Kúö]òXﬁJJH¬à›]Kúö]òXﬁTŸ][ô‹»HÿöôX›ò\‹⁄Y€äﬂK›]Kúö]òXﬁTŸ][ô‹Àö\ôXò\ŸU\Ÿ\ë]Kúö]òXﬁJN¬àBà\Q^\ò⁄\ŸTôYú—úõ€P€›Y
+›]JN¬àBÇà€€ú›\õ›ôYH]ÿZ]\–\õ›ôY€ÿX⁄
+›\úô[ù\Ÿ\ãô[XZ[
+N¬àYà
+X›\úô[ù\Ÿ\à›\úô[ù\Ÿ\ãùZYOOHZY
+Hô]\õàò[ŸN¬à›\úô[ù\Ÿ\îõ€HH\õ›ôY»	ÿ€ÿX⁄	»à	€Y[Xô\âŒ¬à€€ú›ò\ŸTõŸö[HH¬àò[YNà›\úô[ù\Ÿ\ãô\‹^Sò[YHö\ôXò\ŸU\Ÿ\ë]Kõò[YH	’\Ÿ\âÀà[XZ[à›\úô[ù\Ÿ\ãô[XZ[	…Àà[XZ[›Ÿ\éà
+›\úô[ù\Ÿ\ãô[XZ[	… Kù”›Ÿ\êÿ\ŸJ
+Kàõ€Nà›\úô[ù\Ÿ\îõ€Kàÿ[‹öYQ€ÿ[à›]Kô€ÿ[Àòÿ[‹öY\»çLàN¬àYà
+Y^\› H¬àÿöôX›ò\‹⁄Y€äò\ŸTõŸö[K¬à‹ôX]Y]àö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKúŸ\ùô\ï[Y\›[\
+
+Kà€‹ö€›]Œà◊KYX[Œà◊KY]öX‹Œà◊K€ÿX⁄ZYàù[à€ÿX⁄ò[YNàù[€Y[ùZYŒà◊K[ô[ô‘ô\]Y\›Œà◊BàJN¬àBà]ÿZ]\Ÿ\îôYãúŸ]
+ò\ŸTõŸö[K»Y\ôŸNàùYHJN¬à]ÿZ]ﬁ[ò’\Ÿ\ë\ôX›‹ûJ›\úô[ù\Ÿ\ã›\úô[ù\Ÿ\îõ€Kò\ŸTõŸö[Kõò[YJN¬àö\ôXò\ŸU\Ÿ\ë]HHÿöôX›ò\‹⁄Y€äﬂKö\ôXò\ŸU\Ÿ\ë]Kò\ŸTõŸö[JN¬à›]KõY]Kõ\›€›Yﬁ[ò–]Hô]»]J
+Kù“T”‘›ö[ô 
+N¬àÿ]ôT›]J»⁄⁄\€›YàùYKô\Ÿ\ùôU\]Y]àùYKõ‹òŸPòX⁄›\àùYHJN¬à€›Yﬁ[ò—\úõ‹àHù[¬àô]\õàùYN¬àHÿ]⁄
+\úõ‹äH¬à€›Yﬁ[ò—\úõ‹àH\úõ‹é¬à€€ú€€Kùÿ\õä	’\⁄[ô»]öXŸH]N»ö\ôXò\ŸH\»›\úô[ùH[ò]òZ[XõNâÀ\úõ‹äN¬àÿ]ôT›]J»⁄⁄\€›YàùYKô\Ÿ\ùôU\]Y]àùYHJN¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàò[ŸN¬àBàBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»P–”’SïSUëSVTê“T—HëQëTëSê—T»
+›\›€H^\ò⁄\Ÿ\»
+»\ÿXõY\]Z\Y[ù
+BàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»\ŸH\ôHYY»HP–”’Sïõ›H]öXŸK€»[›\àﬁ[H\]Z\Y[ùŸ]\àÀ»[ô[›\à›€à^\ò⁄\Ÿ\»õ€›»[›H»[ûH€ôKÿ€€\]\à[›H⁄Y€à[à€ãÇàÀ»\Y\»»Y[Xô\ú»Së€ÿX⁄\ÀÇÇà äÇà
+àÿ]ôHH\Ÿ\â‹»›\›€H^\ò⁄\Ÿ\»[ô\ÿXõYY\]Z\Y[ù\›»»Z\Çà
+àö\ô\›‹ôH\Ÿ\àÿÀàXõ›[òŸY€»ò\YŸŸ€[ô»Ÿ\€â›[[Y\àHô]€‹öÀÇà
+ã¬à]^\ò⁄\ŸTôYú‘ﬁ[ò’[Y\àHù[¬àù[ò›[€àﬁ[ò—^\ò⁄\ŸTôYú 
+H¬àYà
+X›\úô[ù\Ÿ\äHô]\õé¬à€X\ï[Y[›]
+^\ò⁄\ŸTôYú‘ﬁ[ò’[Y\äN¬à^\ò⁄\ŸTôYú‘ﬁ[ò’[Y\àHŸ][Y[›]
+
+
+HOàÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò 
+KÃ
+N¬àBÇà äÇà
+à[HXÿ€›[ù	‹»^\ò⁄\ŸHôYô\ô[òŸ\»úõ€Hö\ô\›‹ôH€àŸ⁄[à[ô\Bà
+à[Hÿÿ[KàH€›Y€‹H\»H€›\òŸHŸàù]€»⁄Y€ö[ô»[à€àHô]¬à
+à]öXŸHúö[ô‹»[›\à\]Z\Y[ùŸ]\[ô›\›€H^\ò⁄\Ÿ\»⁄][›KÇà
+ã¬àù[ò›[€à\Q^\ò⁄\ŸTôYú—úõ€P€›Y
+]JH¬àYà
+Y]JHô]\õé¬àYà
+\úò^Kö\–\úò^J]Kò›\›€Q^\ò⁄\Ÿ\ JH¬à›]Kò›\›€Q^\ò⁄\Ÿ\»H]Kò›\›€Q^\ò⁄\Ÿ\Œ¬àÀ»ôK\ôY⁄\›\àH]\ÿ€\»XX⁄›\›€H^\ò⁄\ŸH\ôŸ]»€»›ÿ\àÀ»õ€[YHòX⁄⁄[ô»[ô[X[ô[‹ô\ö[ô»[ô\ú›[ô[KÇà›]Kò›\›€Q^\ò⁄\Ÿ\Àôõ‹ëXX⁄
+ŸHOà¬àYà
+ŸH	âàŸKõò[YH	âà\úò^Kö\–\úò^JŸKõ]\ÿ€\ H	âàŸKõ]\ÿ€\Àõ[ô›à
+H¬àVTê“T—W’◊”UT–”T÷ÿŸKõò[YWHHŸKõ]\ÿ€\Àú€XŸJ
+N¬àBàJN¬àBàYà
+]Kô\ÿXõY^\ò⁄\Ÿ\ H¬à›]Kô\ÿXõY^\ò⁄\Ÿ\»H¬àﬁ[Nà\úò^Kö\–\úò^J]Kô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[JH»]Kô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[Hà◊Kà€YNà\úò^Kö\–\úò^J]Kô\ÿXõY^\ò⁄\Ÿ\Àö€YJH»]Kô\ÿXõY^\ò⁄\Ÿ\Àö€YHà◊BàN¬àBàBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»”–P“»QSPëTà÷T’SBàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»Y[Xô\ú»Xõ\⁄H›ÀYúôYH€ò\⁄›ŸàZ\àòZ[ö[ôÀ€ù]ö][€à]H€¬àÀ»H[öŸY€ÿX⁄ÿ[àôXY]
+ôXY[€õJKàõ€\»\ôHô\€€ôY€àXX⁄Ÿ⁄[ãÇàÀ»[ö⁄[ô»\»€€úŸ[ùXò\ŸYàH€ÿX⁄Ÿ[ô»Hô\]Y\›ûH[XZ[HY[Xô\à\õ›ô\ÀÇàÀ»õ›\»\ôHH€À]ÿ^H€€ùô\úÿ][€ãàõ‹àH€ÿX⁄»ëPQHY[Xô\â‹»ÿÀ[›\ÇàÀ»ö\ô\›‹ôHŸX›\ö]Hù[\»]\›\õZ]]
+ù[\»õ›öYYŸ\\ò][JKÇÇà\ﬁ[ò»ù[ò›[€à\⁄Y[Xô\ë]U–€›Y
+
+H¬àYà
+X›\úô[ù\Ÿ\à›\úô[ù\Ÿ\îõ€HOOH	€Y[Xô\â Hô]\õàò[ŸN¬àô]\õàõ\⁄€›Yﬁ[ò »⁄[[ùàùYHJN¬àBÇàÀ»KKKKKKKKKH”–P“—P’S”à
+ù\ôŸ\ã[Y[ùH›ô\õ^JHKKKKKKKKKBÇà äÇà
+à⁄›À⁄YHHê€ÿX⁄ŸX›[€àà[ùûH[àHù\ôŸ\àY[ùHò\ŸY€àõ€KÇà
+à€õH€ÿX⁄\»ŸYH]»Y[Xô\ú»ô]ô\àÀÇà
+ã¬àù[ò›[€àô[ô\ê€ÿX⁄Y[ùQ[ùûJ
+H¬à€€ú›[ùûHHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[Y[ùKY[ùûI N¬àYà
+Y[ùûJHô]\õé¬à[ùûKú›[Kô\‹^HH
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	 H»	Ÿõ^	»à	€õ€ôIŒ¬àBÇà äÇà
+à‹[àH€ÿX⁄ŸX›[€à\»Hù[\ÿ‹ôY[à›ô\õ^H€à‹ŸàHõ‹õX[\à
+à€»H€ÿX⁄ÿ[àX[òYŸH€Y[ù»
+»Y\‹ÿYŸ\»⁄]›]X]ö[ô»Y[Xô\àôX]\ô\ÀÇà
+ã¬àù[ò›[€à‹[ê€ÿX⁄ŸX›[€ä
+H¬àYà
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	 H»⁄›’ÿ\›
+	–€ÿX⁄XÿŸ\‹»€õI N»ô]\õé»Bà]€ÿX⁄öY]»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄]öY]… N¬àYà
+X€ÿX⁄öY] H¬à€ÿX⁄öY]»Hÿ›[Y[ùò‹ôX]Q[[Y[ù
+	Ÿ]â N¬à€ÿX⁄öY]ÀöYH	ÿ€ÿX⁄]öY]…Œ¬àÿ›[Y[ùòõŸKò\[ô⁄[
+€ÿX⁄öY] N¬àBàÀ»ù[\ÿ‹ôY[àÿ‹õ€XõH›ô\õ^Bà€ÿX⁄öY]Àò€\‹”ò[YHH	Ÿö^Y[úŸ]LãVÃLåHôÀ\€]KML›ô\ôõ›À^KX]]…Œ¬à€ÿX⁄öY]Àú›[Kô\‹^HH	ÿõÿ⁄…Œ¬àöY]⁄[ô–€Y[ù]HHù[¬àô[ô\ê€ÿX⁄\⁄õÿ\ô
+
+N¬àBÇàù[ò›[€à€‹ŸP€ÿX⁄ŸX›[€ä
+H¬à€€ú›€ÿX⁄öY]»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄]öY]… N¬àYà
+€ÿX⁄öY] H€ÿX⁄öY]Àú›[Kô\‹^HH	€õ€ôIŒ¬àöY]⁄[ô–€Y[ù]HHù[¬àBÇà\ﬁ[ò»ù[ò›[€àô[ô\ê€ÿX⁄\⁄õÿ\ô
+
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›€ÿX⁄öY]»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄]öY]… N¬àYà
+X€ÿX⁄öY] Hô]\õé¬Çà€ÿX⁄öY]Àö[õô\íSHà]à€\‹œHõX^]À^^X]]»M€NúMà‹XŸK^KMàèÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àXãLàèÇà]èÇàà€\‹œHù^Lûõ€ùXõX⁄»èê€ÿX⁄ŸX›[€è⁄èÇà€\‹œHù^\€H^\€]KMèâŸ\ÿÿ\R[
+ö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€ÿX⁄	 _O‹ÇàŸ]èÇàù]€à€ò€X⁄œHò€‹ŸP€ÿX⁄ŸX›[€ä
+Hà€\‹œHùÀLLHLLHôÀ\€]KLLõ›[ôYYù[õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\à›ô\éòôÀ\€]KLåà\öXK[Xô[Hê€‹ŸHèÇàH]K[X⁄YOHûà€\‹œHùÀMàMàèè⁄OÇàÿù]€èÇàŸ]èÇàù]€à€ò€X⁄œHò€‹ŸP€ÿX⁄ŸX›[€ä
+Hà€\‹œHõ]Làõ^][\ÀXŸ[ù\àÿ\Là^Z[ôY€ÀMåõ€ùXõ€^\€HèÇàH]K[X⁄YOHò\úõ›À[Yùà€\‹œHùÀMMèè⁄OàòX⁄»»^H\àÿù]€èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãL»èêYH€Y[ù⁄œÇà€\‹œHù^^»^\€]KMXãL»èë[ù\à[›\à€Y[ù	‹»[XZ[»Ÿ[ôH€€õôX›[€àô\]Y\›à^H\õ›ôH][àZ\à\è‹Çà]à€\‹œHôõ^ÿ\LàèÇà[ú]YHòYX€Y[ùY[XZ[à\OHô[XZ[àX^[ô›HåçMà]]ÿ€€\]OHô[XZ[àXŸZ€\èHò€Y[ù[XZ[ò€€Hà€\‹œHôõ^LHL»ôÀ\€]KMLõ›[ôY^õ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôHõ€ù[YY][HèÇàù]€à€ò€X⁄œHúŸ[ô€Y[ùô\]Y\›
+
+Hà€\‹œHòôÀZ[ôY€ÀMå^]⁄]HMHKL»õ›[ôY^õ€ùXõ€›ô\éòôÀZ[ôY€ÀMÃèîŸ[ôÿù]€èÇàŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãMèì^H€Y[ùœ⁄œÇà]àYHò€ÿX⁄X€Y[ù[\›à€\‹œHú‹XŸK^KL»èÇà€\‹œHù^\€H^\€]KM^XŸ[ù\àKMèìÿY[ô»€Y[ùÀããè‹ÇàŸ]èÇàŸ]èÇÇàKKH€ÿX⁄XÿŸ\‹»YZ[à
+›€ô\à€õJHKOÇà]àYHõ›€ô\ãXYZ[ã\ŸX›[€ãX€ÿX⁄à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàà›[OHô\‹^Nõõ€ôN»èèŸ]èÇàŸ]èÇà¬àôYúô\⁄X€€ú 
+N¬à]ÿZ]ÿY€ÿX⁄€Y[ù 
+N¬ÇàÀ»YàH›€ô\à\»[\Ÿ[ô\»H€ÿX⁄›\ôòXŸHHYZ[à‹XŸH\ôH€ÀÇàYà
+\”›€ô\ä
+JH¬à€€ú›YZ[êõﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	€›€ô\ãXYZ[ã\ŸX›[€ãX€ÿX⁄	 N¬àYà
+YZ[êõﬁ
+H¬àYZ[êõﬁú›[Kô\‹^HH	ÿõÿ⁄…Œ¬àYZ[êõﬁö[õô\íSH›€ô\êYZ[íS
+	ÿYZ[ãY[XZ[X€ÿX⁄	À	ÿYZ[ã[\›X€ÿX⁄	À	Ÿõ€ŸYY]‹ã[\›X€ÿX⁄	 N¬àôYúô\⁄X€€ú 
+N¬à]ÿZ]õ€Z\ŸKò[
+¬àÿY€ÿX⁄[XZ[\›
+	ÿYZ[ã[\›X€ÿX⁄	 KàÿYõ€Ÿ]Xò\ŸQY]‹ì\›
+	Ÿõ€ŸYY]‹ã[\›X€ÿX⁄	 BàJN¬àBàBàBÇà\ﬁ[ò»ù[ò›[€àÿY€ÿX⁄€Y[ù 
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›\›[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄X€Y[ù[\›	 N¬àYà
+[\›[
+Hô]\õé¬àûH¬àÀ»ö[ô]ô\ûHY[Xô\à⁄»\»T»€ÿX⁄Ÿ]\»Z\à€ÿX⁄ZYà\»\¬àÀ»H€›\òŸHŸàù]õ‹àH€Y[ù\›8†%Y[Xô\ú»Ÿ]Z\à›€ÇàÀ»€ÿX⁄ZY⁄[à^H\õ›ôK[ôXX⁄\Ÿ\à€õH]ô\à‹ö]\»Z\à›€ÇàÀ»ÿÀ€»õ›[ô»\»õÿ⁄ŸYûHHŸX›\ö]Hù[\ÀÇà€€ú›€ò\H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kù⁄\ôJ	ÿ€ÿX⁄ZY	À	œOIÀ›\úô[ù\Ÿ\ãùZY
+Kõ[Z]
+L
+KôŸ]
+
+N¬ÇàYà
+€ò\ô[\JH¬à\›[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKMèìõ»€Y[ù»Y]àY€ôHXõ›ôHûH[XZ[8†%€òŸH^H\õ›ôK^W	€\X\à\ôKè‹âŒ¬àô]\õé¬àBÇà€€ú›ÿ\ô»H◊N¬à€ò\ôõ‹ëXX⁄
+—ÿ»Oà¬à€€ú›»H—ÿÀô]J
+N¬à€€ú›ZYH—ÿÀöY¬à€€ú›\]YHÀô]T€ò\⁄›	âàÀô]T€ò\⁄›ù\]Y]à»ô]»]JÀô]T€ò\⁄›ù\]Y]
+Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»^Nà	€ù[Y\öX…À[€ùà	‹⁄‹ù	»JBàà	€õ»]HY]	Œ¬àÿ\ôÀú\⁄
+à]à€ò€X⁄œHõ‹[ê€Y[ù]Z[
+	…Ÿ\ÿÿ\Rú‘›ö[ô ZY
+_I Hà€\‹œHòôÀ\€]KMLMõ›[ôYLû›\ú€‹ã\⁄[ù\à›ô\éòôÀ\€]KLLõ^][\ÀXŸ[ù\àÿ\L»èÇà]à€\‹œHùÀLLàLLàôÀZ[ôY€ÀMåõ›[ôYYù[õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\à^]⁄]Hõ€ùXõX⁄»õ^\⁄ö[öÀLèÇà	Ÿ\ÿÿ\R[
+
+Àõò[YH	’I Kò⁄\ê]
+
+Kù’\\êÿ\ŸJ
+J_BàŸ]èÇà]à€\‹œHôõ^LHZ[ã]ÀLèÇà€\‹œHôõ€ùXõ€ù[òÿ]HèâŸ\ÿÿ\R[
+Àõò[YH	’[ö€õ›€â _O‹Çà€\‹œHù^^»^\€]KMù[òÿ]HèâŸ\ÿÿ\R[
+Àô[XZ[	… _O‹Çà€\‹œHù^VÃLH^\€]KMèï\]Yà	Ÿ\ÿÿ\R[
+\]Y
+_O‹ÇàŸ]èÇàH]K[X⁄YOHò⁄]úõ€ã\öY⁄à€\‹œHùÀMHMH^\€]KMõ^\⁄ö[öÀLèè⁄OÇàŸ]èò
+N¬àJN¬à\›[ö[õô\íSHÿ\ôÀöõ⁄[ä	… N¬àôYúô\⁄X€€ú 
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àÿY[ô»€Y[ùŒâÀ\úõ‹äN¬à\›[ö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKML^XŸ[ù\àKMèê€›[õ›ÿY€Y[ùÀà⁄X⁄»[›\àö\ô\›‹ôHù[\»\ôHXõ\⁄Yè‹âŒ¬àBàBÇà\ﬁ[ò»ù[ò›[€àŸ[ô€Y[ùô\]Y\›
+
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›[XZ[[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿYX€Y[ùY[XZ[	 N¬à€€ú›[XZ[H
+[XZ[[ú]ùò[YH	… Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Y[XZ[
+H»⁄›’ÿ\›
+	—[ù\àH€Y[ù[XZ[	 N»ô]\õé»BàYà
+[XZ[OOH
+›\úô[ù\Ÿ\ãô[XZ[	… Kù”›Ÿ\êÿ\ŸJ
+JH»⁄›’ÿ\›
+ñ[›Hÿ[â›Y[›\úŸ[àäN»ô]\õé»BàûH¬à]\ôŸ]ÿ»Hù[¬à]Y[Xô\àHﬂN¬àûH¬à€€ú›\ôX›‹ûT€ò\H]ÿZ]ãò€€X›[€ä	Ÿ\ôX›‹ûI Kù⁄\ôJ	Ÿ[XZ[›Ÿ\âÀ	œOIÀ[XZ[
+Kõ[Z]
+JKôŸ]
+
+N¬àYà
+Y\ôX›‹ûT€ò\ô[\JH¬à\ôŸ]ÿ»H\ôX›‹ûT€ò\ôÿ‹÷ÃN¬àY[Xô\àH\ôŸ]ÿÀô]J
+HﬂN¬àBàHÿ]⁄
+\ôX›‹ûQ\úõ‹äH¬à€€ú€€Kùÿ\õä	‘ŸX›\ôH\ôX›‹ûH€⁄›\[ò]òZ[XõN»ûZ[ô»YÿXﬁH€⁄›\âÀ\ôX›‹ûQ\úõ‹äN¬àBàÀ»ò[ú⁄][€ò[ò[òX⁄»õ‹àXÿ€›[ù»]]ôHõ›⁄Y€ôY[à⁄[òŸHBàÀ»ŸX›\ôH\ôX›‹ûHÿ\»[ùõŸXŸYà\ô[ôYù[\»⁄[[ûH\»]Y\ûKàÀ»⁄[HH\ôX›‹ûHõ›]HXõ›ôH€€ù[ùY\»»€‹öÀÇàYà
+]\ôŸ]ÿ H¬à€€ú›YÿXﬁT€ò\H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kù⁄\ôJ	Ÿ[XZ[›Ÿ\âÀ	œOIÀ[XZ[
+Kõ[Z]
+JKôŸ]
+
+N¬àYà
+[YÿXﬁT€ò\ô[\JH¬à\ôŸ]ÿ»HYÿXﬁT€ò\ôÿ‹÷ÃN¬àY[Xô\àH\ôŸ]ÿÀô]J
+HﬂN¬àBàBàYà
+]\ôŸ]ÿ H»⁄›’ÿ\›
+	”õ»Y[Xô\àõ›[ô⁄]][XZ[	 N»ô]\õé»BàYà
+Y[Xô\ãúõ€HOOH	ÿ€ÿX⁄	 H»⁄›’ÿ\›
+	’]Xÿ€›[ù\»H€ÿX⁄õ›HY[Xô\â N»ô]\õé»BàYà
+Y[Xô\ãò€ÿX⁄ZYOOH›\úô[ù\Ÿ\ãùZY
+H»⁄›’ÿ\›
+	–[ôXYH[›\à€Y[ù	 N»ô]\õé»Bà€€ú›^\›[ô»H
+Y[Xô\ãú[ô[ô‘ô\]Y\›»◊JKú€€YJô\]Y\›Oàô\]Y\›ôúõ€UZYOOH›\úô[ù\Ÿ\ãùZY
+N¬àYà
+^\›[ô H»⁄›’ÿ\›
+	‘ô\]Y\›[ôXYHŸ[ù	 N»ô]\õé»Bà]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ \ôŸ]ÿÀöY
+Kù\]J¬à[ô[ô‘ô\]Y\›Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€ä¬àúõ€UZYà›\úô[ù\Ÿ\ãùZYàúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH›\úô[ù\Ÿ\ãô\‹^Sò[YH	–€ÿX⁄	Ààúõ€Q[XZ[à›\úô[ù\Ÿ\ãô[XZ[	…¬àJBàJN¬à⁄›’ÿ\›
+	‘ô\]Y\›Ÿ[ù»	»
+»
+Y[Xô\ãõò[YH[XZ[
+H
+»	»8ß$… N¬à[XZ[[ú]ùò[YHH	…Œ¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àŸ[ô[ô»ô\]Y\›âÀ\úõ‹äN¬à⁄›’ÿ\›
+	‘Ÿ[ôòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇà\ﬁ[ò»ù[ò›[€à‹[ê€Y[ù]Z[
+ZY
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬àûH¬à€€ú›—ÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ZY
+KôŸ]
+
+N¬àYà
+X—ÿÀô^\› H»⁄›’ÿ\›
+	–€Y[ùõ›õ›[ô	 N»ô]\õé»Bà€€ú›»H—ÿÀô]J
+N¬àÀ»€€Xõ‹ò][€àöY[»]ôHô\⁄YH]T€ò\⁄›€»€ÿX⁄\»ÿ[à\]BàÀ»€õH‹ŸHöY[»[ô\àH\ô[ôYö\ô\›‹ôHù[\Àà€€Xö[ôH[BàÀ»õ‹àHôXY[€õH€Y[ùöY]»⁄]›][›ö[ô»‹à[][ô»Z]\à€‹KÇà€€ú›€Y[ù€ò\⁄›H\‘Z[îôX€‹ô
+Àô]T€ò\⁄›
+H»Y\€€ôJÀô]T€ò\⁄›
+HàﬂN¬à€Y[ù€ò\⁄›ò\‹⁄Y€ôY€‹ö€›]»H\úò^Kö\–\úò^JÀò\‹⁄Y€ôY€‹ö€›] Bà»Y\€€ôJÀò\‹⁄Y€ôY€‹ö€›] Bàà
+\úò^Kö\–\úò^J€Y[ù€ò\⁄›ò\‹⁄Y€ôY€‹ö€›] H»€Y[ù€ò\⁄›ò\‹⁄Y€ôY€‹ö€›]»à◊JN¬à€Y[ù€ò\⁄›ú⁄\ö[ô»H\‘Z[îôX€‹ô
+Àú⁄\ö[ô Bà»Y\€€ôJÀú⁄\ö[ô Bàà
+\‘Z[îôX€‹ô
+€Y[ù€ò\⁄›ú⁄\ö[ô H»€Y[ù€ò\⁄›ú⁄\ö[ô»àﬂJN¬àöY]⁄[ô–€Y[ù]HH»ZYò[YNàÀõò[YH	–€Y[ù	À]Nà€Y[ù€ò\⁄›[XZ[àÀô[XZ[N¬àô[ô\ê€Y[ù]Z[
+
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à‹[ö[ô»€Y[ùâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–€›[õ›ÿY€Y[ù]H
+⁄X⁄»ö\ô\›‹ôHù[\ I N¬àBàBÇàù[ò›[€àô[ô\ê€Y[ù]Z[
+
+H¬à€€ú›€ÿX⁄öY]»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄]öY]… N¬àYà
+X€ÿX⁄öY]»]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›»ò[YK]K[XZ[HHöY]⁄[ô–€Y[ù]N¬à€€ú›€ò\⁄›H]HﬂN¬à€€ú›€‹ö€›]»H€ò\⁄›ù€‹ö€›]\›‹ûH◊N¬à€€ú›ù]ö][€àH€ò\⁄›õù]ö][€í\›‹ûH◊N¬à€€ú›Y]öX‹»H€ò\⁄›õY]öX‹“\›‹ûH◊N¬à€€ú›õŸö[HH€ò\⁄›ù\Ÿ\îõŸö[HﬂN¬à€€ú›€ÿ[»H€ò\⁄›ô€ÿ[»ﬂN¬à€€ú›]\›⁄X⁄“[àH
+€ò\⁄›ò⁄X⁄“[ú»◊JKú€XŸJ
+Kú€‹ù
+
+KäHOÇà›ö[ô ãò‹ôX]Y]ãô]H	… Kõÿÿ[P€€\\ôJ›ö[ô Kò‹ôX]Y]Kô]H	… JBà
+VÃHù[¬Çà€€ú›ôXŸ[ù€‹ö€›]»H€‹ö€›]ÀõX\
+»Oà¬à€€ú›^€›[ùH
+Àô^\ò⁄\Ÿ\»◊JKõ[ô›¬à€€ú›Ÿ]€›[ùH
+Àô^\ò⁄\Ÿ\»◊JKúôYXŸJ
+ÀJHOà»
+»
+KúŸ]»◊JKõ[ô›
+N¬à€€ú›]HHÀù]HÀôõÿ›\»	’€‹ö€›]	Œ¬à€€ú›òYŸHHÀù]H»	œ‹[à€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH^Z[ôY€ÀMåôÀZ[ôY€ÀMLLàKLçHõ›[ôYYù[èò€ÿX⁄[è‹‹[èâ»à	…Œ¬àô]\õà]à€ò€X⁄œHõ‹[îŸ\‹⁄[€ë]Z[
+	…Ÿ\ÿÿ\Rú‘›ö[ô Àô]H	… _IÀ	…Ÿ\ÿÿ\Rú‘›ö[ô ÀöY	… _I Hà€\‹œHòôÀ\€]KMLL»õ›[ôY^›\ú€‹ã\⁄[ù\à›ô\éòôÀ\€]KLLèÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àèÇà‹[à€\‹œHôõ€ùXõ€^\€Hõ^][\ÀXŸ[ù\àÿ\LàèâŸ\ÿÿ\R[
+]J_H	ÿòYŸ_O‹‹[èÇà‹[à€\‹œHù^^»^\€]KMõ^][\ÀXŸ[ù\àÿ\LHèâŸ\ÿÿ\R[
+Àô]H	… _HH]K[X⁄YOHò⁄]úõ€ã\öY⁄à€\‹œHùÀLÀçHLÀçHèè⁄Oè‹‹[èÇàŸ]èÇà€\‹œHù^^»^\€]KM]LHèâŸ^€›[ùH^\ò⁄\Ÿ\»0≠»	‹Ÿ]€›[ùHŸ]…›Àô\ò][€à»	»0≠»	»
+»\ÿÿ\R[
+Àô\ò][€äHà	…ﬂH0≠»\õ‹à]Z[‹ÇàŸ]èò¬àJKöõ⁄[ä	… H	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»€€\]YŸ\‹⁄[€ú»Y]‹âŒ¬Çà€€ú›]\›Y]öX»HY]öX‹÷ÃHﬂN¬à€€ú›Y]öX‘õ›‹»H◊N¬àYà
+]\›Y]öXÀùŸZY⁄
+HY]öX‘õ›‹Àú\⁄
+]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèïŸZY⁄‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\ä]\›Y]öXÀùŸZY⁄
+_HŸœ‹‹[èèŸ]èò
+N¬àYà
+]\›Y]öXÀòõŸQò]
+HY]öX‘õ›‹Àú\⁄
+]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèêõŸHò]‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\ä]\›Y]öXÀòõŸQò]
+_IO‹‹[èèŸ]èò
+N¬àYà
+]\›Y]öXÀò⁄\›
+HY]öX‘õ›‹Àú\⁄
+]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèê⁄\›‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\ä]\›Y]öXÀò⁄\›
+_H€O‹‹[èèŸ]èò
+N¬àYà
+]\›Y]öXÀùÿZ\›
+HY]öX‘õ›‹Àú\⁄
+]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèïÿZ\›‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\ä]\›Y]öXÀùÿZ\›
+_H€O‹‹[èèŸ]èò
+N¬àYà
+]\›Y]öXÀò\õ\ HY]öX‘õ›‹Àú\⁄
+]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèê\õ\œ‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\ä]\›Y]öXÀò\õ\ _H€O‹‹[èèŸ]èò
+N¬Çà€€ú›ôXŸ[ùù]ö][€àHù]ö][€ãú€XŸJ KõX\
+Oà¬àô]\õà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^õ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àèÇà‹[à€\‹œHù^^»^\€]KMèâŸ\ÿÿ\R[
+ô]H	… _O‹‹[èÇà‹[à€\‹œHôõ€ùXõ€^\€Hèâ”X]úõ›[ô
+ù›[ÿ[‹öY\»òÿ[‹öY\»
+_Hÿÿ[‹‹[èÇàŸ]èò¬àJKöõ⁄[ä	… H	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»ù]ö][€àŸŸŸY‹âŒ¬Çà€€ú›\›\]YH€ò\⁄›ù\]Y]»ô]»]J€ò\⁄›ù\]Y]
+Kù”ÿÿ[T›ö[ô 	Ÿ[ãQ–â Hà	€ô]ô\âŒ¬à€€ú›⁄X⁄“[ëõY‹“[H]\›⁄X⁄“[à	âà
+]\›⁄X⁄“[ãôõY‹»◊JKõ[ô›à»]à€\‹œHôõ^õ^]‹ò\ÿ\LH]L»èâ€]\›⁄X⁄“[ãôõY‹ÀõX\
+õY»Oà‹[à€\‹œHù^VÃLHõ€ùXõ€ôÀX[Xô\ãLL^X[Xô\ãMÃLàKLHõ›[ôYYù[èâŸ\ÿÿ\R[
+õY _O‹‹[èò
+Köõ⁄[ä	… _OŸ]èòàà]\›⁄X⁄“[à»	œ€\‹œHù^^»^Y[Y\ò[Måõ€ùXõ€]L»è∏ß$»õ»]]€X]X»€€òŸ\õú»õYŸŸY‹â»à	…Œ¬à€€ú›⁄X⁄“[êõŸR[H]\›⁄X⁄“[à»à]à€\‹œHô‹öY‹öYX€€ÀL»ÿ\Là^XŸ[ù\àXãL»èÇà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^èè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõ€èïòZ[ö[ôœ‹è€\‹œHôõ€ùXõX⁄»èâ”X]úõ›[ô
+ù[Xô\ä]\›⁄X⁄“[ãùòZ[ö[ô–Y\ô[òŸH
+J_IO‹èŸ]èÇà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^èè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõ€èìù]ö][€è‹è€\‹œHôõ€ùXõX⁄»èâ”X]úõ›[ô
+ù[Xô\ä]\›⁄X⁄“[ãõù]ö][€êY\ô[òŸH
+J_IO‹èŸ]èÇà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^èè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõ€èë[ô\ôﬁO‹è€\‹œHôõ€ùXõX⁄»èâ”X]úõ›[ô
+ù[Xô\ä]\›⁄X⁄“[ãô[ô\ôﬁH
+J_KÕO‹èŸ]èÇàŸ]èÇà€\‹œHù^^»^\€]KMXãLHèâŸ\ÿÿ\R[
+]\›⁄X⁄“[ãô]H	… _H0≠»	€ù]ö][€ìù[Xô\ä]\›⁄X⁄“[ãú€Y\›\ú»
+_Z]ô\òYŸH€Y\‹Çà€\‹œHù^\€Hèèèï⁄[éèÿèà	Ÿ\ÿÿ\R[
+]\›⁄X⁄“[ãù⁄[à	¯†%	 _O‹Çà€\‹œHù^\€H]LHèèèê⁄[[ôŸNèÿèà	Ÿ\ÿÿ\R[
+]\›⁄X⁄“[ãò⁄[[ôŸH	¯†%	 _O‹Çà	ÿ⁄X⁄“[ëõY‹“[Xàà	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»ŸYZ€H⁄X⁄ÀZ[à›XõZ]YY]è‹âŒ¬Çà€ÿX⁄öY]Àö[õô\íSHà]à€\‹œHõX^]À^^X]]»M€NúMà‹XŸK^KMàèÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇàù]€à€ò€X⁄œHòòX⁄’–€ÿX⁄\⁄õÿ\ô
+
+Hà€\‹œHôõ^][\ÀXŸ[ù\àÿ\Là^Z[ôY€ÀMåõ€ùXõ€^\€HXãMèÇàH]K[X⁄YOHò\úõ›À[Yùà€\‹œHùÀMMèè⁄OàòX⁄»»€Y[ù¬àÿù]€èÇà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\L»èÇà]à€\‹œHùÀLMLMôÀZ[ôY€ÀMåõ›[ôYYù[õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\à^]⁄]Hõ€ùXõX⁄»^^èÇà	Ÿ\ÿÿ\R[
+
+ò[YH	’I Kò⁄\ê]
+
+Kù’\\êÿ\ŸJ
+J_BàŸ]èÇà]à€\‹œHôõ^LHZ[ã]ÀLèÇàà€\‹œHù^^õ€ùXõX⁄»ù[òÿ]HèâŸ\ÿÿ\R[
+ò[YJ_O⁄èÇà€\‹œHù^^»^\€]KMù[òÿ]HèâŸ\ÿÿ\R[
+[XZ[	… _O‹ÇàŸ]èÇàŸ]èÇà]à€\‹œHõ]L»[õ[ôKYõ^][\ÀXŸ[ù\àÿ\LKçHôÀ\€]KMLL»KLKçHõ›[ôY[»èÇàH]K[X⁄YOHô^YHà€\‹œHùÀLÀçHLÀçH^\€]KMèè⁄OÇà‹[à€\‹œHù^VÃLHõ€ùXõ€^\€]KM\\òÿ\ŸHèîôXY[€õH0≠»ﬁ[òŸY	Ÿ\ÿÿ\R[
+\›\]Y
+_O‹‹[èÇàŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãL»èîõŸö[H	à€ÿ[œ⁄œÇà]à€\‹œHú‹XŸK^KLà^\€HèÇà	‹õŸö[KôŸ[ô\à»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèëŸ[ô\è‹‹[èè‹[à€\‹œHôõ€ùXõ€èâŸ\ÿÿ\R[
+õŸö[KôŸ[ô\ä_O‹‹[èèŸ]èòà	…ﬂBà	‹õŸö[KòYŸH»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèêYŸO‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ”X]úõ›[ô
+ù]ö][€ìù[Xô\äõŸö[KòYŸJJ_O‹‹[èèŸ]èòà	…ﬂBà	‹õŸö[KöZY⁄€H»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèíZY⁄‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\äõŸö[KöZY⁄€J_H€O‹‹[èèŸ]èòà	…ﬂBà	 õŸö[KûYX\ú’òZ[ö[ô»OOH[ôYö[ôY	âàõŸö[KûYX\ú’òZ[ö[ô»OOHù[
+H»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèïòZ[ö[ôœ‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ€ù]ö][€ìù[Xô\äõŸö[KûYX\ú’òZ[ö[ô _H\úœ‹‹[èèŸ]èòà	…ﬂBà	Ÿ€ÿ[Àòÿ[‹öY\»»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèêÿ[‹öYH€ÿ[‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ”X]úõ›[ô
+ù]ö][€ìù[Xô\ä€ÿ[Àòÿ[‹öY\ J_Hÿÿ[‹‹[èèŸ]èòà	…ﬂBà	Ÿ€ÿ[Àúõ›Z[à»]à€\‹œHôõ^ù\›YûKXô]ŸY[àèè‹[à€\‹œHù^\€]KMèîõ›Z[à€ÿ[‹‹[èè‹[à€\‹œHôõ€ùXõ€èâ”X]úõ›[ô
+ù]ö][€ìù[Xô\ä€ÿ[Àúõ›Z[äJ_Hœ‹‹[èèŸ]èòà	…ﬂBàŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãL»èì]\›YX\›\ô[Y[ùœ⁄œÇà]à€\‹œHú‹XŸK^KLà^\€HèÇà	€Y]öX‘õ›‹Àõ[ô›»Y]öX‘õ›‹Àöõ⁄[ä	… Hà	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»YX\›\ô[Y[ù»ŸŸŸY‹âﬂBàŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àÿ\L»XãL»èÇà]èè»€\‹œHù^[»õ€ùXõX⁄»èïŸYZ€H⁄X⁄ÀZ[è⁄œè€\‹œHù^^»^\€]KMèì]\›ôXY[ô\‹»[ôY\ô[òŸH\]O‹èŸ]èÇàH]K[X⁄YOHò€\õÿ\ôX⁄X⁄»à€\‹œHùÀMHMH^Z[ôY€ÀMåèè⁄OÇàŸ]èÇà	ÿ⁄X⁄“[êõŸR[Bà]à€\‹œHô‹öY‹öYX€€ÀLàÿ\Là]MèÇàù]€à€ò€X⁄œHúô\U–€Y[ù⁄X⁄“[ä
+Hà	€]\›⁄X⁄“[à»	…»à	Ÿ\ÿXõY	ﬂH€\‹œHúL»ôÀZ[ôY€ÀMå^]⁄]Hõ›[ôY^õ€ùXõ€^^»\ÿXõYõ‹X⁄]KMèîô\H[àõ›\œÿù]€èÇàù]€à€ò€X⁄œHô^‹ùöY]ŸY€Y[ùô\‹ù
+
+Hà€\‹œHúL»ôÀ\€]KNL^]⁄]Hõ›[ôY^õ€ùXõ€^^»èë›€õÿYô\‹ùÿù]€èÇàŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãLHèê€€\]YŸ\‹⁄[€ú»
+	›€‹ö€›]Àõ[ô›JO⁄œÇà€\‹œHù^^»^\€]KMXãL»èë]ô\ûH€‹ö€›]	Ÿ\ÿÿ\R[
+ò[YJ_H\»ö[ö\⁄Yà\[ûH»ŸYHù[]Z[è‹Çà]à€\‹œHú‹XŸK^KLàX^ZNMà›ô\ôõ›À^KX]]»èâ‹ôXŸ[ù€‹ö€›]ﬂOŸ]èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãL»èîôXŸ[ùù]ö][€è⁄œÇà]à€\‹œHú‹XŸK^KLàèâ‹ôXŸ[ùù]ö][€üOŸ]èÇàŸ]èÇÇàKKH€Y[ù	‹»€ÿ[Àõÿ›\»	à\ôŸ]»KOÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãLHèë€ÿ[»	ò[\»\ôŸ]œ⁄œÇà€\‹œHù^^»^\€]KMXãMèï⁄]	Ÿ\ÿÿ\R[
+ò[YJ_H\»€‹ö⁄[ô»›ÿ\ôè‹Çà]àYHò€Y[ùY€ÿ[À[\›èèŸ]èÇàŸ]èÇÇàKKH^\»H€Y[ù\»⁄‹Ÿ[à»⁄\ôH⁄]H€ÿX⁄KOÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãLHèî⁄\ôY⁄][›O⁄œÇà€\‹œHù^^»^\€]KMXãMèï€‹ö€›]»	ò[\»ù]ö][€à	Ÿ\ÿÿ\R[
+ò[YJ_H\»⁄\ôYè‹Çà]àYHú⁄\ôYY^\À[\›à€\‹œHú‹XŸK^KLàèÇà€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìÿY[ôÀããè‹ÇàŸ]èÇàŸ]èÇÇàKKH€ÿX⁄\‹⁄Y€ú»H€‹ö€›]»\»€Y[ùKOÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãLHèê\‹⁄Y€àH€‹ö€›]⁄œÇà€\‹œHù^^»^\€]KMXãMèêùZ[H€‹ö€›]õ‹à	Ÿ\ÿÿ\R[
+ò[YJ_Kà]\X\ú»[àZ\à\»õ€›Àè‹Çà]àYHò\‹⁄Y€ôY]€‹ö€›]À[\›à€\‹œHú‹XŸK^KLàXãMèèŸ]èÇàù]€à€ò€X⁄œHõ‹[ê\‹⁄Y€ï€‹ö€›]
+
+Hà€\‹œHùÀYù[ôÀZ[ôY€ÀMå^]⁄]HL»õ›[ôY^õ€ùXõ€›ô\éòôÀZ[ôY€ÀMÃèä»ô]»\‹⁄Y€ôY€‹ö€›]ÿù]€èÇàŸ]èÇÇà]à€\‹œHô€\‹ÀXÿ\ôõ›[ôYVÃãç\ô[WHMàèÇà»€\‹œHù^[»õ€ùXõX⁄»XãLHèî\ú€€ò[òZ[ö[ô»õ›\œ⁄œÇà€\‹œHù^^»^\€]KMXãMèêH⁄\ôY€€ùô\úÿ][€àô]ŸY[à[›H[ô	Ÿ\ÿÿ\R[
+ò[YJ_Kè‹Çà]àYHõõ›\À]ôXYà€\‹œHú‹XŸK^KL»XãMX^ZN›ô\ôõ›À^KX]]»èÇà€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìÿY[ô»õ›\Àããè‹ÇàŸ]èÇà]à€\‹œHôõ^ÿ\LàèÇà[ú]YHõõ›KZ[ú]à\OHù^àX^[ô›HåLàXŸZ€\èHï‹ö]HHõ›Kããàà€\‹œHôõ^LHL»ôÀ\€]KMLõ›[ôY^õ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôHõ€ù[YY][Hà€öŸ^Y›€èHöYä]ô[ùöŸ^OOOI—[ù\â \‹›õ›J
+HèÇàù]€à€ò€X⁄œHú‹›õ›J
+Hà€\‹œHòôÀZ[ôY€ÀMå^]⁄]HMHKL»õ›[ôY^õ€ùXõ€›ô\éòôÀZ[ôY€ÀMÃèîŸ[ôÿù]€èÇàŸ]èÇàŸ]èÇàŸ]èÇà¬àôYúô\⁄X€€ú 
+N¬àÿYõ›\’ôXY
+
+N¬àô[ô\î⁄\ôY^\ 
+N¬àô[ô\ê€Y[ù€ÿ[ 
+N¬àô[ô\ê\‹⁄Y€ôY€‹ö€›]—õ‹ê€ÿX⁄
+
+N¬àBÇàù[ò›[€àô\U–€Y[ù⁄X⁄“[ä
+H¬àYà
+]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›]\›H
+
+
+öY]⁄[ô–€Y[ù]Kô]HﬂJKò⁄X⁄“[ú»◊JKú€XŸJ
+Kú€‹ù
+
+KäHOÇà›ö[ô ãò‹ôX]Y]ãô]H	… Kõÿÿ[P€€\\ôJ›ö[ô Kò‹ôX]Y]Kô]H	… JBà
+JVÃN¬à€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›KZ[ú]	 N¬àYà
+[]\›Z[ú]
+H»⁄›’ÿ\›
+	”õ»⁄X⁄ÀZ[à]òZ[XõH»ô\H… N»ô]\õé»Bà[ú]ùò[YHH⁄X⁄ÀZ[àô\‹€úŸHõ‹à	€]\›ô]H	›\»ŸYZ…ﬂNà¬à[ú]úÿ‹õ€[ù’öY] »ôZ]ö[‹éà	‹€[€›	Àõÿ⁄Œà	ÿŸ[ù\â»JN¬à[ú]ôõÿ›\ 
+N¬àYà
+\[Ÿà[ú]úŸ]Ÿ[X›[€îò[ôŸHOOH	Ÿù[ò›[€â H[ú]úŸ]Ÿ[X›[€îò[ôŸJ[ú]ùò[YKõ[ô›[ú]ùò[YKõ[ô›
+N¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»”–P“8°•”QSï“TíSë»	àT‘“Q”ëQ”‘í”’U¬àÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»ì’QíP–US”î»
+€ÿX⁄Oà€Y[ùX›]ö]HôYY
+BàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»›‹ôY\»[à]ô[ùÿ\úò^H€àH⁄\ôYõ›\»ÿ»
+⁄X⁄õ›H€ÿX⁄àÀ»[ôH€Y[ù\ôH[›ŸY»‹ö]H KàXX⁄]ô[ùôX€‹ô»⁄»]	‹»ì‘ãàÀ»€»XX⁄⁄YH€õH€›[ù»H€ô\»YX[ùõ‹à[H\»[úôXYàŸY[êûXòX⁄‹¬àÀ»⁄»\»‹[ôYZ\àõ›YöXÿ][€ú»€»ŸHÿ[à⁄›»[à[úôXYòYŸKÇÇà äÇà
+àYHõ›YöXÿ][€àõ‹àHôX⁄\Y[ùàöY›\ô\»›]H€ÿX⁄€Y[Xô\àZ\àúõ€Bà
+àH›\úô[ù\Ÿ\â‹»õ€K‹ö]\»[ù»H⁄\ôYõ›\»ÿ…‹»]ô[ù»\úò^KÇà
+à\ò[H‘›ö[ôﬂHôX⁄\Y[ùZYH⁄»⁄›[ôXŸZ]ôK‹ŸYH\»õ›YöXÿ][€Çà
+à\ò[H”ÿöôX›Hõ›YàH»\K]KõŸKúõ€Sò[YHBà
+ã¬à\ﬁ[ò»ù[ò›[€à\⁄õ›YöXÿ][€äôX⁄\Y[ùZYõ›YäH¬àûH¬à]€ÿX⁄ZYY[Xô\ïZY¬àYà
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	 H¬à€ÿX⁄ZYH›\úô[ù\Ÿ\ãùZY¬àY[Xô\ïZYHôX⁄\Y[ùZY¬àH[ŸH¬à€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬àY[Xô\ïZYH›\úô[ù\Ÿ\ãùZY¬àBàYà
+X€ÿX⁄ZY[Y[Xô\ïZY
+Hô]\õé¬Çà€€ú›]ô[ùH¬à\Nàõ›Yãù\H	›\]IÀà]Nàõ›Yãù]H	’\]IÀàõŸNàõ›YãòõŸH	…Ààúõ€Sò[YNàõ›Yãôúõ€Sò[YH	…Ààõ‹ïZYàôX⁄\Y[ùZYà]àô]»]J
+Kù“T”‘›ö[ô 
+KàYà	€ó…»
+»]Kõõ› 
+H
+»	◊…»
+»X]ôõ€‹äX]úò[ô€J
+H
+àL
+BàN¬Çà€€ú›ôYàHãò€€X›[€ä	€õ›\… Kôÿ õ›\—ÿ“Y
+€ÿX⁄ZYY[Xô\ïZY
+JN¬à€€ú›^\›[ô»H]ÿZ]ôYãôŸ]
+
+N¬àYà
+^\›[ôÀô^\› H¬à]ÿZ]ôYãù\]J»]ô[ùŒàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€ä]ô[ù
+HJN¬àH[ŸH¬à]ÿZ]ôYãúŸ]
+»€ÿX⁄ZYà€ÿX⁄ZYY[Xô\ïZYàY[Xô\ïZYY\‹ÿYŸ\Œà◊K]ô[ùŒàŸ]ô[ùHJN¬àBàYà
+ïSïSQW–””ëíQÀú\⁄[òXõY	âà\⁄X⁄‘ôXYJH¬à€€ú›Ÿ[ô\⁄HŸ]òX⁄Ÿ[ôÿ[XõJ	‹Ÿ[ô\Ÿ\î\⁄	 N¬àYà
+Ÿ[ô\⁄
+H¬àûH¬à]ÿZ]Ÿ[ô\⁄
+¬àôX⁄\Y[ùZYà]Nà]ô[ùù]KàõŸNà]ô[ùòõŸKà⁄[ôà	ÿ€ÿX⁄Y\‹ÿYŸ\…Àà\õàô]»Tì
+	Àã»ÿ€ÿX⁄[ô…À⁄[ô›Àõÿÿ][€ãöôYäKöôYÇàJN¬àHÿ]⁄
+\⁄\úõ‹äH¬àÀ»H[ãX\X›]ö]H]ô[ùXõ›ôH\»›[ÿYô[H[]ô\ôYÇà€€ú€€Kùÿ\õä	‘ô[[›H\⁄[]ô\ûH[ô[ôŒâÀ\⁄\úõ‹äN¬àBàBàBàHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	–€›[õ›\⁄õ›YöXÿ][€éâÀ\úõ‹äN¬àBàBÇà äÇà
+àÿY[õ›YöXÿ][€ú»Yô\‹ŸY»H›\úô[ù\Ÿ\àX‹õ‹‹»Z\à€ÿX⁄¬à
+à€Y[ùô[][€ú⁄\àY[Xô\ú»]ôH€ôH€ÿX⁄»€ÿX⁄\»X^H]ôHX[ûH€Y[ùÀÇà
+ã¬à\ﬁ[ò»ù[ò›[€àÿY^Sõ›YöXÿ][€ú 
+H¬à€€ú›ô\›[»H◊N¬àûH¬àYà
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	 H¬àÀ»[õ›\»ÿ‹»⁄\ôH\»€ÿX⁄\»H\ùX⁄\[ùà€€ú›€ò\H]ÿZ]ãò€€X›[€ä	€õ›\… Kù⁄\ôJ	ÿ€ÿX⁄ZY	À	œOIÀ›\úô[ù\Ÿ\ãùZY
+Kõ[Z]
+L
+KôŸ]
+
+N¬à€ò\ôõ‹ëXX⁄
+ÿ»Oà¬à€€ú›HÿÀô]J
+N¬à
+ô]ô[ù»◊JKôõ‹ëXX⁄
+HOà»Yà
+Kôõ‹ïZYOOH›\úô[ù\Ÿ\ãùZY
+Hô\›[Àú\⁄
+JN»JN¬àJN¬àH[ŸH¬à€€ú›€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬àYà
+€ÿX⁄ZY
+H¬à€€ú›ôYàHãò€€X›[€ä	€õ›\… Kôÿ õ›\—ÿ“Y
+€ÿX⁄ZY›\úô[ù\Ÿ\ãùZY
+JN¬à€€ú›ÿ»H]ÿZ]ôYãôŸ]
+
+N¬àYà
+ÿÀô^\› H¬à
+ÿÀô]J
+Kô]ô[ù»◊JKôõ‹ëXX⁄
+HOà»Yà
+Kôõ‹ïZYOOH›\úô[ù\Ÿ\ãùZY
+Hô\›[Àú\⁄
+JN»JN¬àBàBàBàHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	–€›[õ›ÿYõ›YöXÿ][€úŒâÀ\úõ‹äN¬àBàô\›[Àú€‹ù
+
+KäHOà
+ãò]	… Kõÿÿ[P€€\\ôJKò]	… JN¬àô]\õàô\›[Œ¬àBÇàÀ»òX⁄»⁄X⁄õ›YöXÿ][€àY»H\Ÿ\à\»[ôXYHŸY[à
+\ú⁄\›Yÿÿ[JBàù[ò›[€àõ›YöXÿ][€î›‹òYŸRŸ^Jò\ŸJH¬àô]\õà	ÿò\Ÿ_Nâÿ›\úô[ù\Ÿ\à»›\úô[ù\Ÿ\ãùZYà	Ÿ›Y\›	ﬂX¬àBÇàù[ò›[€àŸY[ìõ›YíY 
+H¬àûH»ô]\õàî””ãú\úŸJÿÿ[›‹òYŸKôŸ]][Jõ›YöXÿ][€î›‹òYŸRŸ^J	›ôö]‹ŸY[ó€õ›Yú… JH	÷◊I N»Bàÿ]⁄
+JH»ô]\õà◊N»BàBàù[ò›[€àX\ö”õ›Yú‘ŸY[äY H¬à€€ú›Ÿ]Hô]»Ÿ]
+ŸY[ìõ›YíY 
+JN¬àYÀôõ‹ëXX⁄
+YOàŸ]òY
+Y
+JN¬àÿÿ[›‹òYŸKúŸ]][Jõ›YöXÿ][€î›‹òYŸRŸ^J	›ôö]‹ŸY[ó€õ›Yú… Kî””ãú›ö[ô⁄YûJ\úò^Kôúõ€JŸ]
+Kú€XŸJML
+JJN¬àBÇàÀ»òX⁄»⁄X⁄õ›YöXÿ][€ú»H\Ÿ\à\»T”RT‘—Q
+ôXY[ô€X\ôYŸôàH\›
+Bàù[ò›[€à\€Z\‹ŸYõ›YíY 
+H¬àûH»ô]\õàî””ãú\úŸJÿÿ[›‹òYŸKôŸ]][Jõ›YöXÿ][€î›‹òYŸRŸ^J	›ôö]Ÿ\€Z\‹ŸY€õ›Yú… JH	÷◊I N»Bàÿ]⁄
+JH»ô]\õà◊N»BàBàù[ò›[€à\€Z\‹”õ›YäY
+H¬à€€ú›Ÿ]Hô]»Ÿ]
+\€Z\‹ŸYõ›YíY 
+JN¬àŸ]òY
+Y
+N¬àÿÿ[›‹òYŸKúŸ]][Jõ›YöXÿ][€î›‹òYŸRŸ^J	›ôö]Ÿ\€Z\‹ŸY€õ›Yú… Kî””ãú›ö[ô⁄YûJ\úò^Kôúõ€JŸ]
+Kú€XŸJLL
+JJN¬àX\ö”õ›Yú‘ŸY[ä⁄YJN¬à‹[ìõ›YöXÿ][€ú 
+N»À»ôK\ô[ô\àH\›⁄]›]H\€Z\‹ŸY][BàôYúô\⁄õ›YêòYŸJ
+N¬àBàù[ò›[€à€X\ê[õ›Yú 
+H¬à€€ú›õ›Yú»H⁄[ô›ÀóÿÿX⁄Yõ›Yú»◊N¬à€€ú›Ÿ]Hô]»Ÿ]
+\€Z\‹ŸYõ›YíY 
+JN¬àõ›YúÀôõ‹ëXX⁄
+àOàŸ]òY
+ãöY
+JN¬àÿÿ[›‹òYŸKúŸ]][Jõ›YöXÿ][€î›‹òYŸRŸ^J	›ôö]Ÿ\€Z\‹ŸY€õ›Yú… Kî””ãú›ö[ô⁄YûJ\úò^Kôúõ€JŸ]
+Kú€XŸJLL
+JJN¬àX\ö”õ›Yú‘ŸY[äõ›YúÀõX\
+àOàãöY
+JN¬à‹[ìõ›YöXÿ][€ú 
+N¬àôYúô\⁄õ›YêòYŸJ
+N¬àBÇà\ﬁ[ò»ù[ò›[€àôYúô\⁄õ›YêòYŸJ
+H¬à€€ú›õ›Yú»H]ÿZ]ÿY^Sõ›YöXÿ][€ú 
+N¬à€€ú›ŸY[àHô]»Ÿ]
+ŸY[ìõ›YíY 
+JN¬à€€ú›\€Z\‹ŸYHô]»Ÿ]
+\€Z\‹ŸYõ›YíY 
+JN¬àÀ»[úôXYHõ›ŸY[à[ôõ›\€Z\‹ŸYà€€ú›[úôXYHõ›YúÀôö[\äàOà\ŸY[ãö\ ãöY
+H	âàY\€Z\‹ŸYö\ ãöY
+JKõ[ô›¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	Àõõ›YãXòYŸI Kôõ‹ëXX⁄
+òYŸHOà¬àYà
+[úôXYà
+H¬àòYŸKù^€€ù[ùH[úôXYàH»	ŒJ…»à›ö[ô [úôXY
+N¬àòYŸKò€\‹”\›úô[[›ôJ	⁄Y[â N¬àH[ŸH¬àòYŸKò€\‹”\›òY
+	⁄Y[â N¬àBàJN¬à⁄[ô›ÀóÿÿX⁄Yõ›Yú»Hõ›YúŒ¬àBÇà\ﬁ[ò»ù[ò›[€à‹[ìõ›YöXÿ][€ú 
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›YöXÿ][€úÀ[[Ÿ[	 N¬à€€ú›õŸHHÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›YöXÿ][€úÀXõŸI N¬àYà
+[[Ÿ[XõŸJHô]\õé¬àõŸKö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKNèìÿY[ôÀããè‹âŒ¬à[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬Çà€€ú›[H]ÿZ]ÿY^Sõ›YöXÿ][€ú 
+N¬à€€ú›\€Z\‹ŸYHô]»Ÿ]
+\€Z\‹ŸYõ›YíY 
+JN¬à€€ú›ŸY[àHô]»Ÿ]
+ŸY[ìõ›YíY 
+JN¬àÀ»⁄›»]ô\û][ô»]\€â›ôY[à\€Z\‹ŸYà€€ú›õ›Yú»H[ôö[\äàOàY\€Z\‹ŸYö\ ãöY
+JN¬Çà€€ú›€X\êùàHÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›YãX€X\ãX[	 N¬àYà
+€X\êùäH€X\êùãú›[Kô\‹^HHõ›YúÀõ[ô›à»	…»à	€õ€ôIŒ¬ÇàYà
+õ›YúÀõ[ô›OOH
+H¬àõŸKö[õô\íSHà]à€\‹œHù^XŸ[ù\àKLLàèÇàH]K[X⁄YOHòô[[Ÿôàà€\‹œHùÀLLàLLà^\€]KLÃ^X]]»XãL»èè⁄OÇà€\‹œHù^\€H^\€]KMõ€ùXõ€èñ[›I‹ôH[ÿ]Y⁄\‹Çà€\‹œHù^^»^\€]KM]LHèìô]»X›]ö]H⁄][›\à	ÿ›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	»»	ÿ€Y[ù…»à	ÿ€ÿX⁄	ﬂH⁄›‹»\ôKè‹ÇàŸ]èò¬àH[ŸH¬à€€ú›X€€ëõ‹àH¬à	›€‹ö€›]X\‹⁄Y€ôY	Œà»X€€éà	ÿ€\õÿ\ô[\›	À€€‹éà	ÿôÀZ[ôY€ÀLL^Z[ôY€ÀMå	»Kà	›€‹ö€›]X€€\]Y	Œà»X€€éà	ÿ⁄X⁄ÀX⁄\ò€IÀ€€‹éà	ÿôÀY[Y\ò[LL^Y[Y\ò[Må	»Kà	Ÿ^\À\⁄\ôY	Œà»X€€éà	‹⁄\ôKLâÀ€€‹éà	ÿôÀY[Y\ò[LL^Y[Y\ò[Må	»Kà	€õ›IŒà»X€€éà	€Y\‹ÿYŸKX⁄\ò€IÀ€€‹éà	ÿôÀXõYKLL^XõYKMå	»Kà	ÿ€ÿX⁄X€€õôX›Y	Œà»X€€éà	›\Ÿ\ãX⁄X⁄…À€€‹éà	ÿôÀZ[ôY€ÀLL^Z[ôY€ÀMå	»BàN¬àõŸKö[õô\íSHõ›YúÀõX\
+àOà¬à€€ú›\’[úôXYH\ŸY[ãö\ ãöY
+N¬à€€ú›X»HX€€ëõ‹ñ€ãù\WH»X€€éà	ÿô[	À€€‹éà	ÿôÀ\€]KLL^\€]KMå	»N¬à€€ú›[YHHãò]»ô]»]Jãò]
+Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»^Nà	€ù[Y\öX…À[€ùà	‹⁄‹ù	À›\éà	ÃãYY⁄]	ÀZ[ù]Nà	ÃãYY⁄]	»JHà	…Œ¬àô]\õàà]à€\‹œHôõ^ÿ\L»L»õ›[ôYLûXãLà	⁄\’[úôXY»	ÿôÀZ[ôY€ÀML	»à	ÿôÀ\€]KML	ﬂHèÇà]à€\‹œHùÀLLLL	⁄XÀò€€‹üHõ›[ôY^õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\àõ^\⁄ö[öÀLèÇàH]K[X⁄YOHâ⁄XÀöX€€üHà€\‹œHùÀMHMHèè⁄OÇàŸ]èÇà]à€\‹œHôõ^LHZ[ã]ÀLèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\LàèÇà€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+ãù]H	… _O‹Çà	⁄\’[úôXY»	œ‹[à€\‹œHùÀLàLàôÀZ[ôY€ÀMåõ›[ôYYù[õ^\⁄ö[öÀLèè‹‹[èâ»à	…ﬂBàŸ]èÇà	€ãòõŸH»€\‹œHù^^»^\€]KML]LçHèâŸ\ÿÿ\R[
+ãòõŸJ_O‹òà	…ﬂBà€\‹œHù^VÃLH^\€]KM]LHèâ€ãôúõ€Sò[YH»\ÿÿ\R[
+ãôúõ€Sò[YJH
+»	»0≠»	»à	…ﬂI›[Y_O‹ÇàŸ]èÇàù]€à€ò€X⁄œHô\€Z\‹”õ›Yä	…Ÿ\ÿÿ\Rú‘›ö[ô ãöY
+_I Hà€\‹œHù^\€]KLÃ›ô\éù^\€]KMLõ^\⁄ö[öÀLŸ[ã\›\ùà\öXK[Xô[Hë\€Z\‹»èÇàH]K[X⁄YOHûà€\‹œHùÀMMèè⁄OÇàÿù]€èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àBàôYúô\⁄X€€ú 
+N¬ÇàÀ»‹[ö[ô»H\›X\ö‹»]ô\û][ô»\»—QSà
+€X\ú»HòYŸJKù]][\¬àÀ»›^H€àH\›[ù[[ô]öYX[H\€Z\‹ŸY‹à€X\ôYÇàX\ö”õ›Yú‘ŸY[ä[õX\
+àOàãöY
+JN¬àôYúô\⁄õ›YêòYŸJ
+N¬àBÇàù[ò›[€à€‹ŸSõ›YöXÿ][€ú 
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›YöXÿ][€úÀ[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàÀ»KKKH”–P““QNà⁄›»H€Y[ù	‹»€ÿ[Àõÿ›\»	à\ôŸ]»KKKBàù[ò›[€àô[ô\ê€Y[ù€ÿ[ 
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€Y[ùY€ÿ[À[\›	 N¬àYà
+Xõﬁ]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›€ò\HöY]⁄[ô–€Y[ù]Kô]HﬂN¬à€€ú›€ÿ[»H€ò\ù\Ÿ\ë€ÿ[»◊N¬à€€ú›\ôŸ]»H€ò\ô€ÿ[\ôŸ]»ﬂN¬à€€ú›õŸö[HH€ò\ù\Ÿ\îõŸö[HﬂN¬Çà][H	…Œ¬ÇàÀ»õÿ›\»€ÿ[»
+ŸZY⁄‹‹»»]\ÿ€HÿZ[à»X[
+H8†%ÿ[YH⁄\HH€Y[ùŸ]¬àYà
+€ÿ[Àõ[ô›à
+H¬à[
+œH€ÿ[ÀõX\
+»Oà¬à€€ú›õÿ›\“[ôõ»H¬àŸZY⁄€‹‹Œà»[[⁄öNà	¸'Â)IÀXô[à	—ò]‹‹…À€€‹éà	›^\õ‹ŸKMå	»Kà]\ÿ€WŸÿZ[éà»[[⁄öNà	¸'‰™âÀXô[à	”]\ÿ€HÿZ[âÀ€€‹éà	›^Z[ôY€ÀMå	»KàX[à»[[⁄öNà	¸'„,IÀXô[à	“X[	À€€‹éà	›^Y[Y\ò[Må	»BàVŸÀôõÿ›\◊H»[[⁄öNà	¸'„´…ÀXô[àÀù\H	—€ÿ[	À€€‹éà	›^\€]KMå	»N¬Çà]›[[X\ûHH	…Œ¬àYà
+Àôõÿ›\»OOH	›ŸZY⁄€‹‹…»	âàÀô]Z[ H¬à€€ú›\ù»H◊N¬àYà
+Àô]Z[ÀöŸ H\ùÀú\⁄
+	ŸÀô]Z[ÀöŸﬂZŸÿ
+N¬àYà
+Àô]Z[ÀùŸYZ‹ H\ùÀú\⁄
+	ŸÀô]Z[ÀùŸYZ‹ﬂ]ÿ
+N¬àYà
+Àô]Z[Àú›[JH\ùÀú\⁄
+Àô]Z[Àú›[HOOH	›€ôY	»»	›€ôY	»à	‹ÿÿ[HŸZY⁄	 N¬àYà
+\ùÀõ[ô›
+H›[[X\ûHH\ùÀöõ⁄[ä	»0≠»	 N¬àH[ŸHYà
+Àôõÿ›\»OOH	€]\ÿ€WŸÿZ[â»	âàÀô]Z[ H¬à€€ú›\ù»H◊N¬àYà
+Àô]Z[Àúÿ€‹HOOH	ŸŸ[ô\ò[	 H\ùÀú\⁄
+	—ù[õŸH0≠»L∏†$ÃMàŸ]À€]\ÿ€K›ŸYZ… N¬à[ŸHYà
+Àô]Z[Àúÿ€‹HOOH	‹‹X⁄YöX…»	âà\úò^Kö\–\úò^JÀô]Z[Àõ]\ÿ€\ JH\ùÀú\⁄
+	ŸÀô]Z[Àõ]\ÿ€\Àöõ⁄[ä	À	 _H0≠»L∏†$ÃåŸ]»XX⁄›ŸYZÿ
+N¬à[ŸHYà
+Àô]Z[Àúö[‹ö]JH\ùÀú\⁄
+Àô]Z[Àúö[‹ö]JN¬àYà
+Àô]Z[Àú\⁄\]YJH\ùÀú\⁄
+Àô]Z[Àú\⁄\]YJN¬àYà
+Àô]Z[Àô^\öY[òŸJH\ùÀú\⁄
+Àô]Z[Àô^\öY[òŸJN¬àYà
+\ùÀõ[ô›
+H›[[X\ûHH\ùÀöõ⁄[ä	»0≠»	 N¬àH[ŸHYà
+Àôõÿ›\»OOH	⁄X[	»	âàÀô]Z[»	âàÀô]Z[Àò\ôXJH¬à›[[X\ûHHÀô]Z[Àò\ôXN¬àBÇàô]\õàà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^XãLàèÇà‹[à€\‹œHù^VÃLHõ€ùXõX⁄»	Ÿõÿ›\“[ôõÀò€€‹üH\\òÿ\ŸHèâŸõÿ›\“[ôõÀô[[⁄ö_H	Ÿ\ÿÿ\R[
+õÿ›\“[ôõÀõXô[
+_O‹‹[èÇà€\‹œHôõ€ùXõ€^\€H]LHèâŸ\ÿÿ\R[
+Àô\ÿ‹ö\[€à	… _O‹Çà	‹›[[X\ûH»€\‹œHù^^»^\€]KML]LHèâŸ\ÿÿ\R[
+›[[X\ûJ_O‹òà	…ﬂBàŸ]èò¬àJKöõ⁄[ä	… N¬àBÇàÀ»Z[H\ôŸ]»
+ÿ[‹öY\»»ÿ]\à»›\ Bà€€ú›\ôŸ]⁄\»H◊N¬àYà
+\ôŸ]Àòÿ[‹öY\ H\ôŸ]⁄\Àú\⁄
+<'Â)H	”X]úõ›[ô
+ù[Xô\ä\ôŸ]Àòÿ[‹öY\ H
+_Hÿÿ[
+N¬àYà
+\ôŸ]Àùÿ]\äH\ôŸ]⁄\Àú\⁄
+<'‰©»	”X]úõ›[ô
+ù[Xô\ä\ôŸ]Àùÿ]\äH
+_H[
+N¬àYà
+\ôŸ]Àú›\ H\ôŸ]⁄\Àú\⁄
+<'‰g»	 ù[Xô\ä\ôŸ]Àú›\ H
+Kù”ÿÿ[T›ö[ô 
+_H›\ÿ
+N¬àYà
+\ôŸ]⁄\Àõ[ô›
+H¬à[
+œH€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KM]LàXãLHèëZ[H\ôŸ]œ‹Çà]à€\‹œHôõ^õ^]‹ò\ÿ\LàXãLàèÇà	›\ôŸ]⁄\ÀõX\
+»Oà‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLKçHõ›[ôYYù[èâŸ\ÿÿ\R[
+ _O‹‹[èò
+Köõ⁄[ä	… _BàŸ]èò¬àBÇàÀ»õŸö[Hò\⁄X‹»][ôõ‹õHòZ[ö[ô¬à€€ú›õŸêö]»H◊N¬àYà
+õŸö[KôŸ[ô\äHõŸêö]Àú\⁄
+õŸö[KôŸ[ô\äN¬àYà
+õŸö[KòYŸJHõŸêö]Àú\⁄
+	‹õŸö[KòYŸ_H\úÿ
+N¬àYà
+õŸö[KöZY⁄€JHõŸêö]Àú\⁄
+	‹õŸö[KöZY⁄€_H€X
+N¬àYà
+õŸö[KûYX\ú’òZ[ö[ô»OHù[
+HõŸêö]Àú\⁄
+	‹õŸö[KûYX\ú’òZ[ö[ôﬂ^HòZ[ö[ôÿ
+N¬àYà
+õŸö[KòX›]ö]S]ô[
+HõŸêö]Àú\⁄
+õŸö[KòX›]ö]S]ô[úô\XŸJ	◊…À	»	 JN¬àYà
+õŸêö]Àõ[ô›
+H¬à[
+œH€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KM]LàXãLHèîõŸö[O‹Çà€\‹œHù^^»^\€]KMLèâŸ\ÿÿ\R[
+õŸêö]Àöõ⁄[ä	»0≠»	 J_O‹ò¬àBÇàõﬁö[õô\íSH[	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»€ÿ[»‹à\ôŸ]»Ÿ]Y]è‹âŒ¬àBÇàÀ»KKKH”–P““QNà⁄›»⁄]H€Y[ù\»⁄\ôYKKKBàù[ò›[€àô[ô\î⁄\ôY^\ 
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY^\À[\›	 N¬àYà
+Xõﬁ]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›€ò\HöY]⁄[ô–€Y[ù]Kô]HﬂN¬à€€ú›⁄\ö[ô»H€ò\ú⁄\ö[ô»ﬂN¬à€€ú›⁄\ôY€‹ö€›]]\»H⁄\ö[ôÀù€‹ö€›]»◊N¬à€€ú›⁄\ôYù]ö][€ë]\»H⁄\ö[ôÀõù]ö][€à◊N¬Çà€€ú›€‹ö€›]»H€ò\ù€‹ö€›]\›‹ûH◊N¬à€€ú›ù]ö][€àH€ò\õù]ö][€í\›‹ûH◊N¬Çà][H	…Œ¬ÇàYà
+⁄\ôY€‹ö€›]]\Àõ[ô›à
+H¬à[
+œH	œ€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KM]LHXãLHèî⁄\ôY€‹ö€›]œ‹âŒ¬à⁄\ôY€‹ö€›]]\Àôõ‹ëXX⁄
+]HOà¬à€€ú›»H€‹ö€›]Àôö[ô
+Oàô]HOOH]JN¬àYà
+] Hô]\õé¬à€€ú›^€›[ùH
+Àô^\ò⁄\Ÿ\»◊JKõ[ô›¬à€€ú›Ÿ]€›[ùH
+Àô^\ò⁄\Ÿ\»◊JKúôYXŸJ
+ÀJHOà»
+»
+KúŸ]»◊JKõ[ô›
+N¬à[
+œH]à€ò€X⁄œHõ‹[î⁄\ôY]Z[
+	›€‹ö€›]	À	…Ÿ\ÿÿ\Rú‘›ö[ô ]J_I Hà€\‹œHòôÀ\€]KMLL»õ›[ôY^›\ú€‹ã\⁄[ù\à›ô\éòôÀ\€]KLLèÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àèÇà‹[à€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+Àôõÿ›\»	’€‹ö€›]	 _O‹‹[èÇà‹[à€\‹œHù^^»^\€]KMõ^][\ÀXŸ[ù\àÿ\LHèâŸ\ÿÿ\R[
+]J_HH]K[X⁄YOHò⁄]úõ€ã\öY⁄à€\‹œHùÀLÀçHLÀçHèè⁄Oè‹‹[èÇàŸ]èÇà€\‹œHù^^»^\€]KM]LHèâŸ^€›[ùH^\ò⁄\Ÿ\»0≠»	‹Ÿ]€›[ùHŸ]…›Àô\ò][€à»	»0≠»	»
+»\ÿÿ\R[
+Àô\ò][€äHà	…ﬂH0≠»\õ‹à]Z[‹ÇàŸ]èò¬àJN¬àBÇàYà
+⁄\ôYù]ö][€ë]\Àõ[ô›à
+H¬à[
+œH	œ€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KM]L»XãLHèî⁄\ôYù]ö][€è‹âŒ¬à⁄\ôYù]ö][€ë]\Àôõ‹ëXX⁄
+]HOà¬à€€ú›àHù]ö][€ãôö[ô
+Oàô]HOOH]JN¬àYà
+[äHô]\õé¬à€€ú›YX[€›[ùH
+ãõYX[»◊JKõ[ô›¬à[
+œH]à€ò€X⁄œHõ‹[î⁄\ôY]Z[
+	€ù]ö][€âÀ	…Ÿ\ÿÿ\Rú‘›ö[ô ]J_I Hà€\‹œHòôÀ\€]KMLL»õ›[ôY^›\ú€‹ã\⁄[ù\à›ô\éòôÀ\€]KLLèÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àXãLHèÇà‹[à€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+]J_O‹‹[èÇà‹[à€\‹œHù^^»^\€]KMõ^][\ÀXŸ[ù\àÿ\LHèâ”X]úõ›[ô
+ãòÿ[‹öY\»
+_Hÿÿ[H]K[X⁄YOHò⁄]úõ€ã\öY⁄à€\‹œHùÀLÀçHLÀçHèè⁄Oè‹‹[èÇàŸ]èÇà€\‹œHù^^»^\€]KMèâ€YX[€›[ùH][I€YX[€›[ùOOHH»	‹…»à	…ﬂH0≠»	”X]úõ›[ô
+ãúõ›Z[à
+_Y»0≠»	”X]úõ›[ô
+ãòÿ\òú»
+_Y»»0≠»	”X]úõ›[ô
+ãôò]
+_Y»à0≠»\õ‹à]Z[‹ÇàŸ]èò¬àJN¬àBÇàõﬁö[õô\íSH[	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ›[ô»⁄\ôYY]à[›\à€Y[ùÿ[à⁄\ôH^\»úõ€HZ\à\è‹âŒ¬àôYúô\⁄X€€ú 
+N¬àBÇà äÇà
+à€ÿX⁄\»H€€\]YŸ\‹⁄[€à[àH\ò⁄]ôH8°§àù[]Z[
+ô]\Ÿ\»Bà
+à⁄\ôYY]Z[[Ÿ[
+Kàö[ô»H€‹ö€›]ûHYö\ú›ò[[ô»òX⁄»»]KÇà
+ã¬àù[ò›[€à‹[îŸ\‹⁄[€ë]Z[
+]KY
+H¬àYà
+]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›€ò\HöY]⁄[ô–€Y[ù]Kô]HﬂN¬à€€ú›€‹ö€›]»H€ò\ù€‹ö€›]\›‹ûH◊N¬à€€ú›»H
+Y	âà€‹ö€›]Àôö[ô
+Oà›ö[ô öY
+HOOH›ö[ô Y
+JJH€‹ö€›]Àôö[ô
+Oàô]HOOH]JN¬àYà
+] H»⁄›’ÿ\›
+	‘Ÿ\‹⁄[€àõ›õ›[ô	 N»ô]\õé»BÇà€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[[[Ÿ[	 N¬à€€ú›õŸHHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[XõŸI N¬à€€ú›]Q[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[]]I N¬àYà
+[[Ÿ[XõŸJHô]\õé¬Çà]Q[ù^€€ù[ùHÀù]HÀôõÿ›\»	’€‹ö€›]	Œ¬à€€ú›ô]Q]HHô]»]JÀô]JKù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»ŸYZŸ^Nà	€€ô…À^Nà	€ù[Y\öX…À[€ùà	€€ô…ÀYX\éà	€ù[Y\öX…»JN¬Çà]›[õ€[YHH¬à
+Àô^\ò⁄\Ÿ\»◊JKôõ‹ëXX⁄
+^Oà
+^úŸ]»◊JKôõ‹ëXX⁄
+»Oà¬à€€ú›Ÿ»H\úŸQõÿ]
+ÀùŸZY⁄
+Kô\»H\úŸR[ù
+Àúô\ N¬àYà
+Z\”òSäŸ H	âàZ\”òSäô\ JH›[õ€[YH
+œHŸ»
+àô\Œ¬àJJN¬ÇàõŸKö[õô\íSHà€\‹œHù^\€H^\€]KMXãLHèâ‹ô]Q]_O‹Çà	›Àù]H»€\‹œHù^^»õ€ùXõ€^Z[ôY€ÀMåXãLàèº'‰‚»€ÿX⁄X\‹⁄Y€ôY€‹ö€›]‹òà	…ﬂBà]à€\‹œHôõ^ÿ\LàXãMõ^]‹ò\èÇà	›Àô\ò][€à»‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[è∏£ÏH	Ÿ\ÿÿ\R[
+Àô\ò][€ä_O‹‹[èòà	…ﬂBà‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[èâ Àô^\ò⁄\Ÿ\»◊JKõ[ô›H^\ò⁄\Ÿ\œ‹‹[èÇà	››[õ€[YHà»‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[èâ”X]úõ›[ô
+›[õ€[YJKù”ÿÿ[T›ö[ô 
+_HŸ»õ€[YO‹‹[èòà	…ﬂBàŸ]èÇà	 Àô^\ò⁄\Ÿ\»◊JKõX\
+^Oà¬à€€ú›õ›‹»H
+^úŸ]»◊JKõX\
+
+ÀJHOàà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\L»KLKçHõ‹ô\ãXàõ‹ô\ã\€]KLL\›òõ‹ô\ãLèÇà‹[à€\‹œHù^^»õ€ùXõX⁄»^\€]KMÀLLàèîŸ]	⁄H
+»_O‹‹[èÇà‹[à€\‹œHù^\€Hõ€ùXõ€èâŸ\ÿÿ\R[
+ÀùŸZY⁄OOH	…»ÀùŸZY⁄OHù[»	¯†%	»àÀùŸZY⁄
+_HŸœ‹‹[èÇà‹[à€\‹œHù^\€]KLÃè∞Âœ‹‹[èÇà‹[à€\‹œHù^\€Hõ€ùXõ€èâŸ\ÿÿ\R[
+Àúô\»OOH	…»Àúô\»OHù[»	¯†%	»àÀúô\ _Hô\œ‹‹[èÇà	 Àúö\àOOH[ôYö[ôY	âàÀúö\àOOH	… H»‹[à€\‹œHù^^»^X[Xô\ãMå[X]]»èîíTà	Ÿ\ÿÿ\R[
+›ö[ô Àúö\äJ_O‹‹[èòà	…ﬂBàŸ]èò
+Köõ⁄[ä	… N¬àô]\õàà]à€\‹œHòôÀ\€]KMLõ›[ôYLûMXãL»èÇà€\‹œHôõ€ùXõX⁄»^\€HXãLHèâŸ\ÿÿ\R[
+^õò[YH	—^\ò⁄\ŸI _O‹Çà	Ÿ^ôõÿ›\»»€\‹œHù^VÃL\H^Z[ôY€ÀMåXãLàèº'„´»	Ÿ\ÿÿ\R[
+^ôõÿ›\ _O‹òà	…ﬂBà	‹õ›‹»	œ€\‹œHù^^»^\€]KMèìõ»Ÿ]»ôX€‹ôY‹âﬂBàŸ]èò¬àJKöõ⁄[ä	… _Bà¬à[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBÇà äÇà
+à€ÿX⁄\»H⁄\ôY€‹ö€›]‹àù]ö][€à^H8°§àù[]Z[[Ÿ[Çà
+àôXY»úõ€HH€Y[ù	‹»€ò\⁄›
+öY]⁄[ô–€Y[ù]Kô]JKÇà
+ã¬àù[ò›[€à‹[î⁄\ôY]Z[
+\K]JH¬àYà
+]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›€ò\HöY]⁄[ô–€Y[ù]Kô]HﬂN¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[[[Ÿ[	 N¬à€€ú›õŸHHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[XõŸI N¬à€€ú›]Q[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[]]I N¬àYà
+[[Ÿ[XõŸJHô]\õé¬Çà€€ú›ô]Q]HHô]»]J]JKù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»ŸYZŸ^Nà	€€ô…À^Nà	€ù[Y\öX…À[€ùà	€€ô…ÀYX\éà	€ù[Y\öX…»JN¬ÇàYà
+\HOOH	›€‹ö€›]	 H¬à€€ú›»H
+€ò\ù€‹ö€›]\›‹ûH◊JKôö[ô
+Oàô]HOOH]JN¬àYà
+] H»⁄›’ÿ\›
+	’€‹ö€›]õ›õ›[ô	 N»ô]\õé»Bà]Q[ù^€€ù[ùHÀôõÿ›\»	’€‹ö€›]	Œ¬Çà]›[õ€[YHH¬à
+Àô^\ò⁄\Ÿ\»◊JKôõ‹ëXX⁄
+^Oà
+^úŸ]»◊JKôõ‹ëXX⁄
+»Oà¬à€€ú›Ÿ»H\úŸQõÿ]
+ÀùŸZY⁄
+Kô\»H\úŸR[ù
+Àúô\ N¬àYà
+Z\”òSäŸ H	âàZ\”òSäô\ JH›[õ€[YH
+œHŸ»
+àô\Œ¬àJJN¬ÇàõŸKö[õô\íSHà€\‹œHù^\€H^\€]KMXãLHèâ‹ô]Q]_O‹Çà]à€\‹œHôõ^ÿ\LàXãMõ^]‹ò\èÇà	›Àô\ò][€à»‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[è∏£ÏH	Ÿ\ÿÿ\R[
+Àô\ò][€ä_O‹‹[èòà	…ﬂBà‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[èâ Àô^\ò⁄\Ÿ\»◊JKõ[ô›H^\ò⁄\Ÿ\œ‹‹[èÇà	››[õ€[YHà»‹[à€\‹œHù^^»õ€ùXõ€ôÀZ[ôY€ÀML^Z[ôY€ÀMåL»KLHõ›[ôYYù[èâ”X]úõ›[ô
+›[õ€[YJKù”ÿÿ[T›ö[ô 
+_HŸ»õ€[YO‹‹[èòà	…ﬂBàŸ]èÇà	 Àô^\ò⁄\Ÿ\»◊JKõX\
+^Oà¬à€€ú›õ›‹»H
+^úŸ]»◊JKõX\
+
+ÀJHOàà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\L»KLKçHõ‹ô\ãXàõ‹ô\ã\€]KLL\›òõ‹ô\ãLèÇà‹[à€\‹œHù^^»õ€ùXõX⁄»^\€]KMÀLLàèîŸ]	⁄H
+»_O‹‹[èÇà‹[à€\‹œHù^\€Hõ€ùXõ€èâŸ\ÿÿ\R[
+ÀùŸZY⁄OOH	…»ÀùŸZY⁄OHù[»	¯†%	»àÀùŸZY⁄
+_HŸœ‹‹[èÇà‹[à€\‹œHù^\€]KLÃè∞Âœ‹‹[èÇà‹[à€\‹œHù^\€Hõ€ùXõ€èâŸ\ÿÿ\R[
+Àúô\»OOH	…»Àúô\»OHù[»	¯†%	»àÀúô\ _Hô\œ‹‹[èÇà	 Àúö\àOOH[ôYö[ôY	âàÀúö\àOOH	… H»‹[à€\‹œHù^^»^X[Xô\ãMå[X]]»èîíTà	Ÿ\ÿÿ\R[
+›ö[ô Àúö\äJ_O‹‹[èòà	…ﬂBàŸ]èò
+Köõ⁄[ä	… N¬àô]\õàà]à€\‹œHòôÀ\€]KMLõ›[ôYLûMXãL»èÇà€\‹œHôõ€ùXõX⁄»^\€HXãLàèâŸ\ÿÿ\R[
+^õò[YH	—^\ò⁄\ŸI _O‹Çà	‹õ›‹»	œ€\‹œHù^^»^\€]KMèìõ»Ÿ]»ôX€‹ôY‹âﬂBàŸ]èò¬àJKöõ⁄[ä	… _Bà¬àH[ŸH¬à€€ú›àH
+€ò\õù]ö][€í\›‹ûH◊JKôö[ô
+Oàô]HOOH]JN¬àYà
+[äH»⁄›’ÿ\›
+	”ù]ö][€àõ›õ›[ô	 N»ô]\õé»Bà]Q[ù^€€ù[ùH	”ù]ö][€âŒ¬ÇàõŸKö[õô\íSHà€\‹œHù^\€H^\€]KMXãL»èâ‹ô]Q]_O‹Çà]à€\‹œHô‹öY‹öYX€€ÀMÿ\LàXãMèÇà]à€\‹œHòôÀZ[ôY€ÀMLõ›[ôY^Là^XŸ[ù\àèÇà€\‹œHù^[»õ€ùXõX⁄»^Z[ôY€ÀMåèâ”X]úõ›[ô
+ãòÿ[‹öY\»
+_O‹Çà€\‹œHù^VŒ\Hõ€ùXõ€\\òÿ\ŸH^\€]KMèöÿÿ[‹ÇàŸ]èÇà]à€\‹œHòôÀ\€]KMLõ›[ôY^Là^XŸ[ù\àèÇà€\‹œHù^[»õ€ùXõX⁄»èâ”X]úõ›[ô
+ãúõ›Z[à
+_Yœ‹Çà€\‹œHù^VŒ\Hõ€ùXõ€\\òÿ\ŸH^\€]KMèîõ›Z[è‹ÇàŸ]èÇà]à€\‹œHòôÀ\€]KMLõ›[ôY^Là^XŸ[ù\àèÇà€\‹œHù^[»õ€ùXõX⁄»èâ”X]úõ›[ô
+ãòÿ\òú»
+_Yœ‹Çà€\‹œHù^VŒ\Hõ€ùXõ€\\òÿ\ŸH^\€]KMèêÿ\òúœ‹ÇàŸ]èÇà]à€\‹œHòôÀ\€]KMLõ›[ôY^Là^XŸ[ù\àèÇà€\‹œHù^[»õ€ùXõX⁄»èâ”X]úõ›[ô
+ãôò]
+_Yœ‹Çà€\‹œHù^VŒ\Hõ€ùXõ€\\òÿ\ŸH^\€]KMèëò]‹ÇàŸ]èÇàŸ]èÇà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KMXãLàèëõ€Ÿ»ŸŸŸY
+	 ãõYX[»◊JKõ[ô›JO‹Çà	 ãõYX[»◊JKõX\
+HOàà]à€\‹œHòôÀ\€]KMLõ›[ôYLûL»XãLàèÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àèÇà‹[à€\‹œHôõ€ùXõ€^\€Hõ^LHZ[ã]ÀLù[òÿ]HèâŸ\ÿÿ\R[
+Kõò[YH	—õ€Ÿ	 _O‹‹[èÇà‹[à€\‹œHù^\€Hõ€ùXõX⁄»^Z[ôY€ÀMå[Làèâ”X]úõ›[ô
+Kòÿ[‹öY\»
+_Hÿÿ[‹‹[èÇàŸ]èÇà€\‹œHù^^»^\€]KM]LçHèâ”X]úõ›[ô
+Kúõ›Z[à
+_Y»0≠»	”X]úõ›[ô
+Kòÿ\òú»
+_Y»»0≠»	”X]úõ›[ô
+Kôò]
+_Y»â€KôöXô\à»	»0≠»	»
+»X]úõ›[ô
+KôöXô\äH
+»	Ÿ»öXúôI»à	…ﬂO‹ÇàŸ]èò
+Köõ⁄[ä	… H	œ€\‹œHù^\€H^\€]KMèìõ»õ€Ÿ»ôX€‹ôY‹âﬂBà¬àBÇà[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€à€‹ŸT⁄\ôY]Z[
+
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôYY]Z[[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàÀ»KKKH”–P““QNà\‹⁄Y€à€‹ö€›]»KKKBà]\‹⁄Y€ë^\ò⁄\Ÿ\»H◊N»À»ﬁ€ò[YKŸ]Œñﬁ›ŸZY⁄ô\ﬂW_WHôZ[ô»ùZ[Çàù[ò›[€àô[ô\ê\‹⁄Y€ôY€‹ö€›]—õ‹ê€ÿX⁄
+
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ôY]€‹ö€›]À[\›	 N¬àYà
+Xõﬁ]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›\‹⁄Y€ôYH
+öY]⁄[ô–€Y[ù]Kô]HﬂJKò\‹⁄Y€ôY€‹ö€›]»◊N¬àYà
+\‹⁄Y€ôYõ[ô›OOH
+H¬àõﬁö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKLàèìõ€ôH\‹⁄Y€ôYY]è‹âŒ¬àô]\õé¬àBàõﬁö[õô\íSH\‹⁄Y€ôYú€XŸJ
+Kúô]ô\úŸJ
+KõX\
+»Oàà]à€\‹œHòôÀZ[ôY€ÀMLL»õ›[ôY^èÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\ÀXŸ[ù\àèÇà‹[à€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+Àù]H	’€‹ö€›]	 _O‹‹[èÇà‹[à€\‹œHù^VÃLH^\€]KMèâŸ\ÿÿ\R[
+
+Àò\‹⁄Y€ôY]	… Kú‹]
+	’	 VÃJ_O‹‹[èÇàŸ]èÇà]à€\‹œHõ]LH‹XŸK^KLHèÇà	 Àô^\ò⁄\Ÿ\»◊JKõX\
+HOàà]èÇà€\‹œHù^^»^\€]KMåèâŸ\ÿÿ\R[
+Kõò[YJ_O‹Çà	ŸKôõÿ›\»»€\‹œHù^VÃL\H^Z[ôY€ÀMåLàèº'„´»	Ÿ\ÿÿ\R[
+Kôõÿ›\ _O‹òà	…ﬂBàŸ]èÇà
+Köõ⁄[ä	… _BàŸ]èÇàŸ]èò
+Köõ⁄[ä	… N¬àBÇà]\‹⁄Y€ö[ô’–€Y[ùHù[»À»⁄[àŸ]Hö[ö\⁄Y€‹ö€›]\»\‹⁄Y€ôY»\»€Y[ù[ú›XYŸàÿ]ôYÇàù[ò›[€à‹[ê\‹⁄Y€ï€‹ö€›]
+
+H¬àYà
+]öY]⁄[ô–€Y[ù]JHô]\õé¬àÀ»ùZ[H€‹ö€›]\⁄[ô»HëPS€‹ö€›][ù\ôòXŸH
+ÿ[YHÿ\ôÀ^\ò⁄\ŸBàÀ»X⁄Ÿ\ãà\‹^KY\Ÿ]
+Hò]\à[àH›ö\YY›€àõ‹õKàŸHô[Y[Xô\ÇàÀ»⁄X⁄€Y[ùŸI‹ôH\‹⁄Y€ö[ô»Œ»ö[ö\⁄[ô»õ›]\»»ÿ]ôP\‹⁄Y€ôYúõ€PùZ[\ä
+KÇà€€ú›€Y[ùò[YHHöY]⁄[ô–€Y[ù]Kõò[YH	ÿ€Y[ù	Œ¬à\‹⁄Y€ö[ô’–€Y[ùH»ZYàöY]⁄[ô–€Y[ù]KùZYò[YNà€Y[ùò[YHN¬Çà€‹ŸP€ÿX⁄ŸX›[€ä
+N»À»YHH€ÿX⁄›ô\õ^H€»H€‹ö€›]ÿ‹ôY[à\»ö\⁄XõBà›⁄]⁄Xä	›òZ[ö[ô… N»À»H€‹ö€›]]ô\»[àHùòZ[ö[ô»àXÇÇà›\úô[ù€‹ö€›]€€ù^H»[ùéà›]Kù€‹ö€›][ùà	Ÿﬁ[IÀõÿ›\Œà	–\‹⁄Y€à»	»
+»€Y[ùò[YK]\ÿ€\Œàù[N¬à€‹ö€›]›\ù[YHH]Kõõ› 
+N¬à€‹ö€›]Xÿ›[][]YŸX€€ô»H¬à€X\í[ù\ùò[
+€‹ö€›][Y\äN¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]\Ÿ]\	 Kò€\‹”\›òY
+	⁄Y[â N¬à»€€ú›ÿ‹»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄\[ãXÿ\ô	 N»Yà
+ÿ‹ Hÿ‹Àò€\‹”\›òY
+	⁄Y[â N»Bàÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]XX›]ôI Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬à€€ú›]Q[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿX›]ôK]€‹ö€›]]]I N¬àYà
+]Q[
+H]Q[ö[õô\ï^H	¸'‰ÁH\‹⁄Y€ö[ô»»	»
+»€Y[ùò[YN¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿ^\ò⁄\ŸK[\›	 Kö[õô\íSH	…Œ¬àY^\ò⁄\ŸJ
+N»À»›\ù⁄]€ôHõ[ö»^\ò⁄\ŸHÿ\ôàŸ][Y[›]
+
+
+HOà[ù\ï⁄^ò\ô[ŸJ
+KLå
+N¬à⁄›’ÿ\›
+	–ùZ[H€‹ö€›][àö[ö\⁄»\‹⁄Y€à]	 N¬àBÇà äÇà
+àÿ[Yúõ€Hÿ]ôU€‹ö€›]
+
+H⁄[àH€ÿX⁄\»[à\‹⁄Y€à[ŸKàôXY»HùZ[à
+à^\ò⁄\Ÿ\»›òZY⁄úõ€HH€‹ö€›]ÿ\ô»[ô\‹⁄Y€ú»[H»H€Y[ùà
+à[ú›XYŸàÿ]ö[ô»»H€ÿX⁄	‹»›€à\›‹ûKÇà
+ã¬à][ô[ô–\‹⁄Y€ë^\ò⁄\Ÿ\»Hù[»À»€»HùZ[€‹ö€›]⁄[Hò[Z[ô»]Çà\ﬁ[ò»ù[ò›[€àÿ]ôP\‹⁄Y€ôYúõ€PùZ[\ä
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›€Y[ùZYH\‹⁄Y€ö[ô’–€Y[ù»\‹⁄Y€ö[ô’–€Y[ùùZYàù[¬àYà
+X€Y[ùZY
+Hô]\õàò[ŸN¬ÇàÀ»ôXYH^\ò⁄\Ÿ\»›]ŸàH€‹ö€›]”H
+ÿ[YH€›\òŸHÿ]ôU€‹ö€›]\Ÿ\ Bà€€ú›^\ò⁄\Ÿ\»H◊N¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	»Ÿ^\ò⁄\ŸK[\›à]â Kôõ‹ëXX⁄
+ÿ\ôOà¬à€€ú›ò[YR[ú]Hÿ\ôú]Y\ûTŸ[X›‹ä	⁄[ú]›\OHù^óI N¬à€€ú›ò[YHHò[YR[ú]»ò[YR[ú]ùò[YKùö[J
+Hà	…Œ¬àYà
+[ò[YJHô]\õé¬à€€ú›Ÿ]»H◊N¬àÿ\ôú]Y\ûTŸ[X›‹ê[
+	ÀúŸ]\õ›… Kôõ‹ëXX⁄
+õ›»Oà¬à€€ú›»Hõ›Àú]Y\ûTŸ[X›‹ä	ÀúŸ]]ŸZY⁄	 N¬à€€ú›àHõ›Àú]Y\ûTŸ[X›‹ä	ÀúŸ]\ô\… N¬àŸ]Àú\⁄
+»ŸZY⁄à
+»	âàÀùò[YJH	…Àô\Œà
+à	âàãùò[YJH	…»JN¬àJN¬àÀ»€ÿX⁄	‹»õÿ›\»^õ‹à\»^\ò⁄\ŸH
+X^HôHõ[ö Bà€€ú›õÿ›\—[Hÿ\ôú]Y\ûTŸ[X›‹ä	÷⁄YèHò€ÿX⁄Yõÿ›\ÀHóI N¬à€€ú›õÿ›\»Hõÿ›\—[»õÿ›\—[ùò[YKùö[J
+Hà	…Œ¬à€€ú›^ÿöàH»ò[YNàò[YKŸ]ŒàŸ]Àõ[ô›»Ÿ]»àﬁ»ŸZY⁄à	…Àô\Œà	…»WHN¬àYà
+õÿ›\ H^ÿöãôõÿ›\»Hõÿ›\Œ¬à^\ò⁄\Ÿ\Àú\⁄
+^ÿöäN¬àJN¬ÇàYà
+^\ò⁄\Ÿ\Àõ[ô›OOH
+H»⁄›’ÿ\›
+	–Y]X\›€ôH^\ò⁄\ŸI N»ô]\õàùYN»BÇàÀ»›\⁄HùZ[€‹ö€›][ô\⁄»H€ÿX⁄»ò[YH]ôYõ‹ôHÿ]ö[ôÀÇà[ô[ô–\‹⁄Y€ë^\ò⁄\Ÿ\»H^\ò⁄\Ÿ\Œ¬à€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€ò[YK]€‹ö€›]Z[ú]	 N¬àYà
+[ú]
+H[ú]ùò[YHH	…Œ¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€ò[YK]€‹ö€›][[Ÿ[	 Kú›[Kô\‹^HH	Ÿõ^	Œ¬àŸ][Y[›]
+
+
+HOà»Yà
+[ú]
+H[ú]ôõÿ›\ 
+N»KL
+N¬àôYúô\⁄X€€ú 
+N¬àô]\õàùYN¬àBÇà\ﬁ[ò»ù[ò›[€à€€ôö\õP\‹⁄Y€ï€‹ö€›]ò[YJ
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›€Y[ùZYH\‹⁄Y€ö[ô’–€Y[ù»\‹⁄Y€ö[ô’–€Y[ùùZYàù[¬à€€ú›€Y[ùò[YHH\‹⁄Y€ö[ô’–€Y[ù»\‹⁄Y€ö[ô’–€Y[ùõò[YHà	ÿ€Y[ù	Œ¬àYà
+X€Y[ùZY\[ô[ô–\‹⁄Y€ë^\ò⁄\Ÿ\ Hô]\õé¬Çà€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€ò[YK]€‹ö€›]Z[ú]	 N¬à€€ú›]HH
+[ú]	âà[ú]ùò[YKùö[J
+JH	–€ÿX⁄€‹ö€›]	Œ¬Çà€€ú›€‹ö€›]H¬à]Nà]Kà^\ò⁄\Ÿ\Œà[ô[ô–\‹⁄Y€ë^\ò⁄\Ÿ\Àà\‹⁄Y€ôYûNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€ÿX⁄	Àà\‹⁄Y€ôY]àô]»]J
+Kù“T”‘›ö[ô 
+KàYà	ÿ]◊…»
+»]Kõõ› 
+BàN¬ÇàûH¬à]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ €Y[ùZY
+Kù\]J¬à\‹⁄Y€ôY€‹ö€›]Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€ä€‹ö€›]
+BàJN¬àYà
+öY]⁄[ô–€Y[ù]H	âàöY]⁄[ô–€Y[ù]KùZYOOH€Y[ùZY
+H¬àYà
+P\úò^Kö\–\úò^JöY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›] JHöY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›]»H◊N¬àöY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›]Àú\⁄
+€‹ö€›]
+N¬àBàÀ»õ›YûHH€Y[ù]Hô]»€‹ö€›]ÿ\»\‹⁄Y€ôYà]ÿZ]\⁄õ›YöXÿ][€ä€Y[ùZY¬à\Nà	›€‹ö€›]X\‹⁄Y€ôY	Àà]Nà	”ô]»€‹ö€›]úõ€H[›\à€ÿX⁄	ÀàõŸNà	»â»
+»]H
+»	»à\»ôXYH[à[›\àòZ[ö[ô»XâÀàúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€ÿX⁄	¬àJN¬à⁄›’ÿ\›
+	–\‹⁄Y€ôYâ»
+»]H
+»	»à»	»
+»€Y[ùò[YH
+»	»8ß$… N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	–\‹⁄Y€àòZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–\‹⁄Y€àòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBÇàÀ»X\à›€àHùZ[\à[ôô]\õà»H€ÿX⁄	‹»€Y[ùöY]¬à[ô[ô–\‹⁄Y€ë^\ò⁄\Ÿ\»Hù[¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€ò[YK]€‹ö€›][[Ÿ[	 Kú›[Kô\‹^HH	€õ€ôIŒ¬à\‹⁄Y€ö[ô’–€Y[ùHù[¬à€X\í[ù\ùò[
+€‹ö€›][Y\äN¬à^]⁄^ò\ô[ŸJ
+N¬à€X\êX›]ôU€‹ö€›]
+
+N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]XX›]ôI Kò€\‹”\›òY
+	⁄Y[â N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]\Ÿ]\	 Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬àYà
+\[Ÿàô[ô\ê€ÿX⁄[í[ïòZ[ö[ô»OOH	Ÿù[ò›[€â Hô[ô\ê€ÿX⁄[í[ïòZ[ö[ô 
+N¬à›\úô[ù€‹ö€›]€€ù^Hù[¬à‹[ê€ÿX⁄ŸX›[€ä
+N¬àŸ][Y[›]
+
+
+HOà»Yà
+öY]⁄[ô–€Y[ù]JHô[ô\ê€Y[ù]Z[
+
+N»[ŸH‹[ê€Y[ù]Z[
+€Y[ùZY
+N»KL
+N¬àô]\õàùYN¬àBÇàù[ò›[€à€‹ŸP\‹⁄Y€ï€‹ö€›]
+
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ã]€‹ö€›][[Ÿ[	 Kú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàù[ò›[€àY\‹⁄Y€ë^\ò⁄\ŸJ
+H¬à\‹⁄Y€ë^\ò⁄\Ÿ\Àú\⁄
+»ò[YNà	…ÀŸ]Œàﬁ»ŸZY⁄à	…Àô\Œà	…»WHJN¬àô[ô\ê\‹⁄Y€ë^\ò⁄\ŸS\›
+
+N¬àBÇàù[ò›[€àY\‹⁄Y€îŸ]
+^Y
+H¬à\‹⁄Y€ë^\ò⁄\Ÿ\÷Ÿ^YKúŸ]Àú\⁄
+»ŸZY⁄à	…Àô\Œà	…»JN¬àô[ô\ê\‹⁄Y€ë^\ò⁄\ŸS\›
+
+N¬àBÇàù[ò›[€à\]P\‹⁄Y€ëöY[
+^YöY[ò[YKŸ]Y
+H¬à€€ú›^\ò⁄\ŸHH\‹⁄Y€ë^\ò⁄\Ÿ\÷Ÿ^YN¬àYà
+Y^\ò⁄\ŸJHô]\õé¬àYà
+öY[OOH	€ò[YI H^\ò⁄\ŸKõò[YHH›ö[ô ò[YH	… Kú€XŸJL
+N¬à[ŸHYà
+
+öY[OOH	›ŸZY⁄	»öY[OOH	‹ô\… H	âà^\ò⁄\ŸKúŸ]÷‹Ÿ]YJH¬à^\ò⁄\ŸKúŸ]÷‹Ÿ]YVŸöY[HH›ö[ô ò[YH	… Kú€XŸJLäN¬àBàBÇàù[ò›[€àô[[›ôP\‹⁄Y€ë^\ò⁄\ŸJ^Y
+H¬à\‹⁄Y€ë^\ò⁄\Ÿ\Àú‹XŸJ^YJN¬àô[ô\ê\‹⁄Y€ë^\ò⁄\ŸS\›
+
+N¬àBÇàù[ò›[€àô[ô\ê\‹⁄Y€ë^\ò⁄\ŸS\›
+
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ãY^\ò⁄\ŸK[\›	 N¬àYà
+Xõﬁ
+Hô]\õé¬àYà
+\‹⁄Y€ë^\ò⁄\Ÿ\Àõ[ô›OOH
+H¬àõﬁö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èêY^\ò⁄\Ÿ\»»ùZ[H€‹ö€›]è‹âŒ¬àô]\õé¬àBàõﬁö[õô\íSH\‹⁄Y€ë^\ò⁄\Ÿ\ÀõX\
+
+^JHOàà]à€\‹œHòôÀ\€]KMLL»õ›[ôY^èÇà]à€\‹œHôõ^ÿ\LàXãLàèÇà[ú]ò[YOHâŸ\ÿÿ\R[
+^õò[YJ_HàX^[ô›HåLà€ö[ú]Hù\]P\‹⁄Y€ëöY[
+	⁄_K	€ò[YIÀ\Àùò[YJHàXŸZ€\èHë^\ò⁄\ŸHò[YHà€\‹œHôõ^LHLàõ›[ôY[»õ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôHõ€ùXõ€^\€HèÇàù]€à€ò€X⁄œHúô[[›ôP\‹⁄Y€ë^\ò⁄\ŸJ	⁄_JHà€\‹œHù^\õ‹ŸKML^^»õ€ùXõ€Làè∏ß%Oÿù]€èÇàŸ]èÇà	Ÿ^úŸ]ÀõX\
+
+À⁄JHOàà]à€\‹œHôõ^ÿ\LàXãLH][\ÀXŸ[ù\àèÇà‹[à€\‹œHù^^»^\€]KMÀLLèîŸ]	‹⁄H
+»_O‹‹[èÇà[ú]ò[YOHâŸ\ÿÿ\R[
+ÀùŸZY⁄
+_HàX^[ô›HåLàà€ö[ú]Hù\]P\‹⁄Y€ëöY[
+	⁄_K	›ŸZY⁄	À\Àùò[YK	‹⁄_JHàXŸZ€\èHöŸ»à[ú][ŸOHôX⁄[X[à€\‹œHùÀLåLàõ›[ôY[»^XŸ[ù\àõ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôH^\€HèÇà‹[à€\‹œHù^^»^\€]KMè∞Âœ‹‹[èÇà[ú]ò[YOHâŸ\ÿÿ\R[
+Àúô\ _HàX^[ô›HåLàà€ö[ú]Hù\]P\‹⁄Y€ëöY[
+	⁄_K	‹ô\…À\Àùò[YK	‹⁄_JHàXŸZ€\èHúô\»à[ú][ŸOHõù[Y\öX»à€\‹œHùÀLåLàõ›[ôY[»^XŸ[ù\àõ‹ô\ãLàõ‹ô\ã]ò[ú‹\ô[ùõÿ›\Œòõ‹ô\ãZ[ôY€ÀML›][ôK[õ€ôH^\€HèÇàŸ]èò
+Köõ⁄[ä	… _Bàù]€à€ò€X⁄œHòY\‹⁄Y€îŸ]
+	⁄_JHà€\‹œHù^Z[ôY€ÀMå^^»õ€ùXõ€]LHèä»YŸ]ÿù]€èÇàŸ]èò
+Köõ⁄[ä	… N¬àBÇà\ﬁ[ò»ù[ò›[€àÿ]ôP\‹⁄Y€ôY€‹ö€›]
+
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬àYà
+]öY]⁄[ô–€Y[ù]JHô]\õé¬à€€ú›]HHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ã]€‹ö€›]]]I Kùò[YKùö[J
+H	–€ÿX⁄€‹ö€›]	Œ¬à€€ú›€X[àH\‹⁄Y€ë^\ò⁄\Ÿ\¬àôö[\ä^Oà^õò[YKùö[J
+JBàõX\
+^Oà
+¬àò[YNà^õò[YKùö[J
+KàŸ]Œà^úŸ]ÀõX\
+»Oà
+»ŸZY⁄àÀùŸZY⁄	…Àô\ŒàÀúô\»	…»JJBàJJN¬àYà
+€X[ãõ[ô›OOH
+H»⁄›’ÿ\›
+	–Y]X\›€ôH^\ò⁄\ŸI N»ô]\õé»BÇà€€ú›€‹ö€›]H¬à]Nà]Kà^\ò⁄\Ÿ\Œà€X[ãà\‹⁄Y€ôYûNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€ÿX⁄	Àà\‹⁄Y€ôY]àô]»]J
+Kù“T”‘›ö[ô 
+KàYà	ÿ]◊…»
+»]Kõõ› 
+BàN¬ÇàûH¬à]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ öY]⁄[ô–€Y[ù]KùZY
+Kù\]J¬à\‹⁄Y€ôY€‹ö€›]Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€ä€‹ö€›]
+BàJN¬àÀ»ŸY\ÿÿ[€‹H[àﬁ[ò»€»H\›\]\»[[YYX][BàYà
+]öY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›] HöY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›]»H◊N¬àöY]⁄[ô–€Y[ù]Kô]Kò\‹⁄Y€ôY€‹ö€›]Àú\⁄
+€‹ö€›]
+N¬à€‹ŸP\‹⁄Y€ï€‹ö€›]
+
+N¬àô[ô\ê\‹⁄Y€ôY€‹ö€›]—õ‹ê€ÿX⁄
+
+N¬à⁄›’ÿ\›
+	’€‹ö€›]\‹⁄Y€ôY8ß$… N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	–\‹⁄Y€àòZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–\‹⁄Y€àòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇàù[ò›[€àòX⁄’–€ÿX⁄\⁄õÿ\ô
+
+H¬àöY]⁄[ô–€Y[ù]HHù[¬àô[ô\ê€ÿX⁄\⁄õÿ\ô
+
+N¬àBÇàÀ»KKKKKKKKKHì’T»
+€À]ÿ^H€€ùô\úÿ][€äHKKKKKKKKKBÇàù[ò›[€àõ›\—ÿ“Y
+€ÿX⁄ZYY[Xô\ïZY
+H¬àô]\õà€ÿX⁄ZY
+»	◊…»
+»Y[Xô\ïZY¬àBÇà\ﬁ[ò»ù[ò›[€àÿYõ›\’ôXY
+
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›ôXY[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›\À]ôXY	 N¬àYà
+]ôXY[
+Hô]\õé¬à]€ÿX⁄ZYY[Xô\ïZY¬àYà
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	»	âàöY]⁄[ô–€Y[ù]JH¬à€ÿX⁄ZYH›\úô[ù\Ÿ\ãùZY¬àY[Xô\ïZYHöY]⁄[ô–€Y[ù]KùZY¬àH[ŸHYà
+›\úô[ù\Ÿ\îõ€HOOH	€Y[Xô\â H¬à€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬àY[Xô\ïZYH›\úô[ù\Ÿ\ãùZY¬àBàYà
+X€ÿX⁄ZY[Y[Xô\ïZY
+H¬àôXY[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»õ›\»Y]è‹âŒ¬àô]\õé¬àBàûH¬à€€ú›õ›Qÿ»H]ÿZ]ãò€€X›[€ä	€õ›\… Kôÿ õ›\—ÿ“Y
+€ÿX⁄ZYY[Xô\ïZY
+JKôŸ]
+
+N¬à€€ú›õ›\»H
+õ›QÿÀô^\›»	âàõ›QÿÀô]J
+KõY\‹ÿYŸ\ H»õ›QÿÀô]J
+KõY\‹ÿYŸ\»à◊N¬àYà
+õ›\Àõ[ô›OOH
+H¬àôXY[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»õ›\»Y]à›\ùH€€ùô\úÿ][€àô[›Àè‹âŒ¬àô]\õé¬àBàôXY[ö[õô\íSHô[ô\ìõ›SY\‹ÿYŸ\ õ›\ N¬àôXY[úÿ‹õ€‹HôXY[úÿ‹õ€ZY⁄¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àÿY[ô»õ›\ŒâÀ\úõ‹äN¬àôXY[ö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKML^XŸ[ù\àKL»èê€›[õ›ÿYõ›\»
+⁄X⁄»ö\ô\›‹ôHù[\ Kè‹âŒ¬àBàBÇàù[ò›[€àô[ô\ìõ›SY\‹ÿYŸ\ õ›\ H¬àô]\õàõ›\ÀõX\
+àOà¬à€€ú›\”Z[ôHHãôúõ€UZYOOH›\úô[ù\Ÿ\ãùZY¬à€€ú›[YHHãò]»ô]»]Jãò]
+Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»^Nà	€ù[Y\öX…À[€ùà	‹⁄‹ù	À›\éà	ÃãYY⁄]	ÀZ[ù]Nà	ÃãYY⁄]	»JHà	…Œ¬ÇàÀ»€‹ö€›]YôYYòX⁄»Y\‹ÿYŸ\»Ÿ]H\›[ò›ÿ\ô⁄]›\àõ›‹¬àYà
+ãù\HOOH	›€‹ö€›]YôYYòX⁄…»	âà\úò^Kö\–\úò^JãôôYYòX⁄ JH¬à€€ú›õ›‹»HãôôYYòX⁄ÀõX\
+]Oà¬à€€ú››\ê€›[ùHX]õX^
+X]õZ[äKX]úõ›[ô
+ù[Xô\ä]ú›\ú H
+JJN¬à€€ú››\ú»H›\ê€›[ù»	¯¶!IÀúô\X]
+›\ê€›[ù
+H
+»	¯¶!âÀúô\X]
+HH›\ê€›[ù
+Hà	¯†%	Œ¬àô]\õà]à€\‹œHù^^»KLçHèÇà‹[à€\‹œHôõ€ùXõ€èâŸ\ÿÿ\R[
+]õò[YJ_O‹‹[èÇà‹[à€\‹œHù^X[Xô\ãMLèâ‹›\úﬂO‹‹[èÇà	⁄]ò€€[Y[ù»]à€\‹œHù^VÃL\H][X»‹X⁄]KNèàâŸ\ÿÿ\R[
+]ò€€[Y[ù
+_HèŸ]èòà	…ﬂBàŸ]èò¬àJKöõ⁄[ä	… N¬àô]\õàà]à€\‹œHôõ^	⁄\”Z[ôH»	⁄ù\›YûKY[ô	»à	⁄ù\›YûK\›\ù	ﬂHèÇà]à€\‹œHõX^]ÀVŒIWHôÀY[Y\ò[MLõ‹ô\àõ‹ô\ãY[Y\ò[Lå^\€]KNMKL»õ›[ôYLûèÇà€\‹œHù^VÃLHõ€ùXõ€^Y[Y\ò[MÃXãLHèâŸ\ÿÿ\R[
+ãôúõ€Sò[YH	… _H€€\]YH€‹ö€›]‹Çà€\‹œHù^\€Hõ€ùXõX⁄»XãLHèº'‰‚»	Ÿ\ÿÿ\R[
+ãù€‹ö€›]]H	–€ÿX⁄€‹ö€›]	 _O‹Çà	‹õ›‹ﬂBà€\‹œHù^VŒ\H‹X⁄]KMå]LH^\öY⁄èâ›[Y_O‹ÇàŸ]èÇàŸ]èò¬àBÇà€€ú›ÿYôU^H\ÿÿ\R[
+ãù^	… Kúô\XŸJ◊ãŸÀ	œúèâ N¬àô]\õàà]à€\‹œHôõ^	⁄\”Z[ôH»	⁄ù\›YûKY[ô	»à	⁄ù\›YûK\›\ù	ﬂHèÇà]à€\‹œHõX^]ÀVŒ	WH	⁄\”Z[ôH»	ÿôÀZ[ôY€ÀMå^]⁄]I»à	ÿôÀ\€]KLL^\€]KN	ﬂHMKLãçHõ›[ôYLûèÇà€\‹œHù^VÃLHõ€ùXõ€‹X⁄]KMÃXãLçHèâŸ\ÿÿ\R[
+ãôúõ€Sò[YH	… _I€ãôúõ€Tõ€HOOH	ÿ€ÿX⁄	»»	»0≠»€ÿX⁄	»à	…ﬂO‹Çà€\‹œHù^\€Hèâ‹ÿYôU^O‹Çà€\‹œHù^VŒ\H‹X⁄]KMå]LH^\öY⁄èâ›[Y_O‹ÇàŸ]èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àBÇà\ﬁ[ò»ù[ò›[€à\[ôõ›J€ÿX⁄ZYY[Xô\ïZYY\‹ÿYŸJH¬à€€ú›ôYàHãò€€X›[€ä	€õ›\… Kôÿ õ›\—ÿ“Y
+€ÿX⁄ZYY[Xô\ïZY
+JN¬à€€ú›^\›[ô»H]ÿZ]ôYãôŸ]
+
+N¬àYà
+^\›[ôÀô^\› H¬à]ÿZ]ôYãù\]J»Y\‹ÿYŸ\Œàö\ôXò\ŸKôö\ô\›‹ôKëöY[ò[YKò\úò^U[ö[€äY\‹ÿYŸJHJN¬àH[ŸH¬à]ÿZ]ôYãúŸ]
+»€ÿX⁄ZYà€ÿX⁄ZYY[Xô\ïZYàY[Xô\ïZYY\‹ÿYŸ\Œà€Y\‹ÿYŸWHJN¬àBàBÇà\ﬁ[ò»ù[ò›[€à‹›õ›J
+H¬àYà
+\ô\]Z\ôP€ÿX⁄XÿŸ\‹ 
+JHô]\õé¬à€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€õ›KZ[ú]	 N¬à€€ú›^H
+[ú]ùò[YH	… Kùö[J
+Kú€XŸJL
+N¬àYà
+]^
+Hô]\õé¬à]€ÿX⁄ZYY[Xô\ïZY¬àYà
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	»	âàöY]⁄[ô–€Y[ù]JH¬à€ÿX⁄ZYH›\úô[ù\Ÿ\ãùZY¬àY[Xô\ïZYHöY]⁄[ô–€Y[ù]KùZY¬àH[ŸHYà
+›\úô[ù\Ÿ\îõ€HOOH	€Y[Xô\â H¬à€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬àY[Xô\ïZYH›\úô[ù\Ÿ\ãùZY¬àBàYà
+X€ÿX⁄ZY[Y[Xô\ïZY
+H»⁄›’ÿ\›
+	”õ»€ÿX⁄ÿ€Y[ù[ö»õ›[ô	 N»ô]\õé»Bà€€ú›Y\‹ÿYŸHH¬àúõ€UZYà›\úô[ù\Ÿ\ãùZYàúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH
+›\úô[ù\Ÿ\ãô\‹^Sò[YJH	’\Ÿ\âÀàúõ€Tõ€Nà›\úô[ù\Ÿ\îõ€Kà^à^à]àô]»]J
+Kù“T”‘›ö[ô 
+BàN¬àûH¬à]ÿZ]\[ôõ›J€ÿX⁄ZYY[Xô\ïZYY\‹ÿYŸJN¬àÀ»õ›YûHH›\à\ú€€àXõ›]Hô]»õ›Bà€€ú›ôX⁄\Y[ùZYH
+›\úô[ù\Ÿ\ãùZYOOH€ÿX⁄ZY
+H»Y[Xô\ïZYà€ÿX⁄ZY¬à]ÿZ]\⁄õ›YöXÿ][€äôX⁄\Y[ùZY¬à\Nà	€õ›IÀà]Nà	”ô]»Y\‹ÿYŸHúõ€H	»
+»
+ö\ôXò\ŸU\Ÿ\ë]Kõò[YH	ﬁ[›\à	»
+»
+›\úô[ù\Ÿ\îõ€HOOH	ÿ€ÿX⁄	»»	ÿ€ÿX⁄	»à	ÿ€Y[ù	 JKàõŸNà^õ[ô›àå»^ú€XŸJM H
+»	Àããâ»à^àúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	…¬àJN¬à[ú]ùò[YHH	…Œ¬àÿYõ›\’ôXY
+
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à‹›[ô»õ›NâÀ\úõ‹äN¬à⁄›’ÿ\›
+	”õ›HòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇàÀ»KKKKKKKKKHQSPëTà“QNà€ÿX⁄[ö»
+»ô\]Y\›»KKKKKKKKKBÇà\ﬁ[ò»ù[ò›[€àô[ô\ìY[Xô\ê€ÿX⁄ŸX›[€ä
+H¬à€€ú›€€ùZ[ô\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ãX€ÿX⁄\ŸX›[€â N¬àYà
+X€€ùZ[ô\äHô]\õé¬àYà
+X›\úô[ù\Ÿ\äH¬à€€ùZ[ô\ãö[õô\íSH	œ€\‹œHù^\€H^\€]KMèî⁄Y€à[à»öY]»€ÿX⁄€€õôX›[€ú»[ôY\‹ÿYŸ\Àè‹âŒ¬àô]\õé¬àBàûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à€€ú›YHHYQÿÀô]J
+HﬂN¬à€€ú›[ô[ô»HYKú[ô[ô‘ô\]Y\›»◊N¬à€€ú›€ÿX⁄ZYHYKò€ÿX⁄ZY¬à€€ú›€ÿX⁄ò[YHHYKò€ÿX⁄ò[YN¬àö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZYH€ÿX⁄ZY¬àö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ò[YHH€ÿX⁄ò[YN¬Çà][H	…Œ¬àYà
+[ô[ôÀõ[ô›à
+H¬à[
+œH	œ€\‹œHù^\€Hõ€ùXõX⁄»XãLàèê€€õôX›[€àô\]Y\›œ⁄âŒ¬à[
+œH[ô[ôÀõX\
+
+ãöJHOà¬à€€ú›ÿYôSò[YHH\ÿÿ\Rú‘›ö[ô ãôúõ€Sò[YH	–€ÿX⁄	 N¬à€€ú›ÿYôUZYH\ÿÿ\Rú‘›ö[ô ãôúõ€UZY	… N¬àô]\õàà]à€\‹œHòôÀX[Xô\ãMLõ‹ô\àõ‹ô\ãX[Xô\ãLåL»õ›[ôY^XãLàèÇà€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+ãôúõ€Sò[YH	–H€ÿX⁄	 _O‹Çà€\‹œHù^^»^\€]KMLXãLàèâŸ\ÿÿ\R[
+ãôúõ€Q[XZ[	… _Hÿ[ù»»ôH[›\à€ÿX⁄‹Çà]à€\‹œHôõ^ÿ\LàèÇàù]€à€ò€X⁄œHò\õ›ôP€ÿX⁄
+	…‹ÿYôUZYIÀ	…‹ÿYôSò[Y_I Hà€\‹œHôõ^LHôÀY[Y\ò[Må^]⁄]HKLàõ›[ôY[»õ€ùXõ€^\€Hèê\õ›ôOÿù]€èÇàù]€à€ò€X⁄œHôX€[ôP€ÿX⁄
+	…‹ÿYôUZYI Hà€\‹œHôõ^LHôÀ\€]KLå^\€]KMÃKLàõ›[ôY[»õ€ùXõ€^\€HèëX€[ôOÿù]€èÇàŸ]èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àBàYà
+€ÿX⁄ZY
+H¬à[
+œHà]à€\‹œHòôÀ\€]KMLMõ›[ôYLûõ^][\ÀXŸ[ù\àÿ\L»XãL»èÇà]à€\‹œHùÀLLàLLàôÀZ[ôY€ÀMåõ›[ôYYù[õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\à^]⁄]Hõ€ùXõX⁄»èÇà	Ÿ\ÿÿ\R[
+
+€ÿX⁄ò[YH	–… Kò⁄\ê]
+
+Kù’\\êÿ\ŸJ
+J_BàŸ]èÇà]à€\‹œHôõ^LHZ[ã]ÀLèÇà€\‹œHù^VÃLHõ€ùXõ€^\€]KM\\òÿ\ŸHèñ[›\à€ÿX⁄‹Çà€\‹œHôõ€ùXõ€ù[òÿ]HèâŸ\ÿÿ\R[
+€ÿX⁄ò[YH	–€ÿX⁄	 _O‹ÇàŸ]èÇàù]€à€ò€X⁄œHõ‹[ìY[Xô\ìõ›\ 
+Hà€\‹œHòôÀZ[ôY€ÀMå^]⁄]HL»KLàõ›[ôY[»õ€ùXõ€^^»èìõ›\œÿù]€èÇàŸ]èÇà]à€\‹œHô‹öY‹öYX€€ÀLàÿ\LàèÇàù]€à€ò€X⁄œHõ‹[î⁄\ôQ^\ 
+Hà€\‹œHòôÀY[Y\ò[Må^]⁄]HL»õ›[ôY^õ€ùXõ€^\€Hõ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\àÿ\LHèÇàH]K[X⁄YOHú⁄\ôKLàà€\‹œHùÀMMèè⁄Oà⁄\ôH^\»⁄]€ÿX⁄àÿù]€èÇàù]€à€ò€X⁄œHú›⁄]⁄Xä	›òZ[ö[ô… Hà€\‹œHòôÀ\€]KNL^]⁄]HL»õ›[ôY^õ€ùXõ€^\€Hõ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\àÿ\LHèÇàH]K[X⁄YOHò€\õÿ\ô[\›à€\‹œHùÀMMèè⁄Oà€ÿX⁄€‹ö€›]¬àÿù]€èÇàŸ]èÇà€\‹œHù^VÃL\H^\€]KM^XŸ[ù\à]Làèñ[›\à€ÿX⁄	‹»€‹ö€›]»\X\à[àHòZ[ö[ô»Xãè‹ò¬àH[ŸHYà
+[ô[ôÀõ[ô›OOH
+H¬à[
+œH	œ€\‹œHù^\€H^\€]KMèìõ»€ÿX⁄€€õôX›Yà⁄[àH€ÿX⁄Ÿ[ô»Hô\]Y\›]	€\X\à\ôH»\õ›ôKè‹âŒ¬àBà€€ùZ[ô\ãö[õô\íSH[¬àôYúô\⁄X€€ú 
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àô[ô\ö[ô»€ÿX⁄ŸX›[€éâÀ\úõ‹äN¬à€€ùZ[ô\ãö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKMLèê€›[õ›ÿY€ÿX⁄[ôõÀè‹âŒ¬àBàBÇà\ﬁ[ò»ù[ò›[€à\õ›ôP€ÿX⁄
+€ÿX⁄ZY€ÿX⁄ò[YQúõ€Tô\]Y\›
+H¬àûH¬àÀ»ŸH»ì’ôXYH€ÿX⁄	‹»ÿ›[Y[ù\ôKàH\ô[ôYù[\»€õH]àÀ»[›HôXY[›\à›€àÿ»‹àH€Y[ù[öŸY»[›K€»HY[Xô\àôXY[ô¬àÀ»H€ÿX⁄	‹»ÿ»\»
+€‹úôX›JH[öYY8†%]ÿ\»Hú\õZ\‹⁄[€ÇàÀ»[öYYà€à\õ›ôKàH€ÿX⁄	‹»ò[YH[ôXYH\úö]ôY[àH[ô[ô¬àÀ»ô\]Y\›
+úõ€Sò[YJK€»ŸH\ŸH][ô]õ⁄YHõÿ⁄ŸYôXY[ù\ô[KÇà€€ú›€ÿX⁄ò[YHH€ÿX⁄ò[YQúõ€Tô\]Y\›	–€ÿX⁄	Œ¬ÇàÀ»HY[Xô\à‹ö]\»”ìHZ\à›€àÿŒàŸ]Z\à€ÿX⁄
+»€X\àô\]Y\›ÀÇàÀ»\»›X⁄\»€ÿX⁄ZY€ÿX⁄ò[YH[ô[ô[ô‘ô\]Y\›»8†%ô]ô\àõ€X8†%àÀ»€»HŸ[ã]\]Hù[H[›‹»]Çà]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+Kù\]J¬à€ÿX⁄ZYà€ÿX⁄ZYà€ÿX⁄ò[YNà€ÿX⁄ò[YKà[ô[ô‘ô\]Y\›Œà◊BàJN¬àö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZYH€ÿX⁄ZY¬àö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ò[YHH€ÿX⁄ò[YN¬à⁄›’ÿ\›
+	–€€õôX›Y⁄]	»
+»€ÿX⁄ò[YH
+»	»8ß$… N¬àô[ô\ìY[Xô\ê€ÿX⁄ŸX›[€ä
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à\õ›ö[ô»€ÿX⁄âÀ\úõ‹äN¬à⁄›’ÿ\›
+	–\õ›ôHòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇà\ﬁ[ò»ù[ò›[€àX€[ôP€ÿX⁄
+€ÿX⁄ZY
+H¬àûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à€€ú›[ô[ô»H
+YQÿÀô]J
+Kú[ô[ô‘ô\]Y\›»◊JKôö[\äàOàãôúõ€UZYOOH€ÿX⁄ZY
+N¬à]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+Kù\]J»[ô[ô‘ô\]Y\›Œà[ô[ô»JN¬à⁄›’ÿ\›
+	‘ô\]Y\›X€[ôY	 N¬àô[ô\ìY[Xô\ê€ÿX⁄ŸX›[€ä
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àX€[ö[ôŒâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–€›[õ›X€[ôHô\]Y\›	 N¬àBàBÇàÀ»KKKH”QSï“QNà⁄\ôH€‹ö€›]»ù]ö][€à^\»⁄]H€ÿX⁄KKKBà]⁄\ôUXàH	›€‹ö€›]…Œ¬à]⁄\ôTŸ[X›[€àH»€‹ö€›]Œà◊Kù]ö][€éà◊HN¬Çà\ﬁ[ò»ù[ò›[€à‹[î⁄\ôQ^\ 
+H¬àYà
+Yö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY
+H»⁄›’ÿ\›
+	”õ»€ÿX⁄€€õôX›Y	 N»ô]\õé»BàÀ»›\ùúõ€H⁄]	‹»[ôXYH⁄\ôYàûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à€€ú›⁄\ö[ô»H
+YQÿÀô]J
+HﬂJKú⁄\ö[ô»ﬂN¬à⁄\ôTŸ[X›[€àH¬à€‹ö€›]Œà
+⁄\ö[ôÀù€‹ö€›]»◊JKú€XŸJ
+Kàù]ö][€éà
+⁄\ö[ôÀõù]ö][€à◊JKú€XŸJ
+BàN¬àHÿ]⁄
+JH»⁄\ôTŸ[X›[€àH»€‹ö€›]Œà◊Kù]ö][€éà◊HN»BàŸ]⁄\ôUXä	›€‹ö€›]… N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôKY^\À[[Ÿ[	 Kú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€à€‹ŸT⁄\ôQ^\ 
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôKY^\À[[Ÿ[	 Kú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàù[ò›[€àŸ]⁄\ôUXäXäH¬à⁄\ôUXàHXé¬à€€ú›»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôK]Xã]€‹ö€›]… N¬à€€ú›àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôK]Xã[ù]ö][€â N¬à€€ú›€àH	Ÿõ^LHKLàõ›[ôY[»^^»õ€ùXõX⁄»\\òÿ\ŸHôÀ]⁄]H^Z[ôY€ÀMå⁄Y›À\€IŒ¬à€€ú›ŸôàH	Ÿõ^LHKLàõ›[ôY[»^^»õ€ùXõX⁄»\\òÿ\ŸH^\€]KM	Œ¬àYà
+ HÀò€\‹”ò[YHH
+XàOOH	›€‹ö€›]… H»€ààŸôé¬àYà
+äHãò€\‹”ò[YHH
+XàOOH	€ù]ö][€â H»€ààŸôé¬àô[ô\î⁄\ôS‹[€ú 
+N¬àBÇàù[ò›[€àô[ô\î⁄\ôS‹[€ú 
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄\ôKY^\À[‹[€ú… N¬àYà
+Xõﬁ
+Hô]\õé¬à€€ú›\›H⁄\ôUXàOOH	›€‹ö€›]…¬à»
+›]Kù€‹ö€›]\›‹ûH◊JBàà
+›]Kõù]ö][€í\›‹ûH◊JN¬àYà
+\›õ[ô›OOH
+H¬àõﬁö[õô\íSH€\‹œHù^\€H^\€]KM^XŸ[ù\àKMàèìõ»	‹⁄\ôUXüHŸŸŸYY]è‹ò¬àô]\õé¬àBàõﬁö[õô\íSH\›ú€XŸJå
+KõX\
+][HOà¬à€€ú›]HH][Kô]N¬à€€ú›Ÿ[X›YH⁄\ôTŸ[X›[€ñ‹⁄\ôUXóKö[ô^Ÿä]JHèH¬à€€ú››[[X\ûHH⁄\ôUXàOOH	›€‹ö€›]…¬à»	Ÿ\ÿÿ\R[
+][Kôõÿ›\»	’€‹ö€›]	 _H0≠»	 ][Kô^\ò⁄\Ÿ\»◊JKõ[ô›H^\ò⁄\Ÿ\ÿàà	”X]úõ›[ô
+][Kòÿ[‹öY\»
+_Hÿÿ[0≠»	”X]úõ›[ô
+][Kúõ›Z[à
+_Y»õ›Z[ò¬àô]\õààXô[€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àÿ\L»L»ôÀ\€]KMLõ›[ôY^›\ú€‹ã\⁄[ù\àèÇà]à€\‹œHõZ[ã]ÀLèÇà€\‹œHôõ€ùXõ€^\€HèâŸ\ÿÿ\R[
+]J_O‹Çà€\‹œHù^^»^\€]KMù[òÿ]Hèâ‹›[[X\û_O‹ÇàŸ]èÇà[ú]\OHò⁄X⁄ÿõﬁà	‹Ÿ[X›Y»	ÿ⁄X⁄ŸY	»à	…ﬂH€ò⁄[ôŸOHùŸŸ€T⁄\ôQ^J	…Ÿ\ÿÿ\Rú‘›ö[ô ]J_IÀ\Àò⁄X⁄ŸY
+Hà€\‹œHùÀMHMHXÿŸ[ùZ[ôY€ÀMåõ^\⁄ö[öÀLèÇà€Xô[ò¬àJKöõ⁄[ä	… N¬àBÇàù[ò›[€àŸŸ€T⁄\ôQ^J]K€äH¬à€€ú›\úàH⁄\ôTŸ[X›[€ñ‹⁄\ôUXóN¬à€€ú›HH\úãö[ô^Ÿä]JN¬àYà
+€äH»Yà
+H
+H\úãú\⁄
+]JN»Bà[ŸH»Yà
+HèH
+H\úãú‹XŸJKJN»BàBÇà\ﬁ[ò»ù[ò›[€àÿ]ôT⁄\ôY^\ 
+H¬àûH¬à]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+Kù\]J¬à⁄\ö[ôŒà¬à€‹ö€›]Œà⁄\ôTŸ[X›[€ãù€‹ö€›]Ààù]ö][€éà⁄\ôTŸ[X›[€ãõù]ö][€ÇàBàJN¬àÀ»XZŸH›\ôHH⁄\ôY^\…»ù[]H\»[àH€›Y€ò\⁄›õ‹àH€ÿX⁄à]ÿZ]\⁄Y[Xô\ë]U–€›Y
+
+N¬àÀ»õ›YûHH€ÿX⁄]H€Y[ù⁄\ôY^\¬àYà
+ö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY
+H¬à€€ú››[H⁄\ôTŸ[X›[€ãù€‹ö€›]Àõ[ô›
+»⁄\ôTŸ[X›[€ãõù]ö][€ãõ[ô›¬à]ÿZ]\⁄õ›YöXÿ][€äö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬à\Nà	Ÿ^\À\⁄\ôY	Àà]Nà
+ö\ôXò\ŸU\Ÿ\ë]Kõò[YH	÷[›\à€Y[ù	 H
+»	»⁄\ôYZ\à]IÀàõŸNà›[
+»	»^I»
+»
+›[OOHH»	‹…»à	… H
+»	»õ›»ö\⁄XõH»[›IÀàúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€Y[ù	¬àJN¬àBà€‹ŸT⁄\ôQ^\ 
+N¬à€€ú››[H⁄\ôTŸ[X›[€ãù€‹ö€›]Àõ[ô›
+»⁄\ôTŸ[X›[€ãõù]ö][€ãõ[ô›¬à⁄›’ÿ\›
+›[à»⁄\ö[ô»	››[H^I››[àH»	‹…»à	…ﬂH⁄][›\à€ÿX⁄8ß$ÿà	‘⁄\ö[ô»\]Y	 N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	‘⁄\ôHòZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–€›[õ›ÿ]ôH⁄\ö[ôŒà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇàÀ»KKKH”QSï“QNàöY]»	à\ŸH€‹ö€›]»H€ÿX⁄\‹⁄Y€ôYKKKBàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»ì—‘ëT‘»ëSRSëTî»8†%ŸZY⁄»YX\›\ô[Y[ù»»›‹Àÿ⁄Y[YàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàù[ò›[€à\ô[Z[ô\ú 
+H¬àYà
+\›]Kù\]Tô[Z[ô\ú H›]Kù\]Tô[Z[ô\ú»Hî””ãú\úŸJî””ãú›ö[ô⁄YûJQêUS‘’UKù\]Tô[Z[ô\ú JN¬àô]\õà›]Kù\]Tô[Z[ô\úŒ¬àBÇà€€ú›ëSRSëTó”QUHH¬àŸZY⁄à»Xô[à	’ŸZY⁄	ÀX€€éà	‹ÿÿ[IÀ\ÿŒà	”Ÿ»[›\àõŸ]ŸZY⁄	»KàYX\›\ô[Y[ùà»Xô[à	–õŸHYX\›\ô[Y[ù…ÀX€€éà	‹ù[\âÀ\ÿŒà	–⁄\›ÿZ\›\õ\À]Àâ»Kà›Œà»Xô[à	‘õŸ‹ô\‹»›‹…ÀX€€éà	ÿÿ[Y\òIÀ\ÿŒà	—úõ€ù⁄YKòX⁄»›‹…»BàN¬à€€ú›—QR—VT»H…‘›[âÀ	”[€âÀ	’YIÀ	’ŸY	À	’IÀ	—úöIÀ	‘ÿ]	◊N¬Çàù[ò›[€à‹[îõŸ‹ô\‹‘ô[Z[ô\ú 
+H¬àô[ô\îô[Z[ô\ú‘ŸX›[€ú 
+N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸ‹ô\‹À\ô[Z[ô\úÀ[[Ÿ[	 Kú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBàù[ò›[€à€‹ŸTõŸ‹ô\‹‘ô[Z[ô\ú 
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸ‹ô\‹À\ô[Z[ô\úÀ[[Ÿ[	 Kú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàù[ò›[€àô[ô\îô[Z[ô\ú‘ŸX›[€ú 
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹ô[Z[ô\úÀ\ŸX›[€ú… N¬àYà
+Xõﬁ
+Hô]\õé¬à€€ú›àH\ô[Z[ô\ú 
+N¬àõﬁö[õô\íSH…›ŸZY⁄	À	€YX\›\ô[Y[ù	À	‹›…◊KõX\
+Ÿ^HOà¬à€€ú›Ÿô»Hñ⁄Ÿ^WN¬à€€ú›Y]HHëSRSëTó”QUV⁄Ÿ^WN¬à€€ú›€àHŸôÀô[òXõY¬àô]\õàà]à€\‹œHòõ‹ô\ãLà	€€à»	ÿõ‹ô\ãZ[ôY€ÀLå	»à	ÿõ‹ô\ã\€]KLå	ﬂHõ›[ôYLﬁMèÇàXô[€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àÿ\L»›\ú€‹ã\⁄[ù\àèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àÿ\L»èÇà]à€\‹œHùÀLLLL	€€à»	ÿôÀZ[ôY€ÀMå	»à	ÿôÀ\€]KLÃ	ﬂHõ›[ôY^õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\àõ^\⁄ö[öÀLèÇàH]K[X⁄YOHâ€Y]KöX€€üHà€\‹œHùÀMHMH^]⁄]Hèè⁄OÇàŸ]èÇà]èÇà€\‹œHôõ€ùXõX⁄»^\€Hèâ€Y]KõXô[O‹Çà€\‹œHù^VÃL\H^\€]KMèâ€Y]Kô\ÿﬂO‹ÇàŸ]èÇàŸ]èÇà[ú]\OHò⁄X⁄ÿõﬁà	€€à»	ÿ⁄X⁄ŸY	»à	…ﬂH€ò⁄[ôŸOHùŸŸ€Tô[Z[ô\ä	…⁄Ÿ^_IÀ\Àò⁄X⁄ŸY
+Hà€\‹œHùÀMàMàXÿŸ[ùZ[ôY€ÀMåõ^\⁄ö[öÀLèÇà€Xô[ÇÇà]àYHúô[Z[ô\ãXõŸKI⁄Ÿ^_Hà€\‹œHâ€€à»	…»à	⁄Y[âﬂH]M‹XŸK^KL»èÇà]èÇàXô[€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH^\€]KMõÿ⁄»XãLKçHèí›»Ÿù[è€Xô[Çà]à€\‹œHô‹öY‹öYX€€ÀMÿ\LHèÇà	÷…ŸZ[IÀ	›ŸYZ€IÀ	€[€ùIÀ	ÿ›\›€I◊KõX\
+àOààù]€à€ò€X⁄œHúŸ]ô[Z[ô\ëúô\J	…⁄Ÿ^_IÀ	…ŸüI Hà€\‹œHúKLàõ›[ôY[»^VÃLHõ€ùXõX⁄»\\òÿ\ŸH	ÿŸôÀôúô\]Y[òﬁHOOHà»	ÿôÀZ[ôY€ÀMå^]⁄]I»à	ÿôÀ\€]KLL^\€]KM	ﬂHèâŸüOÿù]€èÇà
+Köõ⁄[ä	… _BàŸ]èÇàŸ]èÇÇàKKHŸYZ€NàX⁄»ŸYZŸ^J HKOÇà]àYHúô[Z[ô\ã]ŸYZ€KI⁄Ÿ^_Hà€\‹œHâÿŸôÀôúô\]Y[òﬁHOOH	›ŸYZ€I»ŸôÀôúô\]Y[òﬁHOOH	ÿ›\›€I»»	…»à	⁄Y[âﬂHèÇàXô[€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH^\€]KMõÿ⁄»XãLKçHèâÿŸôÀôúô\]Y[òﬁHOOH	ÿ›\›€I»»	‘X⁄»[›\à^\…»à	’⁄X⁄^IﬂO€Xô[Çà]à€\‹œHô‹öY‹öYX€€ÀM»ÿ\LHèÇà	’—QR—VTÀõX\
+
+JHOààù]€à€ò€X⁄œHùŸŸ€Tô[Z[ô\ë^J	…⁄Ÿ^_IÀ	⁄_JHà€\‹œHúKLàõ›[ôY[»^VŒ\Hõ€ùXõX⁄»	 ŸôÀò›\›€Q^\»◊JKö[ô^ŸäJHèH»	ÿôÀZ[ôY€ÀMå^]⁄]I»à	ÿôÀ\€]KLL^\€]KM	ﬂHèâŸÃ_Oÿù]€èÇà
+Köõ⁄[ä	… _BàŸ]èÇàŸ]èÇÇàKKH[€ùNàX⁄»^HŸà[€ùKOÇà]àYHúô[Z[ô\ã[[€ùKI⁄Ÿ^_Hà€\‹œHâÿŸôÀôúô\]Y[òﬁHOOH	€[€ùI»»	…»à	⁄Y[âﬂHèÇàXô[€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH^\€]KMõÿ⁄»XãLKçHèë^HŸàH[€ù€Xô[ÇàŸ[X›€ò⁄[ôŸOHúŸ]ô[Z[ô\ë]J	…⁄Ÿ^_IÀ\Àùò[YJHà€\‹œHùÀYù[L»ôÀ\€]KMLõ›[ôY^õ€ùXõ€›][ôK[õ€ôH^\€HèÇà	–\úò^Kôúõ€J€[ô›àéK
+ÀJHOàH
+»JKõX\
+Oà‹[€àò[YOHâŸHà	ÿŸôÀò›\›€Q]HOOH»	‹Ÿ[X›Y	»à	…ﬂOâŸIŸOOHH»	‹›	»àOOHà»	€ô	»àOOH»»	‹ô	»à	›	ﬂO€‹[€èò
+Köõ⁄[ä	… _Bà‹Ÿ[X›Çà€\‹œHù^VÃLH^\€]KM]LHèë^\»x†$Ãé€»]€‹ö‹»]ô\µÎü=∂âûÀk∫wµÁ\⁄ÿ\òú H\⁄ÿ\òúÀö[õô\ï^HX]úõ›[ô
+›[ÿ\òú H
+»	Ÿ…Œ¬Çà€€ú›\⁄ò]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿ\⁄Yò]	 N¬àYà
+\⁄ò]
+H\⁄ò]ö[õô\ï^HX]úõ›[ô
+›[ò]
+H
+»	Ÿ…Œ¬Çà€€ú›ÿ[‹öYQ€ÿ[HŸ]Z[Pÿ[‹öYU\ôŸ]
+›]KùöY]—]JN¬à€€ú›õŸ‹ô\‹»HX]õZ[ä
+›[ÿ[»»ÿ[‹öYQ€ÿ[
+H
+àLÕLÕ
+N¬à€€ú›õŸ‹ô\‹—[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿÿ[‹öYK\õŸ‹ô\‹… N¬àYà
+õŸ‹ô\‹—[
+HõŸ‹ô\‹—[ú›[Kú›õ⁄ŸQ\⁄ŸôúŸ]HLÕHõŸ‹ô\‹Œ¬Çà€€ú›ÿ]\àH
+›]Kùÿ]\ìŸ‹»	âà›]Kùÿ]\ìŸ‹÷‹›]KùöY]—]WJH¬à€€ú›ÿ]\ë€ÿ[H
+›]Kô€ÿ[»	âà›]Kô€ÿ[Àùÿ]\äH»›]Kô€ÿ[Àùÿ]\ààçL¬à€€ú›ÿ]\ê€›[ù[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	›ÿ]\ãX€›[ù	 N¬àYà
+ÿ]\ê€›[ù[
+Hÿ]\ê€›[ù[ö[õô\ï^H	 ÿ]\à»L
+Kù—ö^Y
+ä_H»	 ÿ]\ë€ÿ[»L
+Kù—ö^Y
+J_S¬à€€ú›ÿ]\êò\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	›ÿ]\ã\õŸ‹ô\‹ÀXò\â N¬àYà
+ÿ]\êò\äHÿ]\êò\ãú›[Kù⁄YHX]õZ[äL
+ÿ]\à»ÿ]\ë€ÿ[
+H
+àL
+H
+»	…IŒ¬Çà€€ú››\»H
+›]Kú›\”Ÿ‹»	âà›]Kú›\”Ÿ‹÷‹›]KùöY]—]WJH¬à€€ú››\—€ÿ[H
+›]Kô€ÿ[»	âà›]Kô€ÿ[Àú›\ H»›]Kô€ÿ[Àú›\»àL¬à€€ú››\–€›[ù[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹›\ÀX€›[ù	 N¬àBà€€ú›QUTñW‘UTìó”PëS»HÿöôX›ôúôY^ôJ¬àò[[òŸYà	–ò[[òŸY»õ»‹X⁄YöX»Y]	ÀàôYÿ[éà	’ôYÿ[âÀàôYŸ]\öX[éà	’ôYŸ]\öX[âÀàŸ]ŸŸ[öXŒà	“Ÿ]ŸŸ[öX…¬àJN¬à€€ú›QUTñW–Tì–P“”PëS»HÿöôX›ôúôY^ôJ¬à[ù\õZ][ùŸò\›[ôŒà	“[ù\õZ][ùò\›[ô…Ààÿ[‹öYWŸYöX⁄]à	–ÿ[‹öYHYöX⁄]	¬àJN¬à€€ú›QUTñW‘ëTURTëSQSï”PëS»HÿöôX›ôúôY^ôJ¬àZ\ûWŸúôYNà	—Z\ûKYúôYIÀà€][óŸúôYNà	—€][ãYúôYIÀàù]ŸúôYNà	”ù]YúôYIÀàYŸ◊ŸúôYNà	—YŸÀYúôYIÀàö\⁄ŸúôYNà	—ö\⁄»ŸXYõ€ŸYúôYIÀà€ﬁWŸúôYNà	‘€ﬁKYúôYIÀàŸ\ÿ[YWŸúôYNà	‘Ÿ\ÿ[YKYúôYIÀà[[à	“[[	Àà€‹⁄\éà	“€‹⁄\âÀàô[Y⁄[›\◊ÿ›[\ò[à	‘ô[Y⁄[›\»»›[\ò[ô\]Z\ô[Y[ù	Àà›\éà	”›\à»[\ôﬁH]Z[›\YY	¬àJN¬Çàù[ò›[€à[ôô\ëY]\ûTô\]Z\ô[Y[ù—úõ€U^
+ò[YJH¬à€€ú›^H›ö[ô ò[YH	… Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›[ôô\úôYH◊N¬àYà
+◊äZ\û_Z[ﬂX›‹ŸJWãÀù\›
+^
+JH[ôô\úôYú\⁄
+	ŸZ\ûWŸúôYI N¬àYà
+◊ä€][ü€Ÿ[XXﬂŸ[XXﬂ⁄X]
+WãÀù\›
+^
+JH[ôô\úôYú\⁄
+	Ÿ€][óŸúôYI N¬àYà
+◊äù]ù]ﬂX[ù][[€ôÿ[ù]ÿ\⁄]ﬂ^ô[ù]
+WãÀù\›
+^
+JH[ôô\úôYú\⁄
+	€ù]ŸúôYI N¬àYà
+◊äYŸﬂYŸ‹ WãÀù\›
+^
+JH[ôô\úôYú\⁄
+	ŸYŸ◊ŸúôYI N¬àYà
+◊äö\⁄ŸXYõ€Ÿ⁄[ö\⁄ò]€ü⁄ö[\
+WãÀù\›
+^
+JH[ôô\úôYú\⁄
+	Ÿö\⁄ŸúôYI N¬àYà
+◊ä€ﬁ_€ﬁXJWãÀù\›
+^
+JH[ôô\úôYú\⁄
+	‹€ﬁWŸúôYI N¬àYà
+◊äŸ\ÿ[Y_Z[öJWãÀù\›
+^
+JH[ôô\úôYú\⁄
+	‹Ÿ\ÿ[YWŸúôYI N¬àYà
+◊ö[[ãÀù\›
+^
+JH[ôô\úôYú\⁄
+	⁄[[	 N¬àYà
+◊ö€‹⁄\óãÀù\›
+^
+JH[ôô\úôYú\⁄
+	⁄€‹⁄\â N¬àô]\õà\úò^Kôúõ€Jô]»Ÿ]
+[ôô\úôY
+JN¬àBÇàù[ò›[€àY]\ûTõŸö[J
+H¬àYà
+Z\‘Z[îôX€‹ô
+›]KôY]\ûTõŸö[JJH›]KôY]\ûTõŸö[HHY\€€ôJQêUS‘’UKôY]\ûTõŸö[JN¬à€€ú›õŸö[HH›]KôY]\ûTõŸö[N¬àYà
+V…ÿò[[òŸY	À	›ôYÿ[âÀ	›ôYŸ]\öX[âÀ	⁄Ÿ]ŸŸ[öX…◊Kö[ò€Y\ õŸö[Kú]\õäJHõŸö[Kú]\õàH	ÿò[[òŸY	Œ¬àYà
+P\úò^Kö\–\úò^JõŸö[Kò\õÿX⁄\ JHõŸö[Kò\õÿX⁄\»H◊N¬àYà
+P\úò^Kö\–\úò^JõŸö[Kúô\]Z\ô[Y[ù JHõŸö[Kúô\]Z\ô[Y[ù»H◊N¬àõŸö[Kõõ›\»H›ö[ô õŸö[Kõõ›\»	… Kú€XŸJÕL
+N¬àô]\õàõŸö[N¬àBÇàù[ò›[€àY]\ûT]\õìXô[
+]\õäH¬àô]\õàQUTñW‘UTìó”PëS÷‹]\õóHQUTñW‘UTìó”PëSÀòò[[òŸY¬àBÇàù[ò›[€àY]\ûTõŸö[PòYŸ\“S
+õŸö[R[ú]
+H¬à€€ú›õŸö[HHõŸö[R[ú]Y]\ûTõŸö[J
+N¬à€€ú›Xô[»HŸY]\ûT]\õìXô[
+õŸö[Kú]\õäWBàò€€òÿ]
+
+õŸö[Kò\õÿX⁄\»◊JKõX\
+ò[YHOàQUTñW–Tì–P“”PëS÷›ò[YWJKôö[\äõ€€X[äJBàò€€òÿ]
+
+õŸö[Kúô\]Z\ô[Y[ù»◊JKõX\
+ò[YHOàQUTñW‘ëTURTëSQSï”PëS÷›ò[YWJKôö[\äõ€€X[äJN¬àô]\õàXô[ÀõX\
+
+Xô[[ô^
+HOà‹[à€\‹œHù^VÃLHõ€ùXõX⁄»LàKLHõ›[ôYYù[	⁄[ô^OOH»	ÿôÀ\€]KNL^[‹ò[ôŸKLÃ	»à	ÿôÀ[‹ò[ôŸKML^[‹ò[ôŸKNõ‹ô\àõ‹ô\ã[‹ò[ôŸKLå	ﬂHèâŸ\ÿÿ\R[
+Xô[
+_O‹‹[èò
+Köõ⁄[ä	… N¬àBÇàù[ò›[€à‹[ëY]\ûTõŸö[J
+H¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	⁄[ú]€ò[YOHôY]\ûK\]\õàóI Kôõ‹ëXX⁄
+[ú]Oà¬à[ú]ò⁄X⁄ŸYH[ú]ùò[YHOOHõŸö[Kú]\õé¬àJN¬à€€ú›ò\›[ô»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûKX\õÿX⁄Yò\›[ô… N¬à€€ú›YöX⁄]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûKX\õÿX⁄YYöX⁄]	 N¬àYà
+ò\›[ô Hò\›[ôÀò⁄X⁄ŸYHõŸö[Kò\õÿX⁄\Àö[ò€Y\ 	⁄[ù\õZ][ùŸò\›[ô… N¬àYà
+YöX⁄]
+HYöX⁄]ò⁄X⁄ŸYHõŸö[Kò\õÿX⁄\Àö[ò€Y\ 	ÿÿ[‹öYWŸYöX⁄]	 N¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	⁄[ú]€ò[YOHôY]\ûK\ô\]Z\ô[Y[ùóI Kôõ‹ëXX⁄
+[ú]Oà¬à[ú]ò⁄X⁄ŸYHõŸö[Kúô\]Z\ô[Y[ùÀö[ò€Y\ [ú]ùò[YJN¬àJN¬à€€ú›õ›\»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\õŸö[K[õ›\… N¬àYà
+õ›\ Hõ›\Àùò[YHHõŸö[Kõõ›\Œ¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\õŸö[K[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€à€‹ŸQY]\ûTõŸö[J
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\õŸö[K[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	€õ€ôIŒ¬àBÇàù[ò›[€àÿ]ôQY]\ûTõŸö[J
+H¬à€€ú›Ÿ[X›Y]\õàHÿ›[Y[ùú]Y\ûTŸ[X›‹ä	⁄[ú]€ò[YOHôY]\ûK\]\õàóNò⁄X⁄ŸY	 N¬àYà
+\Ÿ[X›Y]\õäH¬à⁄›’ÿ\›
+	–⁄€‹ŸHHY]›[K[ò€Y[ô»ò[[òŸY»õ»‹X⁄YöX»Y]	 N¬àô]\õé¬àBà€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àõŸö[Kú]\õàHŸ[X›Y]\õãùò[YN¬àõŸö[Kò\õÿX⁄\»H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûKX\õÿX⁄Yò\›[ô… OÀò⁄X⁄ŸY»	⁄[ù\õZ][ùŸò\›[ô…»à	…Ààÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûKX\õÿX⁄YYöX⁄]	 OÀò⁄X⁄ŸY»	ÿÿ[‹öYWŸYöX⁄]	»à	…¬àKôö[\äõ€€X[äN¬àõŸö[Kõõ›\»H›ö[ô ÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\õŸö[K[õ›\… OÀùò[YH	… Kùö[J
+Kú€XŸJÕL
+N¬à€€ú›Ÿ[X›Yô\]Z\ô[Y[ù»H\úò^Kôúõ€Jÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	⁄[ú]€ò[YOHôY]\ûK\ô\]Z\ô[Y[ùóNò⁄X⁄ŸY	 JBàõX\
+[ú]Oà[ú]ùò[YJBàôö[\äò[YHOàQUTñW‘ëTURTëSQSï”PëS÷›ò[YWJN¬àõŸö[Kúô\]Z\ô[Y[ù»H\úò^Kôúõ€Jô]»Ÿ]
+Ÿ[X›Yô\]Z\ô[Y[ùÀò€€òÿ]
+[ôô\ëY]\ûTô\]Z\ô[Y[ù—úõ€U^
+õŸö[Kõõ›\ JJJN¬àõŸö[Kò€€\]YHùYN¬àõŸö[Kú€›\òŸHH	ÿ€ÿX⁄[ôÀ\]Y\›[€õòZ\ôIŒ¬àõŸö[Kù\]Y]Hô]»]J
+Kù“T”‘›ö[ô 
+N¬àÿ]ôT›]J
+N¬à€‹ŸQY]\ûTõŸö[J
+N¬àô[ô\ê€ÿX⁄[ô“Xä
+N¬àô[ô\î⁄Yù€‹öŸ\ä
+N¬à⁄›’ÿ\›
+	ŸY]\ûT]\õìXô[
+õŸö[Kú]\õä_H[àÿ]ôY0≠»YX[⁄⁄XŸ\»\]YL
+N¬àBÇàù[ò›[€à\QY]\ûP€ÿX⁄[ú›Ÿ\ú [ú›Ÿ\ú H¬à€€ú›ò[Y\»H[ú›Ÿ\ú»ﬂN¬àYà
+]ò[Y\ÀôY]]\õäHô]\õàò[ŸN¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àõŸö[Kú]\õàH…ÿò[[òŸY	À	›ôYÿ[âÀ	›ôYŸ]\öX[âÀ	⁄Ÿ]ŸŸ[öX…◊Kö[ò€Y\ ò[Y\ÀôY]]\õäBà»ò[Y\ÀôY]]\õÇàà	ÿò[[òŸY	Œ¬à€€ú›\õÿX⁄X\H¬àõ€ôNà◊Kà[ù\õZ][ùŸò\›[ôŒà…⁄[ù\õZ][ùŸò\›[ô…◊Kàÿ[‹öYWŸYöX⁄]à…ÿÿ[‹öYWŸYöX⁄]	◊Kàò\›[ô◊ŸYöX⁄]à…⁄[ù\õZ][ùŸò\›[ô…À	ÿÿ[‹öYWŸYöX⁄]	◊BàN¬àõŸö[Kò\õÿX⁄\»H\õÿX⁄X\›ò[Y\ÀôY]\õÿX⁄H◊N¬à€€ú›ô\]Z\ô[Y[ùX\H¬àõ€ôNà◊Kà[\ôﬁNà…€›\â◊KàòZ]à…‹ô[Y⁄[›\◊ÿ›[\ò[	◊Kà›\éà…€›\â◊BàN¬àõŸö[Kõõ›\»H›ö[ô ò[Y\ÀôY]ô\]Z\ô[Y[ù]Z[»	… Kùö[J
+Kú€XŸJÕL
+N¬àõŸö[Kúô\]Z\ô[Y[ù»H\úò^Kôúõ€Jô]»Ÿ]
+à
+ô\]Z\ô[Y[ùX\›ò[Y\ÀôY]ô\]Z\ô[Y[ù›ô\ùöY]◊H◊JKò€€òÿ]
+[ôô\ëY]\ûTô\]Z\ô[Y[ù—úõ€U^
+õŸö[Kõõ›\ JBà
+JN¬àõŸö[Kò€€\]YHùYN¬àõŸö[Kú€›\òŸHH	ÿZKX€ÿX⁄X€€ùô\úÿ][€âŒ¬àõŸö[Kù\]Y]Hô]»]J
+Kù“T”‘›ö[ô 
+N¬àô]\õàùYN¬àBÇàù[ò›[€àY]\ûT⁄Yùõÿ›\”[ô\ \KõŸö[R[ú]
+H¬à€€ú›õŸö[HHõŸö[R[ú]Y]\ûTõŸö[J
+N¬à€€ú›⁄Yù[ô\»H¬àöY⁄à	–[ò⁄‹àH\ôŸ\›YX[Yù\àÿZ⁄[ô»‹àôYõ‹ôHH⁄Yù[à\ŸHY⁄\à[õôYõ€Ÿõ›Y⁄Hö[€Ÿ⁄Xÿ[öY⁄âÀàX\õNà	‘ô\\ôHúôXZŸò\›[ôHö\ú›úôXZ»YX[H]ô[ö[ô»ôYõ‹ôH€»õ€Ÿ[õö[ô»Ÿ\»õ›ôYXŸH€Y\âÀà^Nà	‘X⁄»HXZ[à€‹öÀXúôXZ»YX[[ôŸY\H[õôY‹[€àôXYHõ‹àHôKH‹à‹›\⁄YùòZ[ö[ô»⁄[ô›ÀâÀàŸôéà	‘ô]\õàYX[»»^][YH›\ú»[ôò]⁄\ô\\ôHõ€Ÿõ‹àHô^ù[àŸà⁄YùÀâ¬àN¬à€€ú›]\õì[ô\»H¬àò[[òŸYà	–ùZ[XX⁄XZ[àYX[\õ›[ôH€X\àõ›Z[à€›\òŸKôYŸ]Xõ\»‹àúùZ][ôH‹ù[€àŸàÿ\òõ⁄Yò]H]ö]»H^KâÀàôYÿ[éà	’\ŸHH›Xú›[ùX[[ù\õ›Z[à[ò⁄‹à]XX⁄YX[8†%›X⁄\»ŸùK[\ZŸZ][ãôX[úÀ[ù[»‹àHõ‹ùYöYYõ›Z[àõŸX›âÀàôYŸ]\öX[éà	‘õ›]HYŸ‹ÀZ\ûH‹àõ‹ùYöYY[\õò]]ô\ÀŸùKôX[ú»[ô[ù[»€»XX⁄YX[\»H[Xô\ò]Hõ›Z[à€›\òŸKâÀàŸ]ŸŸ[öXŒà	‘ö[‹ö]\ŸHõ›Z[ãõ€ã\›\ò⁄HôYŸ]Xõ\»[ôYX\›\ôYò]Œ»Yò][€à[ô[X›õ€]HôYY»\Ÿ\ùôH^òH][ù[€à\ö[ô»€ô»⁄YùÀâ¬àN¬à€€ú›[ô\»H¬à⁄Yù[ô\÷›\WH⁄Yù[ô\ÀõŸôãà]\õì[ô\÷‹õŸö[Kú]\õóH]\õì[ô\Àòò[[òŸYàN¬àYà
+
+õŸö[Kò\õÿX⁄\»◊JKö[ò€Y\ 	ÿÿ[‹öYWŸYöX⁄]	 JH¬à[ô\Àú\⁄
+	‘›YŸŸ\›Y‹ù[€ú»\ôHôYXŸYûHXõ›]MIH[àH[õô\é»ŸY\õ›Z[à[ôôYŸ]Xõ\»[àXŸHò]\à[à⁄⁄\[ô»õ›â N¬àBàYà
+
+õŸö[Kò\õÿX⁄\»◊JKö[ò€Y\ 	⁄[ù\õZ][ùŸò\›[ô… JH¬à[ô\Àú\⁄
+\HOOH	€öY⁄	¬à»	—»õ›õ‹òŸHHò\›[ô»⁄[ô›»õ›Y⁄HÿYô]KX‹ö]Xÿ[öY⁄⁄YùàXŸHHX][ô»⁄[ô›»Yù\àÿZ⁄[ô»[ô›‹Yà[\ùô\‹ÀŸ[ôZ[ô»‹à\ôõ‹õX[òŸH›Yôô\úÀâ¬àà	“ŸY\HX][ô»⁄[ô›»€€ú⁄\›[ù⁄]\»⁄Yù[ô»õ›]ò\›[ô»\‹XŸHYò][€ãôX€›ô\ûH‹àY\]X]Hõ›Z[ãâ N¬àBàYà
+
+õŸö[Kúô\]Z\ô[Y[ù»◊JKõ[ô›õŸö[Kõõ›\ H¬à[ô\Àú\⁄
+	’ëíUY\»ÿùö[›\»X]⁄\»õ‹àŸ[X›Y^€\⁄[€úÀù][›H]\››[⁄X⁄»Xô[ÀŸ\ùYöXÿ][€à[ô‹õ‹‹ÀX€€ù[Z[ò][€ãâ N¬àBàô]\õà[ô\Œ¬àBÇàù[ò›[€àY]\ûT⁄Yù€ÿX⁄YöXŸJ\JH¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àYà
+\õŸö[Kò€€\]Y
+Hô]\õà	–€€\]HY]\ûH[à	àYX[»[àH€ÿX⁄[ô»Xà€»õ€ŸYöXŸHÿ[àôYõX›[›\àô\]Z\ô[Y[ùÀâŒ¬àô]\õàY]\ûHõÿ›\Œà	ŸY]\ûT⁄Yùõÿ›\”[ô\ \KõŸö[JKöõ⁄[ä	»	 _X¬àBÇàù[ò›[€àY]\ûT⁄Yùõÿ›\“S
+\JH¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àYà
+\õŸö[Kò€€\]Y
+H¬àô]\õà]à€\‹œHòôÀ[‹ò[ôŸKMLõ‹ô\ãLàõ‹ô\ã[‹ò[ôŸKLåõ›[ôYVÃúô[WHMHèÇà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKMåèëY]\ûH[àôYYY‹Çà»€\‹œHôõ€ùXõX⁄»^[»]LHèî\ú€€ò[\ŸH\ŸH⁄YùYX[œ⁄œÇà€\‹œHù^^»^[‹ò[ôŸKNL]Làèê[ú›Ÿ\àH€ÿX⁄[ô»XàY]\ûH]Y\›[€ú»»Ÿ]ôYÿ[ãôYŸ]\öX[ãŸ]ŸŸ[öXÀò\›[ôÀÿ[‹öYKYYöX⁄][ôY]\ûK\ô\]Z\ô[Y[ùôYô\ô[òŸ\Àè‹Çàù]€à€ò€X⁄œHõ‹[ëY]\ûTõŸö[J
+Hà€\‹œHùÀYù[]L»ôÀ\€]KNL^]⁄]HL»õ›[ôY^õ€ùXõX⁄»^^»èê[ú›Ÿ\àY]\ûH]Y\›[€úœÿù]€èÇàŸ]èò¬àBà€€ú›[ô\»HY]\ûT⁄Yùõÿ›\”[ô\ \KõŸö[JN¬àô]\õà]à€\‹œHòôÀ\€]KNLõ‹ô\àõ‹ô\ã[‹ò[ôŸKML^]⁄]Hõ›[ôYVÃúô[WHMHèÇà]èÇà]à€\‹œHôõ^õ^]‹ò\ÿ\LKçHXãL»èâŸY]\ûTõŸö[PòYŸ\“S
+õŸö[J_OŸ]èÇà[€\‹œHú‹XŸK^KLàèâ€[ô\ÀõX\
+[ôHOàH€\‹œHôõ^][\À\›\ùÿ\Là^^»^\€]KLåèè‹[à€\‹œHù^[‹ò[ôŸKMõ€ùXõX⁄»è∏†(è‹‹[èè‹[èâŸ\ÿÿ\R[
+[ôJ_O‹‹[èè€Oò
+Köõ⁄[ä	… _O›[Çà	‹õŸö[Kõõ›\»»]à€\‹œHõ]L»ôÀ]⁄]KÃLõ‹ô\àõ‹ô\ã]⁄]KÃLL»õ›[ôY^èè€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKLÃèñ[›\à[ú›ùX›[€úœ‹è€\‹œHù^^»^\€]KLå]LHèâŸ\ÿÿ\R[
+õŸö[Kõõ›\ _O‹èŸ]èòà	…ﬂBàù]€à€ò€X⁄œHõ‹[ëY]\ûTõŸö[J
+Hà€\‹œHõ]L»^^»õ€ùXõX⁄»^[‹ò[ôŸKLÃ[ô\õ[ôHèï\]HY]\ûH[èÿù]€èÇàŸ]èÇàŸ]èò¬àBÇàù[ò›[€àô[ô\ëY]\ûTõŸö[T›[[X\ûJ
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\õŸö[K\›[[X\ûI N¬àYà
+Xõﬁ
+Hô]\õé¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àYà
+\õŸö[Kò€€\]Y
+H¬àõﬁö[õô\íSH]à€\‹œHòôÀ[‹ò[ôŸKMLõ‹ô\àõ‹ô\ã[‹ò[ôŸKLåMõ›[ôYLûèÇà€\‹œHôõ€ùXõX⁄»^\€H^[‹ò[ôŸKNLèî]Y\›[€ú»õ›€€\]YY]‹Çà€\‹œHù^^»^[‹ò[ôŸKN]LHèïHRH€ÿX⁄⁄[\⁄»€à[›\àô^€€ùô\úÿ][€ã‹à[›Hÿ[àö[[H[àõ›Àè‹ÇàŸ]èò¬àô]\õé¬àBà€€ú›ô\]Z\ô[Y[ù^H
+õŸö[Kúô\]Z\ô[Y[ù»◊JKõ[ô›à»õŸö[Kúô\]Z\ô[Y[ùÀõX\
+ò[YHOàQUTñW‘ëTURTëSQSï”PëS÷›ò[YWHò[YJKöõ⁄[ä	»0≠»	 Bàà	”õ»Ÿ[X›Y^€\⁄[€ú…Œ¬àõﬁö[õô\íSH]à€\‹œHòôÀ\€]KMLMõ›[ôYLûèÇà]à€\‹œHôõ^õ^]‹ò\ÿ\LKçHXãL»èâŸY]\ûTõŸö[PòYŸ\“S
+õŸö[J_OŸ]èÇà€\‹œHù^^»^\€]KMLèèèîô\]Z\ô[Y[ùŒèÿèà	Ÿ\ÿÿ\R[
+ô\]Z\ô[Y[ù^
+_O‹Çà	‹õŸö[Kõõ›\»»€\‹œHù^^»^\€]KML]Làèèèñ[›\à[ú›ùX›[€úŒèÿèà	Ÿ\ÿÿ\R[
+õŸö[Kõõ›\ _O‹òà	…ﬂBà€\‹œHù^VÃLH^\€]KM]L»èì\›\]Y	‹õŸö[Kù\]Y]»\ÿÿ\R[
+ô]»]JõŸö[Kù\]Y]
+Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–â JHà	›Ÿ^IﬂKè‹ÇàŸ]èò¬àBÇàù[ò›[€àô[ô\ëY]\ûT⁄Yù›[[X\ûJ
+H¬à€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ŸY]\ûK\⁄Yù\›[[X\ûI N¬àYà
+Xõﬁ
+Hô]\õé¬à€€ú›⁄YùHŸ]⁄Yùõ‹ë]Jÿÿ[]RŸ^J
+JN¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬à€€ú›Xô[HZP€ÿX⁄⁄YùXô[
+⁄Yù
+N¬à€€ú›[ô\»HY]\ûT⁄Yùõÿ›\”[ô\ ⁄Yùù\KõŸö[JN¬àõﬁö[õô\íSH]à€\‹œHòôÀ\€]KMLõ‹ô\àõ‹ô\ã\€]KLåMõ›[ôYLûèÇà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKMåèâŸ\ÿÿ\R[
+Xô[
+_O‹Çà€\‹œHôõ€ùXõX⁄»^\€H]LHèâ‹õŸö[Kò€€\]Y»\ÿÿ\R[
+Y]\ûT]\õìXô[
+õŸö[Kú]\õäJHà	–€€\]H[›\àY]\ûH]Y\›[€ú…ﬂO‹Çà€\‹œHù^^»^\€]KML]LàèâŸ\ÿÿ\R[
+[ô\÷ÃJ_O‹Çà	‹õŸö[Kò€€\]Y»€\‹œHù^^»^\€]KML]LàèâŸ\ÿÿ\R[
+[ô\Àú€XŸJJKöõ⁄[ä	»	 J_O‹òà	…ﬂBàŸ]èò¬àBÇàù[ò›[€à‹[ëY]\ûSYX[ 
+H¬à›⁄]⁄Xä	€ù]ö][€â N¬àŸ]ù]ö][€ïXä	‹⁄Yù	 N¬àŸ][Y[›]
+
+
+HOà¬à€€ú›\ôŸ]Hÿ›[Y[ùú]Y\ûTŸ[X›‹ä	÷Ÿ]K\⁄Yù[YX[ZYX\◊I N¬àYà
+\ôŸ]	âà\ôŸ]úÿ‹õ€[ù’öY] H\ôŸ]úÿ‹õ€[ù’öY] »ôZ]ö[‹éà	‹€[€›	Àõÿ⁄Œà	‹›\ù	»JN¬àK
+N¬àBÇÇàÀ»XX⁄⁄YùŸY\»]»‹öY⁄[ò[õ›\ãX⁄⁄XŸHò[[òŸYõ›][€ãàHY]\ûBàÀ»^Y\àô[›»Y»[õ›\à€€\]XõH‹[€à‹à›ÿ\»[àHö]ôK\ôX⁄\BàÀ»ôYÿ[ãôYŸ]\öX[à‹àŸ]ŸŸ[öX»Xúò\ûH⁄]›]Z^[ô»⁄Yùò\ŸH\›ÀÇà€€ú›“Qï”QPS“QPT»HÿöôX›ôúôY^ôJ¬àöY⁄àÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬à»Yà	€öY⁄XúôXZŸò\›[ÿ]…Àò[YNà	‘õ›Z[à›ô\õöY⁄ÿ]»⁄]ô\úöY\…Àÿ[‹öY\ŒàKõ›Z[éàÕãÿ\òúŒàNò]àLãöXô\éàKõ›Nà	”ÿ]À‹ôYZ»[Ÿ›\ù⁄^H[ôô\úöY\»ô\\ôYZXY\»€ôHö[[ô»YX[Yù\àÿZ⁄[ôÀâ»Kà»Yà	€öY⁄XúôXZŸò\›^[Ÿ›\ùXõ›€	Àò[YNà	—‹ôYZ»[Ÿ›\ùò[ò[òH[ô‹ò[õ€Hõ›€	Àÿ[‹öY\ŒàMKõ›Z[éàÕÿ\òúŒàMÀò]àLöXô\éàÀõ›Nà	–H]ZX⁄»õÀX€€⁄»ö\ú›YX[⁄]úùZ]⁄€Y‹òZ[àÿ\òõ⁄Yò]H[ôH€X\àõ›Z[àŸ\ùö[ôÀâ»Kà»Yà	€öY⁄XúôXZŸò\›YYŸ‹ÀXôX[ú…Àò[YNà	—YŸ‹ÀôX[ú»[ô⁄€Y‹òZ[àÿ\›	Àÿ[‹öY\ŒàLLõ›Z[éàÃãÿ\òúŒàNò]àMÀöXô\éàLÀõ›Nà	–H›YX[Yù\àÿZ⁄[ô»]€€Xö[ô\»õ›Z[à[ôY⁄YöXúôHÿ\òõ⁄Yò]HôYõ‹ôHH⁄Yùâ»Kà»Yà	€öY⁄XúôXZŸò\›\€[€›YIÀò[YNà	‘õ›Z[àô\úûH€[€›YH⁄]ÿ]…Àÿ[‹öY\ŒàÃõ›Z[éàŒÿ\òúŒàMKò]àLKöXô\éàLõ›Nà	”Z[À⁄^Kô\úöY\Àÿ]»[ôH€X[‹€€àŸàX[ù]ù]\àõ[ôYõ‹àù\ﬁHöY⁄Àâ»BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬à»Yà	€öY⁄[[ò⁄X⁄X⁄Ÿ[ã\öXŸIÀò[YNà	–⁄X⁄Ÿ[ãúõ›€àöXŸH[ôõÿ\›YôY»õ›€	Àÿ[‹öY\ŒàåLõ›Z[éàÿ\òúŒàçÀò]àMãöXô\éàKõ›Nà	–Hö[[ô»ôK\⁄YùYX[\ô\õ›€⁄]õ›Z[ãôYŸ]Xõ\»[ô€›À\ô[X\ŸHÿ\òõ⁄Yò]Kâ»Kà»Yà	€öY⁄[[ò⁄\ÿ[[€ã\›]…Àò[YNà	‘ÿ[[€ãòXûH›]Ÿ\»[ô‹ôY[àôYŸ]Xõ\…Àÿ[‹öY\ŒàåçKõ›Z[éàÀÿ\òúŒàNKò]àåÀöXô\éàLõ›Nà	–H›Xú›[ùX[[ò⁄‹àYX[\õ›[ô€»›\ú»ôYõ‹ôH€‹öÀ⁄]⁄[Hö\⁄[ôôYŸ]Xõ\Àâ»Kà»Yà	€öY⁄[[ò⁄]\öŸ^KX⁄[IÀò[YNà	’\öŸ^H[ôôX[à⁄[H⁄]öXŸIÀÿ[‹öY\Œàçõ›Z[éàKÿ\òúŒàÃãò]àMÀöXô\éàMõ›Nà	–Hò]⁄X€€⁄»‹[€à⁄]X[àõ›Z[à[ôöXúôH»[€€ùõ€[ôŸ\à]\à[àH⁄Yùâ»Kà»Yà	€öY⁄[[ò⁄]ŸùK[õ€Ÿ\…Àò[YNà	’ŸùH[ôY[X[YHõ€ŸH›\ãYúûIÀÿ[‹öY\ŒàNLõ›Z[éàÕãÿ\òúŒàéò]àåöXô\éàLãõ›Nà	–H[ùXò\ŸYôK\⁄YùYX[⁄]ôYŸ]Xõ\À€ﬁHõ›Z[à[ô[Ÿ\ò]Hÿ\òõ⁄Yò]Kâ»BàJKà[õô\éàÿöôX›ôúôY^ôJ¬à»Yà	€öY⁄Y[õô\ã]\öŸ^K]‹ò\	Àò[YNà	’\öŸ^K[[]\»[ôÿ[Y⁄€Y‹òZ[à‹ò\	Àÿ[‹öY\ŒàçKõ›Z[éàŒKÿ\òúŒàò]àLÀöXô\éàõ›Nà	–HY⁄\ã‹ùXõH[õô\àõ‹àX\õH[àH⁄Yù⁄[àH\ôŸHYX[€›[ôY[€»X]ûKâ»Kà»Yà	€öY⁄Y[õô\ã][òKX€›\ÿ€›\…Àò[YNà	’[òH[ôôYŸ]XõH€›\ÿ€›\»›	Àÿ[‹öY\ŒàLõ›Z[éàŒÿ\òúŒàLãò]àLöXô\éàõ›Nà	—X\ﬁH»X⁄»[ôX]€€⁄][õ›Y⁄õ›Z[àõ‹àHXZ[àúôXZ»⁄]›]HX]ûH‹ù[€ãâ»Kà»Yà	€öY⁄Y[õô\ãX⁄X⁄Ÿ[ã\€›\	Àò[YNà	–⁄X⁄Ÿ[à[ôôYŸ]XõH€›\⁄]H⁄€Y‹òZ[àõ€	Àÿ[‹öY\ŒàÃõ›Z[éàÕãÿ\òúŒàKò]àLöXô\éàKõ›Nà	–Hÿ\õHù]Y⁄\àX\õK\⁄YùYX[]\»òX›Xÿ[»ò]⁄X€€⁄»[ôôZX]â»Kà»Yà	€öY⁄Y[õô\ãZòX⁄Ÿ]\›]…Àò[YNà	–€›YŸH⁄Y\ŸHòX⁄Ÿ]›]»⁄]ÿ[Y	Àÿ[‹öY\ŒàÕKõ›Z[éàÃãÿ\òúŒàçãò]àKöXô\éàLõ›Nà	–H⁄[\HX\õK\⁄Yù[õô\à⁄]HY⁄\õ›Z[à‹[ô»[ô[ùHŸàöXúôKâ»BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬à»Yà	€öY⁄\€òX⁄À^[Ÿ›\ù	Àò[YNà	—‹ôYZ»[Ÿ›\ùô\úöY\»[ô[[€ô…Àÿ[‹öY\ŒàçÕKõ›Z[éàçÿ\òúŒàåãò]àLöXô\éàKõ›Nà	–Hõ›Z[ãYõ‹ùÿ\ô‹[€à]\»X\ﬁH»‹ù[€à[ôÿ\úûHõ‹àHZY\⁄YùúôXZÀâ»Kà»Yà	€öY⁄\€òX⁄À\⁄ZŸKXò[ò[òIÀò[YNà	‘õ›Z[à⁄ZŸH⁄]Hò[ò[òIÀÿ[‹öY\Œàçåõ›Z[éàéÿ\òúŒàÃãò]àÀöXô\éàõ›Nà	–H]ZX⁄»òX⁄›\õ‹à[úôYX›XõHúôXZ‹À€€Xö[ö[ô»õ›Z[à⁄][àX\ﬁK]ÀXÿ\úûHúùZ]â»Kà»Yà	€öY⁄\€òX⁄ÀX€›YŸK[ÿ]ÿZŸ\…Àò[YNà	–€›YŸH⁄Y\ŸH⁄]ÿ]ÿZŸ\…Àÿ[‹öY\ŒàéLõ›Z[éàçãÿ\òúŒàéKò]àöXô\éàKõ›Nà	–Hÿ]õ›\ûH€òX⁄»⁄]€›ÀYYŸ\›[ô»õ›Z[à]ÿ[àô\XŸHô[ô[ôÀ[XX⁄[ôHõ€Ÿâ»Kà»Yà	€öY⁄\€òX⁄ÀYYŸ‹ÀYúùZ]	Àò[YNà	’€»õ⁄[YYŸ‹»⁄][à\IÀÿ[‹öY\ŒàçLõ›Z[éàMKÿ\òúŒàçÀò]àLöXô\éàKõ›Nà	‘ô\\ôYZXYõ‹àH€X[\àY\[öY⁄€òX⁄»⁄[àŸ[ùZ[ô[H[ô‹ûKâ»BàJBàJKàX\õNàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬à»Yà	ŸX\õKXúôXZŸò\›]‹ò\	Àò[YNà	—YŸÀ\öŸ^H[ô‹[òX⁄úôXZŸò\›‹ò\	Àÿ[‹öY\ŒàÕKõ›Z[éàÕKÿ\òúŒàãò]àMöXô\éàãõ›Nà	–H‹ùXõH›‹à€€úôXZŸò\›]ÿ[àôHô\\ôYHöY⁄ôYõ‹ôKâ»Kà»Yà	ŸX\õKXúôXZŸò\›\‹úöYŸIÀò[YNà	‘õ›Z[à‹úöYŸH⁄]ò[ò[òIÀÿ[‹öY\ŒàKõ›Z[éàÕÿ\òúŒàMÀò]àLöXô\éàKõ›Nà	”ZX‹õ›ÿ]ôH‹à›ô\õöY⁄ÿ]»XZŸH\»òX›Xÿ[ôYõ‹ôH[àX\õH›\ùâ»Kà»Yà	ŸX\õKXúôXZŸò\›^[Ÿ›\ù\›	Àò[YNà	—‹ôYZ»[Ÿ›\ù›ô\õöY⁄[ÿ]»›	Àÿ[‹öY\Œàåõ›Z[éàÃãÿ\òúŒàLãò]àKöXô\éàõ›Nà	‘ô\\ôH]ôYõ‹ôHôY€»úôXZŸò\›Ÿ\»õ›ôYXŸH[à[ôXYK\⁄‹ù€Y\⁄[ô›Àâ»Kà»Yà	ŸX\õKXúôXZŸò\›\ÿ[ô⁄X⁄	Àò[YNà	—YŸ»[ôX[à[H⁄€[YX[ÿ[ô⁄X⁄	Àÿ[‹öY\ŒàLõ›Z[éàÃKÿ\òúŒàÀò]àLÀöXô\éàÀõ›Nà	–H‹ùXõHúôXZŸò\›õ‹à[‹õö[ô‹»⁄[à\ôH\»õ»[YH»⁄]›€àôYõ‹ôHX]ö[ôÀâ»BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬à»Yà	ŸX\õK[[ò⁄\\›IÀò[YNà	–⁄X⁄Ÿ[à\›»\›Hÿ[Y	Àÿ[‹öY\ŒàMÕKõ›Z[éàKÿ\òúŒàåãò]àMãöXô\éàÀõ›Nà	—X\ﬁH»X⁄»[ôX]€€⁄[àH€‹ö»úôXZ»\»⁄‹ù‹à[úôYX›XõKâ»Kà»Yà	ŸX\õK[[ò⁄][òK\öXŸIÀò[YNà	’[òK›ŸY]€‹õà[ôöXŸH›	Àÿ[‹öY\ŒàLÕKõ›Z[éàÿ\òúŒàçKò]àLãöXô\éàÀõ›Nà	–H‹ùXõHò[[òŸY[ò⁄]ÿ[àôHò]⁄\ô\\ôYõ‹àŸ]ô\ò[X\õH⁄YùÀâ»Kà»Yà	ŸX\õK[[ò⁄]\öŸ^K]‹ò\	Àò[YNà	’\öŸ^Hÿ[Y‹ò\⁄]úùZ]	Àÿ[‹öY\ŒàLKõ›Z[éàŒKÿ\òúŒàNKò]àLãöXô\éàKõ›Nà	‘]ZX⁄»»X]€àH⁄‹ùúôXZ»⁄[H›[õ›öY[ô»õ›Z[ãÿ\òõ⁄Yò]H[ôöXúôKâ»Kà»Yà	ŸX\õK[[ò⁄X⁄X⁄Ÿ[ã\€›\	Àò[YNà	–⁄X⁄Ÿ[à[ô[ù[€›\⁄]⁄€Y‹òZ[àúôXY	Àÿ[‹öY\ŒàMLõ›Z[éàÀÿ\òúŒàçò]àLÀöXô\éàMõ›Nà	–Hö[[ô»ôZX]XõH[ò⁄⁄]X[àõ›Z[à[ôY⁄YöXúôH[Ÿ\Àâ»BàJKà[õô\éàÿöôX›ôúôY^ôJ¬à»Yà	ŸX\õKY[õô\ã\›\ôúûIÀò[YNà	”X[àôYYàôYŸ]XõH›\ãYúûH⁄]öXŸIÀÿ[‹öY\ŒàåÃõ›Z[éàãÿ\òúŒàÃò]àNöXô\éàKõ›Nà	–H›Xú›[ùX[ôX€›ô\ûHYX[⁄]X[àõ›Z[à[ôôYŸ]Xõ\»€€€àYù\à€‹öÀâ»Kà»Yà	ŸX\õKY[õô\ã\ÿ[[€âÀò[YNà	–òZŸYÿ[[€ã›]Ÿ\»[ôúõÿÿ€€IÀÿ[‹öY\ŒàåLõ›Z[éàÿ\òúŒàMãò]àåÀöXô\éàLõ›Nà	–Hò[[òŸYXZ[àYX[X\õH[õ›Y⁄»õ›X›HX\õY\àôY[YHôYYYõ‹àHô^⁄Yùâ»Kà»Yà	ŸX\õKY[õô\ãYòZö]IÀò[YNà	–⁄X⁄Ÿ[àòZö]HöXŸHõ›€	Àÿ[‹öY\Œàååõ›Z[éàKÿ\òúŒàéKò]àMÀöXô\éàLKõ›Nà	–⁄X⁄Ÿ[ã\\úÀôX[ú»[ôöXŸHXZŸHH€€›\ôù[‹›\⁄YùôX€›ô\ûHYX[â»Kà»Yà	ŸX\õKY[õô\ã]\öŸ^K\\›IÀò[YNà	’\öŸ^H€X]»\›H⁄]ôYŸ]Xõ\…Àÿ[‹öY\Œàåõ›Z[éàÀÿ\òúŒàÃãò]àLÀöXô\éàLãõ›Nà	–Hò[Z[KYúöY[ôHò]⁄YX[]⁄]ô\»õ›Z[à[ôÿ\òõ⁄Yò]H⁄]›]Hô\ûH]H[õô\ãâ»BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬à»Yà	ŸX\õK\€òX⁄ÀXò[ò[òK^[Ÿ›\ù	Àò[YNà	“Y⁄\õ›Z[à[Ÿ›\ù⁄]ò[ò[òIÀÿ[‹öY\ŒàççKõ›Z[éàçÿ\òúŒàÕKò]àÀöXô\éàõ›Nà	‘]ZX⁄»ÿ\òõ⁄Yò]H[ôõ›Z[àõ‹àH⁄‹ù[‹õö[ô»úôXZÀâ»Kà»Yà	ŸX\õK\€òX⁄ÀYYŸ‹À[ÿ]ÿZŸ\…Àò[YNà	–õ⁄[YYŸ‹»⁄]ÿ]ÿZŸ\…Àÿ[‹öY\ŒàçÃõ›Z[éàNÿ\òúŒàåÀò]àLãöXô\éàõ›Nà	–Hÿ]õ›\ûH‹[€à]ÿ[àôHX⁄ŸYHô]ö[›\»]ô[ö[ô»[ôX][à⁄]›]ôZX][ôÀâ»Kà»Yà	ŸX\õK\€òX⁄ÀX€›YŸKYúùZ]	Àò[YNà	–€›YŸH⁄Y\ŸH⁄]ô\úöY\…Àÿ[‹öY\ŒàåÕKõ›Z[éàçKÿ\òúŒàåKò]àãöXô\éàKõ›Nà	–HY⁄\àõ›Z[ã\öX⁄€òX⁄»õ‹àH[‹õö[ô»‹àHõ›\õô^H€YKâ»Kà»Yà	ŸX\õK\€òX⁄À\⁄ZŸKX\IÀò[YNà	‘õ›Z[à⁄ZŸH⁄][à\IÀÿ[‹öY\ŒàçLõ›Z[éàçÀÿ\òúŒàÃKò]àãöXô\éàKõ›Nà	–Hò\›‹[€à»ŸY\[àô\Ÿ\ùôH⁄[à[àX\õH⁄Yù[^\»H[õôYúôXZÀâ»BàJBàJKà^NàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬à»Yà	Ÿ^KXúôXZŸò\›\‹úöYŸIÀò[YNà	‘õ›Z[à‹úöYŸH⁄]ò[ò[òH[ô⁄[õò[[€âÀÿ[‹öY\ŒàLõ›Z[éàÃÀÿ\òúŒàMKò]àLKöXô\éàKõ›Nà	‘€›À\ô[X\ŸHÿ\òõ⁄Yò]H⁄]H€X\àõ›Z[àŸ\ùö[ô»õ‹à›XYY\à[ô\ôﬁKâ»Kà»Yà	Ÿ^KXúôXZŸò\›YYŸ‹À]ÿ\›	Àò[YNà	‘ÿ‹ò[XõYYŸ‹À€X]Ÿ\»[ô⁄€Y‹òZ[àÿ\›	Àÿ[‹öY\ŒàÃõ›Z[éàÃÿ\òúŒàKò]àMÀöXô\éàõ›Nà	–Hò[[òŸY€€⁄ŸYúôXZŸò\›ôYõ‹ôHH⁄Yù⁄]õ›Z[ãôYŸ]Xõ\»[ô⁄€Y‹òZ[úÀâ»Kà»Yà	Ÿ^KXúôXZŸò\›^[Ÿ›\ù[]Y\€IÀò[YNà	—‹ôYZ»[Ÿ›\ù]Y\€H[ôô\úöY\…Àÿ[‹öY\ŒàçKõ›Z[éàÃKÿ\òúŒàLÀò]àLöXô\éàKõ›Nà	–H]ZX⁄»õÀX€€⁄»úôXZŸò\›]\»X\ﬁH»ÿÿ[H\õ›[ôH^x†&\»ÿ[‹öYH\ôŸ]â»Kà»Yà	Ÿ^KXúôXZŸò\›XòYŸ[	Àò[YNà	—YŸ»[ô€[⁄ŸYÿ[[€à⁄€[YX[òYŸ[	Àÿ[‹öY\ŒàÕKõ›Z[éàÕÿ\òúŒàKò]àMãöXô\éàÀõ›Nà	–HY⁄\ã\õ›Z[à‹ùXõHúôXZŸò\›õ‹àHù\ﬁH^H⁄Yùâ»BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬à»Yà	Ÿ^K[[ò⁄][òK\›]…Àò[YNà	’[òHòX⁄Ÿ]›]»⁄]Z^Yÿ[Y	Àÿ[‹öY\ŒàLÃõ›Z[éàÿ\òúŒàçKò]àLãöXô\éàLõ›Nà	–HòX›Xÿ[XZ[àYX[]\»ö[[ô»⁄]›]ôZ[ô»YôöX›[»ô\\ôKâ»Kà»Yà	Ÿ^K[[ò⁄X⁄X⁄Ÿ[ã\]Z[õÿIÀò[YNà	–⁄X⁄Ÿ[à[ô]Z[õÿHòZ[òõ›»ÿ[Y	Àÿ[‹öY\ŒàMLõ›Z[éàÀÿ\òúŒàMò]àMãöXô\éàLKõ›Nà	“Y⁄[àõ›Z[à[ôôYŸ]Xõ\À[ô›Z]XõHõ‹àô\\ö[ô»Ÿ]ô\ò[‹ù[€úÀâ»Kà»Yà	Ÿ^K[[ò⁄Xù\úö]ÀXõ›€	Àò[YNà	”X[àôYYà[ôôX[àù\úö]»õ›€	Àÿ[‹öY\ŒàåçKõ›Z[éàKÿ\òúŒàÃãò]àNöXô\éàMKõ›Nà	–Hö[[ô»€‹öÀXúôXZ»YX[⁄]X[àõ›Z[ãôX[úÀöXŸH[ô€€›\ôù[ôYŸ]Xõ\Àâ»Kà»Yà	Ÿ^K[[ò⁄Yò[Yô[X⁄X⁄Ÿ[âÀò[YNà	–⁄X⁄Ÿ[à[ôò[Yô[⁄€Y‹òZ[à]IÀÿ[‹öY\ŒàMçKõ›Z[éàÀÿ\òúŒàåKò]àMÀöXô\éàLãõ›Nà	–H‹ùXõH]H⁄]ÿ[Y[ô[Ÿ›\ùô\‹⁄[ô»õ‹àH[ò⁄]ÿ^Húõ€HHZX‹õ›ÿ]ôKâ»BàJKà[õô\éàÿöôX›ôúôY^ôJ¬à»Yà	Ÿ^KY[õô\ãX⁄[IÀò[YNà	’\öŸ^H[ôôX[à⁄[H⁄]öXŸIÀÿ[‹öY\ŒàçLõ›Z[éàLÿ\òúŒàÃãò]àNöXô\éàLÀõ›Nà	–Hò]⁄X€€⁄»[õô\à⁄]õ›Z[ãôYŸ]Xõ\»[ôY⁄YöXúôHÿ\òõ⁄Yò]Kâ»Kà»Yà	Ÿ^KY[õô\ãX€Ÿ	Àò[YNà	–òZŸY€Ÿ›ŸY]›]»[ô‹ôY[ú…Àÿ[‹öY\ŒàNKõ›Z[éàÿ\òúŒàåãò]àMãöXô\éàLãõ›Nà	–Hò[[òŸY[õô\à⁄]X[àõ›Z[ã€€›\ôù[ôYŸ]Xõ\»[ôÿ\òõ⁄Yò]Kâ»Kà»Yà	Ÿ^KY[õô\ãX›\úûIÀò[YNà	–⁄X⁄Ÿ[à[ôôYŸ]XõH›\úûH⁄]ò\€X]HöXŸIÀÿ[‹öY\ŒàåÕKõ›Z[éàÿ\òúŒàÃÀò]àMÀöXô\éàLKõ›Nà	–Hò]⁄YúöY[ôH]ô[ö[ô»YX[]ÿ[àôH‹ù[€ôY»H›\úô[ùÿ[‹öYH€ÿ[â»Kà»Yà	Ÿ^KY[õô\ãXõ€Ÿ€ô\ŸIÀò[YNà	”X[àôYYàõ€Ÿ€ô\ŸH⁄]⁄€]⁄X]\›IÀÿ[‹öY\Œàçõ›Z[éàãÿ\òúŒàÕãò]àMÀöXô\éàLÀõ›Nà	–Hò[Z[X\àY⁄\õ›Z[à[õô\à⁄]^òHôYŸ]Xõ\»[ô⁄€]⁄X]\›Kâ»BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬à»Yà	Ÿ^K\€òX⁄ÀX€›YŸKX⁄Y\ŸIÀò[YNà	–€›YŸH⁄Y\ŸK\H[ôÿ]ÿZŸ\…Àÿ[‹öY\ŒàéKõ›Z[éàçKÿ\òúŒàéò]àöXô\éàKõ›Nà	–H‹ùXõH€òX⁄»]Y»õ›Z[à⁄]›]ô[Z[ô»€à›ŸY]»‹à\›öY\Àâ»Kà»Yà	Ÿ^K\€òX⁄À^[Ÿ›\ù	Àò[YNà	“Y⁄\õ›Z[à[Ÿ›\ù⁄]ô\úöY\…Àÿ[‹öY\Œàååõ›Z[éàçÿ\òúŒàçò]àÀöXô\éàKõ›Nà	–H⁄[\H⁄[Y€òX⁄»õ‹àHÿ\ô]ŸY[à[ò⁄[ôH[ôŸàH⁄Yùâ»Kà»Yà	Ÿ^K\€òX⁄ÀZ[[]\…Àò[YNà	“[[]\ÀôYŸ]XõH›X⁄‹»[ô\öŸ^H€XŸ\…Àÿ[‹öY\Œàéõ›Z[éàåãÿ\òúŒàçò]àLKöXô\éàÀõ›Nà	–Hÿ]õ›\ûH€òX⁄»⁄]‹ù[ò⁄öXúôH[ôH›õ€ôŸ\àõ›Z[à€€ùöXù][€ãâ»Kà»Yà	Ÿ^K\€òX⁄À\⁄ZŸIÀò[YNà	‘õ›Z[à⁄ZŸH⁄]H€X[ò[ò[òIÀÿ[‹öY\ŒàçKõ›Z[éàçÀÿ\òúŒàÃò]àãöXô\éàõ›Nà	–H€€ùô[öY[ù‹[€àõ‹àHù\ﬁHYù\õõ€€à‹àôYõ‹ôHòZ[ö[ô»Yù\à€‹öÀâ»BàJBàJKàŸôéàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬à»Yà	€ŸôãXúôXZŸò\›YYŸ‹…Àò[YNà	—YŸ‹À]õÿÿY»[ô⁄€Y‹òZ[àÿ\›	Àÿ[‹öY\Œàõ›Z[éàÃÿ\òúŒàKò]àåöXô\éàLõ›Nà	–Hò[[òŸY€€⁄ŸYúôXZŸò\›⁄]õ›Z[ãöXúôH[ôÿ]\ŸûZ[ô»ò]Àâ»Kà»Yà	€ŸôãXúôXZŸò\›\[òÿZŸ\…Àò[YNà	‘õ›Z[à[òÿZŸ\»⁄][Ÿ›\ù[ôô\úöY\…Àÿ[‹öY\ŒàçKõ›Z[éàÕÀÿ\òúŒàMKò]àLKöXô\éàõ›Nà	–H€›Ÿ\àŸôãY^HúôXZŸò\›]›[õ›öY\»H€X\àõ›Z[àŸ\ùö[ôÀâ»Kà»Yà	€ŸôãXúôXZŸò\›[ÿ]…Àò[YNà	–\KX⁄[õò[[€àõ›Z[àÿ]…Àÿ[‹öY\ŒàKõ›Z[éàÃÀÿ\òúŒàNò]àKöXô\éàLKõ›Nà	–HY⁄YöXúôHúôXZŸò\›»[ô]\õàYX[[Z[ô»»H^][YKâ»Kà»Yà	€ŸôãXúôXZŸò\›\⁄Z‹⁄ZÿIÀò[YNà	‘⁄Z‹⁄ZÿH⁄]⁄€Y‹òZ[àÿ\›	Àÿ[‹öY\ŒàÃõ›Z[éàéKÿ\òúŒàLò]àNöXô\éàLãõ›Nà	—YŸ‹À€X]Ÿ\À\\ú»[ôÿ\›XZŸHHôYŸ]XõK\öX⁄ŸôãY^HYX[â»BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬à»Yà	€Ÿôã[[ò⁄\]Z[õÿIÀò[YNà	–⁄X⁄Ÿ[à[ô]Z[õÿHòZ[òõ›»ÿ[Y	Àÿ[‹öY\ŒàMLõ›Z[éàÀÿ\òúŒàMò]àMãöXô\éàLKõ›Nà	“Y⁄[àõ›Z[à[ôôYŸ]Xõ\À[ô›Z]XõHõ‹àô\\ö[ô»Ÿ]ô\ò[‹ù[€úÀâ»Kà»Yà	€Ÿôã[[ò⁄[€Y[]IÀò[YNà	–⁄X⁄Ÿ[à[ôôYŸ]XõH€Y[]H⁄]›]Ÿ\…Àÿ[‹öY\ŒàMÃõ›Z[éàKÿ\òúŒàKò]àåKöXô\éàKõ›Nà	–H›Xú›[ùX[^][YHYX[]€‹ö‹»Ÿ[ôYõ‹ôH[àŸôãY^HòZ[ö[ô»Ÿ\‹⁄[€ãâ»Kà»Yà	€Ÿôã[[ò⁄\ÿ[[€ã\]IÀò[YNà	‘ÿ[[€à[ôÿ[Y⁄€Y‹òZ[à]IÀÿ[‹öY\ŒàMõ›Z[éàŒKÿ\òúŒàLKò]àNKöXô\éàKõ›Nà	–H]ZX⁄»[ò⁄⁄]⁄[Hö\⁄ÿ[Y[ôH⁄€Y‹òZ[àÿ\òõ⁄Yò]H€›\òŸKâ»Kà»Yà	€Ÿôã[[ò⁄[[ù[Xõ›€	Àò[YNà	”[ù[⁄X⁄Ÿ[à[ôõÿ\›YôYŸ]XõHõ›€	Àÿ[‹öY\ŒàNKõ›Z[éàãÿ\òúŒàåÀò]àMãöXô\éàMÀõ›Nà	–HY⁄YöXúôHYX[\ô\õ›€õ‹à^][YHX][ô»€àHô\›^Kâ»BàJKà[õô\éàÿöôX›ôúôY^ôJ¬à»Yà	€ŸôãY[õô\ãX€Ÿ	Àò[YNà	–òZŸY€Ÿ›ŸY]›]»[ô‹ôY[ú…Àÿ[‹öY\ŒàNKõ›Z[éàÿ\òúŒàåãò]àMãöXô\éàLãõ›Nà	–Hò[[òŸY[õô\à⁄]X[àõ›Z[ã€€›\ôù[ôYŸ]Xõ\»[ôÿ\òõ⁄Yò]Kâ»Kà»Yà	€ŸôãY[õô\ã\õÿ\›X⁄X⁄Ÿ[âÀò[YNà	‘õÿ\›⁄X⁄Ÿ[ã›]Ÿ\»[ôôYŸ]Xõ\…Àÿ[‹öY\Œàçõ›Z[éàLãÿ\òúŒàçKò]àNKöXô\éàLKõ›Nà	–Hò[[òŸYò[Z[HYX[]ÿ[à[€»õ›öYHô\\ôY‹ù[€ú»õ‹à\€€Z[ô»⁄YùÀâ»Kà»Yà	€ŸôãY[õô\ãXôYYã\›]…Àò[YNà	”X[àôYYà[ôôYŸ]XõH›]…Àÿ[‹öY\ŒàNLõ›Z[éàÀÿ\òúŒàNò]àNöXô\éàLÀõ›Nà	–Hò]⁄X€€⁄»[õô\à⁄]õ›Z[ãõ€›ôYŸ]Xõ\»[ôôX[úÀâ»Kà»Yà	€ŸôãY[õô\ã]ŸùKX›\úûIÀò[YNà	’ŸùH[ô⁄X⁄‹XH›\úûH⁄]öXŸIÀÿ[‹öY\Œàååõ›Z[éàÃãÿ\òúŒàŒò]àåöXô\éàMãõ›Nà	–H[ùXò\ŸY[õô\à⁄]ŸùK[Ÿ\»[ôôYŸ]Xõ\»õ‹àõ›Z[à[ôöXúôKâ»BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬à»Yà	€Ÿôã\€òX⁄À\€[€›YIÀò[YNà	‘õ›Z[àô\úûH€[€›YH⁄]ÿ]…Àÿ[‹öY\ŒàÃåõ›Z[éàÃÿ\òúŒàÕãò]àãöXô\éàõ›Nà	”Z[»‹àHõ‹ùYöYY[\õò]]ôKõ›Z[ãô\úöY\»[ôÿ]»õ[ôYŸŸ]\ãâ»Kà»Yà	€Ÿôã\€òX⁄À^[Ÿ›\ù[ù]…Àò[YNà	—‹ôYZ»[Ÿ›\ù⁄]úùZ][ôÿ[ù]…Àÿ[‹öY\ŒàéKõ›Z[éàçÿ\òúŒàçKò]àLKöXô\éàKõ›Nà	–Hö[[ô»€òX⁄»]€€Xö[ô\»õ›Z[ãúùZ][ôHYX\›\ôY‹ù[€àŸàù]Àâ»Kà»Yà	€Ÿôã\€òX⁄À][òK[ÿ]ÿZŸ\…Àò[YNà	’[òH[ô›X›[Xô\àÿ]ÿZŸ\…Àÿ[‹öY\ŒàççKõ›Z[éàçKÿ\òúŒàçò]àöXô\éàKõ›Nà	–Hÿ]õ›\ûHY⁄\õ›Z[à‹[€àõ‹à[àYù\õõ€€àúôXZÀâ»Kà»Yà	€Ÿôã\€òX⁄ÀX⁄ÿ€€]K^[Ÿ›\ù	Àò[YNà	–⁄ÿ€€]Hõ›Z[à[Ÿ›\ù›	Àÿ[‹öY\ŒàçLõ›Z[éàçÀÿ\òúŒàéò]àöXô\éàõ›Nà	—‹ôYZ»[Ÿ›\ù€ÿ€ÿKô\úöY\»[ôH]H‹ò[õ€Hõ‹àH›ŸY]\à[õôY‹[€ãâ»BàJBàJBàJN¬Çàù[ò›[€àY]\ûSYX[
+Yò[YKÿ[‹öY\Àõ›Z[ãÿ\òúÀò]öXô\ãõ›K[ô‹ôYY[ùÀ⁄[ô[\ôŸ[ú H¬àô]\õàÿöôX›ôúôY^ôJ¬àYò[YKÿ[‹öY\Àõ›Z[ãÿ\òúÀò]öXô\ãõ›Kà[ô‹ôYY[ùŒà›ö[ô [ô‹ôYY[ù»	… Kú‹]
+	ﬂ	 Kôö[\äõ€€X[äKà⁄[ôà⁄[ô	ÿõ›€	Àà[\ôŸ[úŒà›ö[ô [\ôŸ[ú»	… Kú‹]
+	ﬂ	 Kôö[\äõ€€X[äBàJN¬àBÇà€€ú›QUTñW”QPS“QPT»HÿöôX›ôúôY^ôJ¬àôYÿ[éàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYÿ[ãXúôXZŸò\›[›ô\õöY⁄[ÿ]…À	’ôYÿ[àõ›Z[à›ô\õöY⁄ÿ]»⁄]ô\úöY\…ÀMKÃãNKLLã	‘ô\\ôHôYõ‹ôH€Y\õ‹àHôXYK]ÀYX]ö\ú›YX[Yù\àÿZ⁄[ôÀâÀ	Õå»õ€Yÿ]ﬂçL[õ‹ùYöYY€ﬁHZ[ﬂÃ»XHõ›Z[üL»Z^Yô\úöY\ﬂL»⁄XHŸYY…À	€›ô\õöY⁄	À	‹€ﬁ_€][â KàY]\ûSYX[
+	›ôYÿ[ãXúôXZŸò\›]ŸùK]‹ò\	À	’ŸùHÿ‹ò[XõH[ô‹[òX⁄úôXZŸò\›‹ò\	ÀÃKÀMãK	‘‹ùXõH[ùõ›Z[àõ‹à[àX\õH›\ù‹àHö\ú›YX[Yù\àÿZ⁄[ôÀâÀ	ÃN»ö\õHŸù_H⁄€Y‹òZ[à‹ò\à[ôù[»‹[òX⁄H⁄‹Y€X]ﬂ\õY\öXÀ\\à[ôH‹⁄[	À	›‹ò\	À	‹€ﬁ_€][â KàY]\ûSYX[
+	›ôYÿ[ãXúôXZŸò\›Xô\úûK\€[€›YIÀ	–ô\úûKò[ò[òH[ôXK\õ›Z[à€[€›YIÀåÕMKL	–Hò\›‹[€à⁄[à\]]H\»›»Yù\àÿZ⁄[ôŒ»õ[ô[[YYX][HôYõ‹ôHö[ö⁄[ôÀâÀ	ÃÃ[õ‹ùYöYY€ﬁHZ[ﬂÃ»XHõ›Z[üH€X[ò[ò[ò_Lå»úõﬁô[àô\úöY\ﬂÃ»õ€Yÿ]…À	ÿõ[ô	À	‹€ﬁ_€][â KàY]\ûSYX[
+	›ôYÿ[ãXúôXZŸò\›X⁄XK\›	À	–⁄ÿ€€]H⁄XH[ô€ﬁK\õ›Z[à›	ÀKÃKÕKMÀM	–H⁄[YXZŸKXZXYúôXZŸò\›⁄]öXúôH[ôH[Xô\ò]Hõ›Z[àŸ\ùö[ôÀâÀ	ÃçL[õ‹ùYöYY€ﬁHZ[ﬂÃ»⁄XHŸYYﬂçY»⁄ÿ€€]H[ùõ›Z[üL»›ò]ÿô\úöY\ﬂH‹€ÿ€ÿIÀ	€›ô\õöY⁄	À	‹€ﬁI KàY]\ûSYX[
+	›ôYÿ[ãXúôXZŸò\›\]Z[õÿK\‹úöYŸIÀ	–\KX⁄[õò[[€à]Z[õÿHõ›Z[à‹úöYŸIÀLÃåKLLK	’ÿ\õH‹àôZX]Yù\àÿZ⁄[ô»[ô‹ù[€à[ù»HYY›õ‹à€‹öÀâÀ	ÃN»€€⁄ŸY]Z[õÿ_çL[õ‹ùYöYY€ﬁHZ[ﬂçY»XHõ›Z[üH€X[\_⁄[õò[[€âÀ	‹⁄[[Y\âÀ	‹€ﬁI BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYÿ[ã[[ò⁄]ŸùK\öXŸIÀ	—⁄[ôŸ\àŸùH[ôúõ›€ã\öXŸHôYŸ]XõHõ›€	ÀMMKÕéMÀLÀ	–Hò]⁄X€€⁄»€‹ö»YX[⁄]€ﬁHõ›Z[ãôYŸ]Xõ\»[ô›XYHÿ\òõ⁄Yò]KâÀ	ÃN»ö\õHŸù_Må»€€⁄ŸYúõ›€àöXŸ_å»Z^YôYŸ]Xõ\ﬂHú‹ôYXŸY\ÿ[€ﬁHÿ]XŸ_⁄[ôŸ\à[ôH‹⁄[	À	‹›\ôúûIÀ	‹€ﬁI KàY]\ûSYX[
+	›ôYÿ[ã[[ò⁄[[ù[\]Z[õÿIÀ	”[ù[[ô]Z[õÿHòZ[òõ›»ÿ[Y	ÀLåéÃMN	—X]€€€àH⁄‹ùúôXZŒ»YHô\‹⁄[ô»€õH⁄[àŸ\ùö[ôÀâÀ	ÃN»€€⁄ŸY[ù[ﬂM»€€⁄ŸY]Z[õÿ_å»›X›[Xô\ã€X]»[ô\\úﬂ»‹[òX⁄[[€à[ôHú‹€]ôH⁄[	À	ÿõ›€	À	… KàY]\ûSYX[
+	›ôYÿ[ã[[ò⁄X⁄X⁄‹XK\\›IÀ	–⁄X⁄‹XH\›H⁄]X\»[ô€X]»\›…ÀMKÃãçÀMãMÀ	“Y⁄\õ›Z[à\›H]ôZX]»Ÿ[‹à€‹ö‹»\»H€€[ò⁄›âÀ	ŒY»ûH⁄X⁄‹XH\›_L»X\ﬂML»⁄\úûH€X]Ÿ\ﬂçY»Z\ûKYúôYH\›ﬂõÿ⁄Ÿ]X]ô\…À	‹⁄[[Y\âÀ	€ù]… KàY]\ûSYX[
+	›ôYÿ[ã[[ò⁄\ŸZ][ãYòZö]IÀ	‘ŸZ][àòZö]H⁄€Y‹òZ[à‹ò\	ÀLçKŒKMÀMLK	–H‹ùXõH[ò⁄õ‹à[úôYX›XõHúôXZ‹»⁄]ôYŸ]Xõ\»[ô[ùõ›Z[ãâÀ	ÃMå»ŸZ][à›ö\ﬂH\ôŸH⁄€Y‹òZ[à‹ò\ML»\\ú»[ô€ö[€üå»õX⁄»ôX[úﬂÿ[ÿH[ô[YIÀ	›‹ò\	À	Ÿ€][â KàY]\ûSYX[
+	›ôYÿ[ã[[ò⁄][\Z[õ€Ÿ\…À	’[\Z[ôY[X[YHõ€ŸHõﬁ	ÀMÃŒçNMK	‘ô\\ôH€»‹ù[€ú»]€òŸH[ô⁄[õ€\Hõ‹àHô^⁄YùâÀ	ÃML»[\ZM»€€⁄ŸY⁄€]⁄X]õ€Ÿ\ﬂ»Y[X[Y_N»›\ãYúûHôYŸ]Xõ\ﬂHú‹ôYXŸY\ÿ[€ﬁHÿ]XŸIÀ	‹›\ôúûIÀ	‹€ﬁ_€][â BàJKà[õô\éàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYÿ[ãY[õô\ã]ŸùKX›\úûIÀ	’ŸùH[ô⁄X⁄‹XHôYŸ]XõH›\úûH⁄]öXŸIÀNLÕÕKNMÀ	–Hô[XXõHò]⁄[õô\à]ÿ[àôX€€YH€[‹úõ›¯†&\»X⁄ŸY⁄YùYX[âÀ	ÃMÃ»ö\õHŸù_L»€€⁄ŸY⁄X⁄‹X\ﬂML»€€⁄ŸYò\€X]HöXŸ_åå»Z^YôYŸ]Xõ\ﬂLå[Y⁄€ÿ€€ù]Z[»[ô›\úûH‹XŸ\…À	‹⁄[[Y\âÀ	‹€ﬁI KàY]\ûSYX[
+	›ôYÿ[ãY[õô\ã[[ù[X⁄[IÀ	’ôYKXôX[à[ù[⁄[H⁄]úõ›€àöXŸIÀMÕKÃKLãåÀ	–ò]⁄X€€⁄À€€€]ZX⁄€H[ôúôY^ôH[ô]öYX[‹ù[€ú»õ‹àù\ﬁHŸYZ‹ÀâÀ	Ãåå»Z^Y€€⁄ŸYôX[ú»[ô[ù[ﬂML»€€⁄ŸYúõ›€àöXŸ_å»⁄‹Y€X]Ÿ\ﬂML»\\ú»[ô€ö[€ü⁄[K›[Z[à[ô\öZÿIÀ	‹⁄[[Y\âÀ	… KàY]\ûSYX[
+	›ôYÿ[ãY[õô\ã\ŸZ][ã\›\ôúûIÀ	‘ŸZ][àôYŸ]XõH›\ãYúûH⁄]õ€Ÿ\…ÀMåãåãMKLã	–HY⁄\õ›Z[à[ùXò\ŸYôX€›ô\ûHYX[ôXYH[à\õ›[ôåZ[ù]\ÀâÀ	ÃMÃ»ŸZ][à›ö\ﬂM»€€⁄ŸY⁄€]⁄X]õ€Ÿ\ﬂçL»›\ãYúûHôYŸ]Xõ\ﬂHú‹ôYXŸY\ÿ[€ﬁHÿ]XŸ_ÿ\õXÀ⁄[ôŸ\à[ôH‹⁄[	À	‹›\ôúûIÀ	‹€ﬁ_€][â KàY]\ûSYX[
+	›ôYÿ[ãY[õô\ãX⁄X⁄‹XK]Y⁄[ôIÀ	–⁄X⁄‹XH[ô\öX€›Y⁄[ôH⁄]]Z[õÿIÀMçKçÀÀMKå	–HöXúôK\öX⁄]ô[ö[ô»YX[»ŸY\öYYúùZ]YX\›\ôYõ‹àôYX›XõHù]ö][€ãâÀ	Ãåå»€€⁄ŸY⁄X⁄‹X\ﬂML»€€⁄ŸY]Z[õÿ_å»€X]Ÿ\»[ôôYŸ]Xõ\ﬂçY»öYY\öX€›ﬂ›[Z[ã⁄[õò[[€à[ôH‹⁄[	À	‹⁄[[Y\âÀ	… KàY]\ûSYX[
+	›ôYÿ[ãY[õô\ãXôX[ã]ò^XòZŸIÀ	–õX⁄ÀXôX[à›ŸY]\›]»ò^XòZŸIÀMçãŒMKå	‘õÿ\›^òH‹ù[€ú»€à[àŸôà^H[ôôZX][ù[\[ô»›âÀ	Ãåå»õX⁄»ôX[úﬂçL»›ŸY]›]»›Xô\ﬂå»\\ú»[ô€›\ôŸ]_å»]õÿÿYﬂ\öZÿK[YH[ôH‹⁄[	À	ÿòZŸIÀ	… BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYÿ[ã\€òX⁄À\€ﬁK^[Ÿ›\ù	À	“Y⁄\õ›Z[à€ﬁH[Ÿ›\ù⁄]ô\úöY\…ÀåÕKåãçÀÀ	–H⁄[Y‹ù[€ôY€òX⁄»õ‹àHZYHŸàH⁄YùâÀ	ÃçL»Y⁄\õ›Z[à€ﬁH[Ÿ›\ùL»ô\úöY\ﬂL»[\⁄[àŸYY…À	‹€òX⁄…À	‹€ﬁI KàY]\ûSYX[
+	›ôYÿ[ã\€òX⁄ÀYY[X[YIÀ	—Y[X[YK›X›[Xô\à[ô⁄[K[[YH›	ÀçKåKåãKLK	–Hÿ]õ›\ûH[ù\õ›Z[à€òX⁄»]ÿ[àôHX][à€€âÀ	ÃN»€€⁄ŸYY[X[Y_L»›X›[Xô\ü[YHùZXŸ_⁄[HõZŸ\»[ôH[ò⁄Ÿàÿ[	À	‹€òX⁄…À	‹€ﬁI KàY]\ûSYX[
+	›ôYÿ[ã\€òX⁄ÀZ[[]\…À	“[[]\ÀôYŸ]XõH›X⁄‹»[ôŸYY‹òX⁄Ÿ\ú…ÀçÃLãÃKLãL	‘ôK\‹ù[€àH[[]\»€»H]ZX⁄»úôXZ»›[ö]»H[ãâÀ	ÕÃ»[[]\ﬂå»ÿ\úõ››X›[Xô\à[ô\\à›X⁄‹ﬂçY»ŸYY‹òX⁄Ÿ\ú…À	‹€òX⁄…À	‹Ÿ\ÿ[YI KàY]\ûSYX[
+	›ôYÿ[ã\€òX⁄À\õ›Z[ã\⁄ZŸIÀ	‘XK\õ›Z[à⁄ZŸH⁄]H€X[ò[ò[òIÀçLéÃãÀK	“ŸY\HYX\›\ôYûHŸ\ùö[ô»]€‹ö»õ‹àHô[XXõHòX⁄›\âÀ	ÃÃ»XHõ›Z[üÃ[ÿ]\à‹àõ‹ùYöYY[ùZ[ﬂH€X[ò[ò[ò_XŸH[ô⁄[õò[[€âÀ	ÿõ[ô	À	… KàY]\ûSYX[
+	›ôYÿ[ã\€òX⁄À\õÿ\›YX⁄X⁄‹X\…À	‘õÿ\›Y⁄X⁄‹X\»⁄][à\IÀçåLÀããLK	–‹ù[ò⁄K‹ùXõH[ôX\ﬁH»ò]⁄\‹ù[€àõ‹àŸ]ô\ò[⁄YùÀâÀ	ÃLå»€€⁄ŸY⁄X⁄‹X\ﬂH€X[\_\öZÿH[ôÿ\õX»›Ÿ\üH‹€]ôH⁄[	À	ÿòZŸIÀ	… BàJBàJKàôYŸ]\öX[éàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYŸ]\öX[ãXúôXZŸò\›\‹úöYŸIÀ	‘õ›Z[à‹úöYŸH⁄]ò[ò[òH[ô⁄[õò[[€âÀÕMãLK	–Hô\X]XõH›úôXZŸò\›ôYõ‹ôHH^H‹àX\õH⁄YùâÀ	Õå»õ€Yÿ]ﬂçL[Ÿ[ZK\⁄⁄[[YYZ[ﬂÃ»⁄^H‹àôYŸ]\öX[àõ›Z[üH€X[ò[ò[ò_⁄[õò[[€âÀ	‹⁄[[Y\âÀ	ŸZ\û_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãXúôXZŸò\›YYŸÀ]‹ò\	À	—YŸÀ‹[òX⁄[ôôX[àúôXZŸò\›‹ò\	ÀKÃKMÀL	–€€⁄»ZXY⁄[õ€\H[ôôZX]õ‹àHò\›⁄YùúôXZŸò\›âÀ	ÃàYŸ‹ﬂH⁄€Y‹òZ[à‹ò\»õX⁄»ôX[úﬂà[ôù[»‹[òX⁄ÿ[ÿIÀ	›‹ò\	À	ŸYŸﬂ€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãXúôXZŸò\›^[Ÿ›\ù	À	—‹ôYZ»[Ÿ›\ù]Y\€H[ôô\úûHõ›€	ÀçKÃãLãLK	”õÀX€€⁄»[ôX\ﬁH»‹ù[€àHöY⁄ôYõ‹ôKâÀ	ÃçL»‹ôYZ»[Ÿ›\ùY»õÀXYY\›Yÿ\à]Y\€_Lå»ô\úöY\ﬂL»Z^YŸYY…À	‹€òX⁄…À	ŸZ\û_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãXúôXZŸò\›X€›YŸK]ÿ\›	À	–€›YŸH⁄Y\ŸK€X]»[ô⁄€Y‹òZ[àÿ\›	ÀLÃãÀLã	–Hÿ]õ›\ûHúôXZŸò\›⁄]]Hô\\ò][€à[ôH€X\àõ›Z[à[ò⁄‹ãâÀ	Ãåå»€›YŸH⁄Y\Ÿ_à€XŸ\»⁄€Y‹òZ[àÿ\›ML»€X]Ÿ\ﬂõX⁄»\\à[ô\òú…À	‹€òX⁄…À	ŸZ\û_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãXúôXZŸò\›\[òÿZŸ\…À	”ÿ]õ›Z[à[òÿZŸ\»⁄][Ÿ›\ù[ôô\úöY\…ÀçKÕÀMLãK	–€€⁄»Hò]⁄€à[àŸôà^H[ôôZX][ô]öYX[‹ù[€úÀâÀ	Õå»ÿ]ﬂàYŸ‹ﬂçY»⁄^H‹àôYŸ]\öX[àõ›Z[üL»‹ôYZ»[Ÿ›\ùL»ô\úöY\…À	‹⁄⁄[]	À	ŸZ\û_YŸﬂ€][â BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYŸ]\öX[ã[[ò⁄Z[›[ZIÀ	“[›[ZH[ô]Z[õÿHòZ[òõ›»ÿ[Y	ÀMMKÃKLãçKLã	‘X⁄»Hô\‹⁄[ô»Ÿ\\ò][H»ŸY\HôYŸ]Xõ\»‹ö\‹âÀ	ÃL»[›[Z_ML»€€⁄ŸY]Z[õÿ_åå»ÿ[YôYŸ]Xõ\ﬂL»⁄X⁄‹X\ﬂ[[€à[ô\òú…À	ÿõ›€	À	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ã[[ò⁄YYŸÀ[[ù[	À	—YŸ»[ô[ù[›]»ÿ[Y	ÀLåéKNNKMK	–Hö[[ô»€€[ò⁄]ÿ[àôHô\\ôYõ‹à€»⁄YùÀâÀ	Ãàõ⁄[YYŸ‹ﬂN»€€⁄ŸY[ù[ﬂå»òXûH›]Ÿ\ﬂML»‹ôY[àôYŸ]Xõ\ﬂ]\›\ô^[Ÿ›\ùô\‹⁄[ô…À	ÿõ›€	À	ŸYŸﬂZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ã[[ò⁄[[ﬁûò\ô[K\\›IÀ	”[ﬁûò\ô[KôX[à[ô€X]»\›H›	ÀMKÃÀçÀMÀMK	’€‹ö‹»ÿ\õH‹à€€[ôò]ô[»Ÿ[[àHŸX[Y€€ùZ[ô\ãâÀ	ÕÕY»ûH⁄€]⁄X]\›_L»ôYXŸYYò][ﬁûò\ô[_L»ÿ[õô[[öHôX[úﬂN»€X]Ÿ\»[ô‹[òX⁄ò\⁄[	À	‹⁄[[Y\âÀ	ŸZ\û_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ã[[ò⁄]ŸùKXù\úö]…À	’ŸùH[ôõX⁄ÀXôX[àù\úö]»õ›€	ÀMåÕÃMÀMÀ	–ò]⁄HöXŸKŸùH[ôôX[úÀ[àYúô\⁄ÿ[ÿH]Ÿ\ùö[ôÀâÀ	ÃMå»ö\õHŸù_LÃ»€€⁄ŸYúõ›€àöXŸ_L»õX⁄»ôX[úﬂN»\\ú»[ô€‹õüÿ[ÿH[ô[YIÀ	ÿõ›€	À	‹€ﬁI KàY]\ûSYX[
+	›ôYŸ]\öX[ã[[ò⁄X€›YŸK\›]…À	–€›YŸH⁄Y\ŸHòX⁄Ÿ]›]»⁄]ÿ[Y	ÀÕKÃãçãKL	–H⁄[\HZX‹õ›ÿ]ôKYúöY[ôH€‹ö»[ò⁄⁄]HY⁄\õ›Z[à‹[ôÀâÀ	ÃHYY][HòZŸY›]ﬂåå»€›YŸH⁄Y\Ÿ_å»Z^Yÿ[Y⁄]ô\»[ôõX⁄»\\âÀ	ÿòZŸIÀ	ŸZ\ûI BàJKà[õô\éàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYŸ]\öX[ãY[õô\ã[[ù[Xõ€Ÿ€ô\ŸIÀ	”[ù[õ€Ÿ€ô\ŸH⁄]⁄€]⁄X]\›IÀNKÃããLÀåK	”XZŸHŸ]ô\ò[‹ù[€ú»[ôúôY^ôHHÿ]XŸHŸ\\ò][KâÀ	Ãå»€€⁄ŸY[ù[ﬂÕY»ûH⁄€]⁄X]\›_åå»⁄‹Y€X]Ÿ\»[ôôYŸ]Xõ\ﬂMY»ôYŸ]\öX[à\ô⁄Y\Ÿ_][X[à\òú…À	‹⁄[[Y\âÀ	ŸZ\û_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãY[õô\ã\[ôY\ãX›\úûIÀ	‘[ôY\à[ôôYŸ]XõH›\úûH⁄]ò\€X]HöXŸIÀååÕçãçLã	–H›Xú›[ùX[‹›\⁄YùYX[»YX\›\ôHH[ôY\à[ô⁄[âÀ	ÃM»ôYXŸYYò][ôY\üML»€€⁄ŸYò\€X]HöXŸ_çL»Z^YôYŸ]Xõ\ﬂML»€X]»›\úûHÿ]XŸ_›\úûH‹XŸ\…À	‹⁄[[Y\âÀ	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ãY[õô\ãXôX[ãX⁄[IÀ	–ôX[à⁄[H⁄]öXŸH[ô‹ôYZ»[Ÿ›\ù	ÀMÃÃãLãåã	–HY⁄YöXúôHò]⁄YX[õ‹àŸôà^\»[ô€‹ö»€€ùZ[ô\úÀâÀ	Ãç»Z^YôX[úﬂM»€€⁄ŸYúõ›€àöXŸ_åå»€X]Ÿ\À\\ú»[ô€ö[€ü»‹ôYZ»[Ÿ›\ù⁄[H[ô›[Z[âÀ	‹⁄[[Y\âÀ	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ãY[õô\ã]ŸùK[õ€Ÿ\…À	’ŸùH[ôY[X[YHôYŸ]XõHõ€Ÿ\…ÀMçKÕÀåÀNMK	—ò\›[õ›Y⁄õ‹àYù\à€‹ö»[ô›Z]XõHõ‹àô^Y^HYù›ô\úÀâÀ	ÃMÃ»ö\õHŸù_M»€€⁄ŸY⁄€]⁄X]õ€Ÿ\ﬂ»Y[X[Y_åå»›\ãYúûHôYŸ]Xõ\ﬂHú‹ôYXŸY\ÿ[€ﬁHÿ]XŸIÀ	‹›\ôúûIÀ	‹€ﬁ_€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ãY[õô\ã[€Y[]IÀ	”]\⁄õ€€H€Y[]H⁄]õÿ\››]Ÿ\»[ô‹ôY[ú…ÀMLÕKåÀLK	–Hò[[òŸYŸôãY^H‹à‹›YX\õK\⁄Yù[õô\ãâÀ	Ã»YŸ‹ﬂML»]\⁄õ€€\»[ô‹[òX⁄ÕY»ôYXŸYYò]⁄Y\Ÿ_åå»›]Ÿ\ﬂN»‹ôY[àôYŸ]Xõ\…À	‹⁄⁄[]	À	ŸYŸﬂZ\ûI BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	›ôYŸ]\öX[ã\€òX⁄À^[Ÿ›\ù	À	—‹ôYZ»[Ÿ›\ù⁄]ô\úöY\»[ô[\⁄[àŸYY…ÀçLççã	‘‹ù[€à[ù»H⁄[Y›ôYõ‹ôHH⁄YùâÀ	ÃçL»‹ôYZ»[Ÿ›\ùL»ô\úöY\ﬂL»[\⁄[àŸYY…À	‹€òX⁄…À	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ã\€òX⁄ÀX€›YŸIÀ	–€›YŸH⁄Y\ŸH⁄][ôX\IÀççãçKKÀ	–H]ZX⁄»Y⁄\õ›Z[à⁄[Y€òX⁄ÀâÀ	Ãåå»€›YŸH⁄Y\Ÿ_Lå»[ôX\HYXŸ\ﬂ⁄[õò[[€âÀ	‹€òX⁄…À	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ã\€òX⁄ÀYYŸ‹…À	–õ⁄[YYŸ‹À€X]Ÿ\»[ôÿ]ÿZŸ\…ÀçÕKNKåÀLãK	‘ô\\ôHHYŸ‹»ZXY[ôŸY\⁄[Y[ù[HúôXZÀâÀ	Ãàõ⁄[YYŸ‹ﬂ»ÿ]ÿZŸ\ﬂLå»⁄\úûH€X]Ÿ\ﬂõX⁄»\\âÀ	‹€òX⁄…À	ŸYŸﬂ€][â KàY]\ûSYX[
+	›ôYŸ]\öX[ã\€òX⁄À\⁄ZŸIÀ	‘õ›Z[à⁄ZŸH⁄]H€X[ò[ò[òIÀçLéÃKÀ	–HYX\›\ôYòX⁄›\⁄[àH€‹ö»úôXZ»⁄[ôŸ\»[ô^X›YKâÀ	ÃÃ»⁄^H‹àôYŸ]\öX[àõ›Z[üÃ[ÿ]\à‹àZ[ﬂH€X[ò[ò[ò_XŸIÀ	ÿõ[ô	À	ŸZ\ûI KàY]\ûSYX[
+	›ôYŸ]\öX[ã\€òX⁄ÀZ[[]\…À	“[[]\ÀôYŸ]XõH›X⁄‹»[ôZ[öH]IÀéLãŒLK	–H‹ùXõHÿ]õ›\ûH‹[€é»‹ù[€àH[[]\»ò]\à[àX][ô»úõ€HHXãâÀ	ÕÃ»[[]\ﬂN»ôYŸ]XõH›X⁄‹ﬂHZ[öH⁄€[YX[]IÀ	‹€òX⁄…À	‹Ÿ\ÿ[Y_€][â BàJBàJKàŸ]ŸŸ[öXŒàÿöôX›ôúôY^ôJ¬àúôXZŸò\›àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	⁄Ÿ]ÀXúôXZŸò\›YYŸ‹ÀX]õÿÿY…À	—YŸ‹À]õÿÿY»[ô‹[òX⁄⁄⁄[]	ÀMKéKLãÕK	–H›ÀXÿ\òõ⁄Yò]Hö\ú›YX[⁄]ôYŸ]Xõ\»[ôHYX\›\ôYò]Ÿ\ùö[ôÀâÀ	Ã»YŸ‹ﬂL»]õÿÿYﬂL»‹[òX⁄[ô€X]Ÿ\ﬂH‹€]ôH⁄[\\à[ô\òú…À	‹⁄⁄[]	À	ŸYŸ… KàY]\ûSYX[
+	⁄Ÿ]ÀXúôXZŸò\›^[Ÿ›\ùX⁄XIÀ	—‹ôYZ»[Ÿ›\ù⁄XH[ôô\úûHõ›€	ÀŒMKÃKNåÀL	’\ŸH[ú›ŸY][ôY[Ÿ›\ù[ôŸY\Hô\úûH‹ù[€àYX\›\ôYâÀ	ÃçL»[ú›ŸY][ôY‹ôYZ»[Ÿ›\ùçY»⁄XHŸYYﬂÃ»ô\úöY\ﬂL»[\⁄[àŸYY…À	‹€òX⁄…À	ŸZ\ûI KàY]\ûSYX[
+	⁄Ÿ]ÀXúôXZŸò\›]ŸùIÀ	’ŸùK]\⁄õ€€H[ô‹[òX⁄ÿ‹ò[XõIÀLÕMçÀ	–HZ\ûKH[ôYŸÀYúôYH›Ÿ\ãXÿ\òõ⁄Yò]HúôXZŸò\›‹[€ãâÀ	Ãåå»ö\õHŸù_ML»]\⁄õ€€\ﬂL»‹[òX⁄å»]õÿÿYﬂ\õY\öX»[ôH‹€]ôH⁄[	À	‹⁄⁄[]	À	‹€ﬁI KàY]\ûSYX[
+	⁄Ÿ]ÀXúôXZŸò\›\ÿ[[€âÀ	‘€[⁄ŸYÿ[[€ãYŸ‹»[ô›X›[Xô\à]IÀÃÕãé	”õÀX€€⁄»\\ùúõ€HHYŸ‹»[ôòX›Xÿ[Yù\àHöY⁄⁄YùâÀ	ÃL»€[⁄ŸYÿ[[€üàõ⁄[YYŸ‹ﬂML»›X›[Xô\à[ô€X]Ÿ\ﬂå»]õÿÿYﬂ[[€à[ô\\âÀ	‹€òX⁄…À	Ÿö\⁄YŸ… KàY]\ûSYX[
+	⁄Ÿ]ÀXúôXZŸò\›X€›YŸK]ÿ[ù]	À	–€›YŸH⁄Y\ŸKÿ[ù]»[ôô\úöY\…ÀÃÀMÀçã	–H⁄[YúôXZŸò\›⁄]HYX\›\ôYù]Ÿ\ùö[ôÀâÀ	ÃçL»ù[Yò]€›YŸH⁄Y\Ÿ_å»ÿ[ù]ﬂÃ»ô\úöY\ﬂL»⁄XHŸYY…À	‹€òX⁄…À	ŸZ\û_ù]… BàJKà[ò⁄àÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	⁄Ÿ]À[[ò⁄X⁄X⁄Ÿ[ã\ÿ[Y	À	–⁄X⁄Ÿ[ã]õÿÿY»[ô‹ù[ò⁄Hÿ[Yõ›€	ÀLMKMKÃKL	‘X⁄»ô\‹⁄[ô»Ÿ\\ò][H[ô⁄[õ€\KâÀ	ÃMÃ»€€⁄ŸY⁄X⁄Ÿ[àúôX\›L»]õÿÿYﬂçL»Z^Yÿ[YôYŸ]Xõ\ﬂå»ŸYYﬂ[[€à[ôHú‹€]ôH⁄[	À	ÿõ›€	À	… KàY]\ûSYX[
+	⁄Ÿ]À[[ò⁄][òKX]õÿÿY…À	’[òH[ô]õÿÿY»]XŸH›\…ÀçKãLãé	–H€€€‹ö»[ò⁄]Ÿ\»õ›ôYYHZX‹õ›ÿ]ôKâÀ	ÃML»òZ[ôY[ò_L»]õÿÿYﬂà\ôŸH]XŸHX]ô\ﬂML»›X›[Xô\à[ô€X]ﬂ[[€ã^[Ÿ›\ù‹à€]ôK[⁄[ô\‹⁄[ô…À	›‹ò\	À	Ÿö\⁄	 KàY]\ûSYX[
+	⁄Ÿ]À[[ò⁄]ŸùKXÿ][Yõ›Ÿ\âÀ	’ŸùH[ôÿ][Yõ›Ÿ\ã\öXŸHõ›€	ÀÃÕåKéLã	–€€⁄»ZXY[ôôZX][ù[\[ô»›âÀ	Ãå»ö\õHŸù_çL»ÿ][Yõ›Ÿ\àöXŸ_åå»‹ôY[àôYŸ]Xõ\ﬂå»[\⁄[àŸYYﬂHú‹ôYXŸY\ÿ[€ﬁHÿ]XŸIÀ	‹›\ôúûIÀ	‹€ﬁI KàY]\ûSYX[
+	⁄Ÿ]À[[ò⁄XôYYãX€›\ôŸ]IÀ	”X[àôYYà[ô€›\ôŸ]H€X]»õ›€	ÀLKåéK	“ŸY\€›\ôŸ]HŸ\\ò]H[ù[ôZX][ô»€»]›^\»ö\õKâÀ	ÃMÃ»X[àôYYàZ[òŸ_çL»€›\ôŸ]_N»€X]»[ô]\⁄õ€€\ﬂMY»ôYŸ]\öX[à\ô⁄Y\Ÿ_][X[à\òú…À	‹⁄⁄[]	À	ŸZ\ûI KàY]\ûSYX[
+	⁄Ÿ]À[[ò⁄Z[›[ZKYYŸ…À	“[›[ZKYŸ»[ô‹ôY[àÿ[Y	ÀLåÕKLÀÕÀ	–HôYŸ]\öX[à›Ÿ\ãXÿ\òõ⁄Yò]H[ò⁄⁄]YX\›\ôY⁄Y\ŸKâÀ	ÃL»[›[Z_àõ⁄[YYŸ‹ﬂçL»XYûHÿ[Y[ô›X›[Xô\ü»]õÿÿYﬂ[[€àô\‹⁄[ô…À	ÿõ›€	À	ŸZ\û_YŸ… BàJKà[õô\éàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	⁄Ÿ]ÀY[õô\ã\ÿ[[€âÀ	–òZŸYÿ[[€à⁄]úõÿÿ€€H[ô\òàù]\âÀMMKMãÕãK	–H⁄[\Hò^HYX[õ‹àYù\à€‹ö»‹à[àŸôà^KâÀ	ÃN»ÿ[[€àö[]çL»úõÿÿ€€H[ô€›\ôŸ]_L»ÿ][Yõ›Ÿ\àX\⁄L»\òàù]\ü[[€à[ô\\âÀ	ÿòZŸIÀ	Ÿö\⁄Z\ûI KàY]\ûSYX[
+	⁄Ÿ]ÀY[õô\ãX⁄X⁄Ÿ[ãX›\úûIÀ	–⁄X⁄Ÿ[à[ôÿ][Yõ›Ÿ\à€ÿ€€ù]›\úûIÀMÀåÃKL	–ò]⁄X€€⁄»H›\úûH[ôYúô\⁄‹ôY[ú»⁄[àôZX][ôÀâÀ	ÃN»⁄X⁄Ÿ[àúôX\›çL»ÿ][Yõ›Ÿ\à[ô‹ôY[àôYŸ]Xõ\ﬂML[Y⁄€ÿ€€ù]Z[ﬂML»ÿ][Yõ›Ÿ\àöXŸ_›\úûH‹XŸ\…À	‹⁄[[Y\âÀ	… KàY]\ûSYX[
+	⁄Ÿ]ÀY[õô\ãXôYYã\⁄⁄[]	À	–ôYYã]\⁄õ€€H[ô‹ôY[ãXôX[à⁄⁄[]	ÀLÕKãNÃãK	–H€ôK\[àYX[]\»]ZX⁄»[õ›Y⁄õ‹àH‹›\⁄Yù[õô\ãâÀ	ÃN»X[àôYYà›ö\ﬂN»]\⁄õ€€\ﬂN»‹ôY[àôX[úﬂ»ÿ][Yõ›Ÿ\àöXŸ_ÿ\õX»[ôHú‹€]ôH⁄[	À	‹⁄⁄[]	À	… KàY]\ûSYX[
+	⁄Ÿ]ÀY[õô\ã]ŸùKX€ÿ€€ù]	À	’ŸùH€ÿ€€ù]›\úûH⁄]‹ôY[ú…ÀLåÃÀåÀÕLã	–H[ùXò\ŸY›Ÿ\ãXÿ\òõ⁄Yò]H[õô\é»YX\›\ôH€ÿ€€ù]Z[ÀâÀ	Ãåå»ö\õHŸù_çL»úõÿÿ€€K‹[òX⁄[ô€›\ôŸ]_ML[Y⁄€ÿ€€ù]Z[ﬂML»ÿ][Yõ›Ÿ\àöXŸ_›\úûH‹XŸ\…À	‹⁄[[Y\âÀ	‹€ﬁI KàY]\ûSYX[
+	⁄Ÿ]ÀY[õô\ã]\öŸ^KX€›\ôŸ]IÀ	’\öŸ^H€›\ôŸ]Hõ€Ÿ€ô\ŸIÀKNKçKK	–ò]⁄Hÿ]XŸH[ôY€›\ôŸ]H€õHõ‹àHö[ò[ô]»Z[ù]\ÀâÀ	ÃN»X[à\öŸ^HZ[òŸ_Ã»€›\ôŸ]_å»€X]ÀŸ[\ûH[ô]\⁄õ€€\ﬂMY»\ô⁄Y\Ÿ_][X[à\òú…À	‹⁄[[Y\âÀ	ŸZ\ûI BàJKà€òX⁄ŒàÿöôX›ôúôY^ôJ¬àY]\ûSYX[
+	⁄Ÿ]À\€òX⁄ÀYYŸ‹…À	–õ⁄[YYŸ‹»⁄]›X›[Xô\à[ô€X]Ÿ\…ÀçKNKMãÀ	‘ô\\ôH[ô⁄[HYŸ‹»ôYõ‹ôHH⁄YùâÀ	Ãàõ⁄[YYŸ‹ﬂML»›X›[Xô\à[ô€X]Ÿ\ﬂ\\à[ô\òú…À	‹€òX⁄…À	ŸYŸ… KàY]\ûSYX[
+	⁄Ÿ]À\€òX⁄À^[Ÿ›\ù	À	’[ú›ŸY][ôY‹ôYZ»[Ÿ›\ù⁄]⁄XIÀçåçLãLÀ	–H‹ù[€ôY⁄[Y€òX⁄»⁄]õ»YY›Yÿ\ãâÀ	Ãåå»[ú›ŸY][ôY‹ôYZ»[Ÿ›\ùå»⁄XHŸYYﬂL»ô\úöY\…À	‹€òX⁄…À	ŸZ\ûI KàY]\ûSYX[
+	⁄Ÿ]À\€òX⁄À][òKXõÿ]…À	’[òH›X›[Xô\àõÿ]…ÀåÕKÃKÀLÀ	”Z^ù\›ôYõ‹ôHH⁄Yù[ôŸY\⁄[YâÀ	ÃLå»òZ[ôY[ò_H\ôŸH›X›[Xô\ü»‹ôYZ»[Ÿ›\ù‹àX^[€õòZ\Ÿ_[[€à[ô\\âÀ	‹€òX⁄…À	Ÿö\⁄Z\ûI KàY]\ûSYX[
+	⁄Ÿ]À\€òX⁄ÀYY[X[YIÀ	—Y[X[YH⁄]⁄[H[ô[YIÀåÃåNKK	–H[ùXò\ŸYÿ]õ›\ûH€òX⁄»]€‹ö‹»€€âÀ	ÃMÃ»€€⁄ŸYY[X[Y_[YHùZXŸ_⁄[HõZŸ\»[ôH[ò⁄Ÿàÿ[	À	‹€òX⁄…À	‹€ﬁI KàY]\ûSYX[
+	⁄Ÿ]À\€òX⁄ÀX⁄Y\ŸK[€]ô\…À	–⁄Y\ŸK€]ô\»[ô\\à›ö\…ÀéNKKå	‘ôK\‹ù[€àò]\à[à‹ò^ö[ô»úõ€HHX⁄ÀâÀ	ÕÃ»ôYXŸYYò]⁄Y\Ÿ_»€]ô\ﬂML»\\à›ö\…À	‹€òX⁄…À	ŸZ\ûI BàJBàJBàJN¬Çàù[ò›[€àY]\ûSYX[[\ôŸ[ú YXJH¬àYà
+\[Ÿà›ùX›\ôYYX[ÿYô]HOOH	Ÿù[ò›[€â Hô]\õà›ùX›\ôYYX[ÿYô]JYXJKò[\ôŸ[úÀú€XŸJ
+N¬à€€ú›[\ôŸ[ú»Hô]»Ÿ]
+\úò^Kö\–\úò^JYXH	âàYXKò[\ôŸ[ú H»YXKò[\ôŸ[ú»à◊JN¬à€€ú›^H	⁄YXH	âàYXKõò[YH	…ﬂH	⁄YXH	âàYXKõõ›H	…ﬂH	 YXH	âàYXKö[ô‹ôYY[ù»◊JKöõ⁄[ä	»	 _Xù”›Ÿ\êÿ\ŸJ
+N¬àYà
+◊ä[Ÿ›\ùœﬂ[Ÿ⁄\ùœﬂ⁄Y\Ÿ\œﬂZ[ﬂ⁄^_[ôY\ü[›[Z_ù]\ü[ﬁûò\ô[_\› WãÀù\›
+^
+JH[\ôŸ[úÀòY
+	ŸZ\ûI N¬àYà
+◊äÿ]œﬂÿ]ÿZŸ\œﬂúôXYÿ\›‹ò\œﬂ]\œﬂ\›\œﬂõ€Ÿ\œﬂ€›\ÿ€›\ﬂòYŸ[œﬂ]Y\€_‹ò[õ€_ŸZ][ü⁄X]õ€œﬂ[òÿZŸ\œ WãÀù\›
+^
+JH[\ôŸ[úÀòY
+	Ÿ€][â N¬àYà
+◊äù]œﬂ[[€ôœﬂÿ[ù]œﬂX[ù]œﬂÿ\⁄]‹œﬂ^ô[ù]œﬂ\› WãÀù\›
+^
+JH[\ôŸ[úÀòY
+	€ù]… N¬àYà
+◊äYŸ‹œﬂ€Y[]\œﬂ⁄Z‹⁄ZÿJWãÀù\›
+^
+JH[\ôŸ[úÀòY
+	ŸYŸ… N¬àYà
+◊äö\⁄ÿ[[€ü[ò_€ŸŸXYõ€Ÿ⁄[ö\⁄ò]€ü⁄ö[\
+WãÀù\›
+^
+JH[\ôŸ[úÀòY
+	Ÿö\⁄	 N¬àYà
+◊ä€ﬁ_€ﬁX_Ÿù_[\ZY[X[YJWãÀù\›
+^
+JH[\ôŸ[úÀòY
+	‹€ﬁI N¬àYà
+◊äŸ\ÿ[Y_Z[ö_[[]\ WãÀù\›
+^
+JH[\ôŸ[úÀòY
+	‹Ÿ\ÿ[YI N¬àô]\õà\úò^Kôúõ€J[\ôŸ[ú N¬àBÇàù[ò›[€àYX[X]⁄\—Y]\ûTô\]Z\ô[Y[ù YXKõŸö[R[ú]
+H¬à€€ú›õŸö[HHõŸö[R[ú]Y]\ûTõŸö[J
+N¬à€€ú›[\ôŸ[ú»HY]\ûSYX[[\ôŸ[ú YXJN¬à€€ú›^€\⁄[€ú»H¬àZ\ûWŸúôYNà	ŸZ\ûIÀà€][óŸúôYNà	Ÿ€][âÀàù]ŸúôYNà	€ù]…ÀàYŸ◊ŸúôYNà	ŸYŸ…Ààö\⁄ŸúôYNà	Ÿö\⁄	Àà€ﬁWŸúôYNà	‹€ﬁIÀàŸ\ÿ[YWŸúôYNà	‹Ÿ\ÿ[YI¬àN¬àô]\õàJõŸö[Kúô\]Z\ô[Y[ù»◊JKú€€YJô\]Z\ô[Y[ùOÇà^€\⁄[€ú÷‹ô\]Z\ô[Y[ùH	âà[\ôŸ[úÀö[ò€Y\ ^€\⁄[€ú÷‹ô\]Z\ô[Y[ùJBà
+N¬àBÇàù[ò›[€àÿ[‹öYQYöX⁄]‹ù[€äYXJH¬à€€ú›òX›‹àHéN¬àô]\õàÿöôX›ò\‹⁄Y€äﬂKYXK¬àÿ[‹öY\ŒàX]úõ›[ô
+YXKòÿ[‹öY\»
+àòX›‹äKàõ›Z[éàX]úõ›[ô
+YXKúõ›Z[à
+àòX›‹äKàÿ\òúŒàX]úõ›[ô
+YXKòÿ\òú»
+àòX›‹äKàò]àX]úõ›[ô
+YXKôò]
+àòX›‹äKàöXô\éàX]úõ›[ô
+YXKôöXô\à
+àòX›‹äKà‹öY⁄[ò[ÿ[‹öY\ŒàYXKòÿ[‹öY\Àà‹ù[€êYù\›YàùYKàõ›Nà	⁄YXKõõ›_Hÿ[‹öYKYYöX⁄]öY]»\Ÿ\»Xõ›]IHŸàH›[ô\ô›YŸŸ\›Y‹ù[€ãòàJN¬àBÇàù[ò›[€à\ú€€ò[\ŸY⁄YùYX[YX\ \KYX[\JH¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬à€€ú›⁄YùYX\»H“Qï”QPS“QPT÷›\WH“Qï”QPS“QPTÀõŸôé¬à€€ú›ò\ŸRYX\»H
+⁄YùYX\»	âà⁄YùYX\÷€YX[\WJH◊N¬à]YX\Œ¬àYà
+õŸö[Kò€€\]Y	âàõŸö[Kú]\õàOOH	ÿò[[òŸY	 H¬àYX\»H
+
+QUTñW”QPS“QPT÷‹õŸö[Kú]\õóHﬂJV€YX[\WH◊JKú€XŸJ
+N¬àH[ŸH¬à€€ú›^òHH
+QUTñW”QPS“QPTÀùôYÿ[ñ€YX[\WH◊JVÃN¬àYX\»Hò\ŸRYX\Àò€€òÿ]
+^òH»Ÿ^òWHà◊JN¬àBàYX\»HYX\Àôö[\äYXHOàYX[X]⁄\—Y]\ûTô\]Z\ô[Y[ù YXKõŸö[JJN¬àYà
+
+õŸö[Kò\õÿX⁄\»◊JKö[ò€Y\ 	ÿÿ[‹öYWŸYöX⁄]	 JH¬àYX\»HYX\ÀõX\
+ÿ[‹öYQYöX⁄]‹ù[€äKú€‹ù
+
+KäHOàKòÿ[‹öY\»Hãòÿ[‹öY\ N¬àBàô]\õàYX\Œ¬àBÇÇà€€ú›“Qï”QPS’SRSë‘»HÿöôX›ôúôY^ôJ¬àöY⁄à»úôXZŸò\›à	–Yù\àÿZ⁄[ô…À[ò⁄à	–Xõ›]öôYõ‹ôH⁄Yù	À[õô\éà	—X\õH[àH⁄Yù	À€òX⁄Œà	”ZY\⁄YùYà[ô‹ûI»KàX\õNà»úôXZŸò\›à	–ôYõ‹ôHX]ö[ô»õ‹à€‹ö…À[ò⁄à	”ZY\⁄YùúôXZ…À[õô\éà	‘€€€àYù\à€‹ö…À€òX⁄Œà	”[‹õö[ô»úôXZ…»Kà^Nà»úôXZŸò\›à	–ôYõ‹ôHH⁄Yù	À[ò⁄à	”XZ[à€‹ö»úôXZ…À[õô\éà	–Yù\àH⁄Yù	À€òX⁄Œà	–ô]ŸY[àYX[…»KàŸôéà»úôXZŸò\›à	’⁄][àZŸàÿZ⁄[ô…À[ò⁄à	–\õ›[ôZY^IÀ[õô\éà	—X\õH]ô[ö[ô…À€òX⁄Œà	–ô]ŸY[àYX[»Yà[ô‹ûI»BàJN¬à€€ú›“Qï”QPS‘ì’US”àHÿöôX›ò‹ôX]Jù[
+N¬Çàù[ò›[€à⁄YùYX[YX\—õ‹ä\KYX[\JH¬àô]\õà\ú€€ò[\ŸY⁄YùYX[YX\ \KYX[\JN¬àBÇÇàù[ò›[€à⁄YùYX[[Z[ô”Xô[
+\KYX[\JH¬à€€ú›ò\ŸHH
+“Qï”QPS’SRSë‘÷›\WH“Qï”QPS’SRSë‘ÀõŸôäV€YX[\WH	…Œ¬à€€ú›\õÿX⁄\»HY]\ûTõŸö[J
+Kò\õÿX⁄\»◊N¬àYà
+X\õÿX⁄\Àö[ò€Y\ 	⁄[ù\õZ][ùŸò\›[ô… JHô]\õàò\ŸN¬àô]\õà\HOOH	€öY⁄	»»	ÿò\Ÿ_H0≠»[\ùô\‹»ö\ú›à	ÿò\Ÿ_H0≠»[ú⁄YH[›\àX][ô»⁄[ô›ÿ¬àBÇàù[ò›[€à⁄YùYX[YXT]\õäYXJH¬à€€ú›YH›ö[ô YXH	âàYXKöY	… N¬àYà
+Yú›\ù’⁄]
+	›ôYÿ[ãI JHô]\õà	’ôYÿ[âŒ¬àYà
+Yú›\ù’⁄]
+	›ôYŸ]\öX[ãI JHô]\õà	’ôYŸ]\öX[âŒ¬àYà
+Yú›\ù’⁄]
+	⁄Ÿ]ÀI JHô]\õà	“Ÿ]ŸŸ[öX…Œ¬àô]\õà	–ò[[òŸY	Œ¬àBÇàù[ò›[€à⁄YùYX[YXPòYŸ\“S
+YXJH¬à€€ú›òYŸ\»H‹⁄YùYX[YXT]\õäYXJWN¬àYà
+YXH	âàYXKú‹ù[€êYù\›Y
+HòYŸ\Àú\⁄
+	–ÿ[‹öYKYYöX⁄]‹ù[€â N¬àô]\õàòYŸ\ÀõX\
+Xô[Oà‹[à€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸHôÀ[‹ò[ôŸKML^[‹ò[ôŸKNõ‹ô\àõ‹ô\ã[‹ò[ôŸKLåLàKLHõ›[ôYYù[èâŸ\ÿÿ\R[
+Xô[
+_O‹‹[èò
+Köõ⁄[ä	… N¬àBÇàù[ò›[€à⁄YùYX[YXPÿ\ôS
+\KYX[\K]RŸ^JH¬à€€ú›YX\»H⁄YùYX[YX\—õ‹ä\KYX[\JN¬àYà
+ZYX\Àõ[ô›
+H¬àô]\õà]à€\‹œHòôÀX[Xô\ãMLõ‹ô\àõ‹ô\ãX[Xô\ãLåMõ›[ôY^èÇà€\‹œHôõ€ùXõX⁄»^\€H^X[Xô\ãNLèìõ»]]€X]X»X]⁄\»õ‹à\ŸHô\]Z\ô[Y[ùœ‹Çà€\‹œHù^^»^X[Xô\ãN]LHèï\]HHY]\ûH[à‹à\ŸHHYX[[›H€õ›»\»ÿYôKàëíU⁄[õ›û\\‹»HŸ[X›Y^€\⁄[€ãè‹Çàù]€à€ò€X⁄œHõ‹[ëY]\ûTõŸö[J
+Hà€\‹œHõ]L»^^»õ€ùXõX⁄»^X[Xô\ãNL[ô\õ[ôHèîô]öY]»Y]\ûHô\]Z\ô[Y[ùœÿù]€èÇàŸ]èò¬àBà€€ú›Ÿ^HH\H
+»	Œâ»
+»YX[\N¬à€€ú›[ô^H
+
+ù[Xô\ä“Qï”QPS‘ì’US”ñ⁄Ÿ^WJH
+H	HYX\Àõ[ô›
+»YX\Àõ[ô›
+H	HYX\Àõ[ô›¬à€€ú›YXHHYX\÷⁄[ô^N¬à€€ú›[Z[ô»H⁄YùYX[[Z[ô”Xô[
+\KYX[\JN¬à€€ú›ŸŸŸY€›[ùH
+›]KôZ[SYX[»◊JKôö[\äYX[OàYX[ô]HOOH]RŸ^H	âàYX[ú⁄YùYX[YXRYOOHYXKöY
+Kõ[ô›¬àô]\õàà]à]K\⁄Yù[YX[ZYHâ⁄YXKöYHà]K\⁄Yù[YX[[‹[€èHâ⁄[ô^
+»_HèÇà]à€\‹œHôõ^][\ÀXŸ[ù\àù\›YûKXô]ŸY[àÿ\LàXãL»èèù]€à€ò€X⁄œHúõ›]T⁄YùYX[YXJ	…›\_IÀ	…€YX[\_IÀLK	…Ÿ]RŸ^_I Hà€\‹œHùÀNHNHõ›[ôY^ôÀ]⁄]Hõ€ùXõX⁄»à\öXK[Xô[Hîô]ö[›\»	€YX[\_HYXHè∏†.Oÿù]€èè‹[à€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^\€]KMèê⁄⁄XŸH	⁄[ô^
+»_HŸà	⁄YX\Àõ[ô›O‹‹[èèù]€à€ò€X⁄œHúõ›]T⁄YùYX[YXJ	…›\_IÀ	…€YX[\_IÀK	…Ÿ]RŸ^_I Hà€\‹œHùÀNHNHõ›[ôY^ôÀ]⁄]Hõ€ùXõX⁄»à\öXK[Xô[Hìô^	€YX[\_HYXHè∏†.èÿù]€èèŸ]èÇà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKMLèâŸ\ÿÿ\R[
+[Z[ô _O‹è€\‹œHôõ€ùXõX⁄»^\€H]LHèâŸ\ÿÿ\R[
+YXKõò[YJ_O⁄Çà]à€\‹œHôõ^õ^]‹ò\ÿ\LKçH]Làèâ‹⁄YùYX[YXPòYŸ\“S
+YXJ_OŸ]èÇà]à€\‹œHôõ^ÿ\Là]Làèè‹[à€\‹œHòôÀ]⁄]HLàKLHõ›[ôY[»^^»õ€ùXõX⁄»èâ⁄YXKòÿ[‹öY\ﬂHÿÿ[‹‹[èè‹[à€\‹œHòôÀ]⁄]HLàKLHõ›[ôY[»^^»õ€ùXõX⁄»^Z[ôY€ÀMåèâ⁄YXKúõ›Z[üY»õ›Z[è‹‹[èèŸ]èÇà€\‹œHù^^»^\€]KML]LàèâŸ\ÿÿ\R[
+YXKõõ›J_O‹Çàù]€à€ò€X⁄œHõ‹[î⁄YùYX[]Z[
+	…›\_IÀ	…€YX[\_IÀ	⁄[ô^K	…Ÿ]RŸ^_I Hà€\‹œHùÀYù[]L»ôÀ[‹ò[ôŸKMå^]⁄]HL»õ›[ôY^õ€ùXõX⁄»^^»X›]ôNúÿÿ[KVÃéNHõ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\àÿ\LàèèH]K[X⁄YOHòõ€⁄À[‹[àà€\‹œHùÀMMèè⁄OàöY]»ôX⁄\H	ò[\»[‹ôHYX[œÿù]€èÇàù]€à€ò€X⁄œHòY⁄YùYX[YXJ	…›\_IÀ	…€YX[\_IÀ	⁄[ô^K	…Ÿ]RŸ^_I Hà€\‹œHùÀYù[]LàôÀ\€]KNL^]⁄]HL»õ›[ôY^õ€ùXõ€^^»X›]ôNúÿÿ[KVÃéNHèâ€ŸŸŸY€›[ù»8ß$»YY	€ŸŸŸY€›[ùH0≠»YYÿZ[òà	 »Y»\»^x†&\»X\ûIﬂOÿù]€èÇàŸ]èò¬àBÇàù[ò›[€à⁄YùYX[ÿ]Y€‹ûRS
+\KYX[\K]RŸ^JH¬à€€ú›X€€ú»H»úôXZŸò\›à	¸'„!IÀ[ò⁄à	¯¶ ;Ó#…À[õô\éà	¸'„&IÀ€òX⁄Œà	¸'„câ»N¬à€€ú›‹[€ê€›[ùH⁄YùYX[YX\—õ‹ä\KYX[\JKõ[ô›¬àô]\õàŸX›[€à€\‹œHòôÀ\€]KMLõ‹ô\àõ‹ô\ã\€]KLLõ›[ôYLûMà]K\⁄Yù[YX[Xÿ]Y€‹ûOHâ€YX[\_Hà]K\⁄Yù[YX[[‹[€úœHâ€‹[€ê€›[ùHèè€\‹œHôõ€ùXõX⁄»ÿ\][^ôHèâ⁄X€€ú÷€YX[\W_H	€YX[\_H0≠»	€‹[€ê€›[ùH€€\]XõH⁄⁄XŸI€‹[€ê€›[ùOOHH»	…»à	‹…ﬂO⁄è]àYHú⁄Yù[YX[[‹[€ãI›\_KI€YX[\_Hà€\‹œHõ]L»èâ‹⁄YùYX[YXPÿ\ôS
+\KYX[\K]RŸ^J_OŸ]èè‹ŸX›[€èò¬àBÇàù[ò›[€à⁄YùYX[YX\“S
+\K]RŸ^JH¬à€€ú›YX[\\»H…ÿúôXZŸò\›	À	€[ò⁄	À	Ÿ[õô\âÀ	‹€òX⁄…◊N¬à€€ú››[HYX[\\ÀúôYXŸJ
+›[KYX[\JHOà›[H
+»⁄YùYX[YX\—õ‹ä\KYX[\JKõ[ô›
+N¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬àô]\õàà]à]K\⁄Yù[YX[ZYX\œHâ›\_HèÇà]èè]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\À\›\ùÿ\L»XãMèè]èè€\‹œHù^^»^\€]KMLèê⁄⁄XŸ\»ôYõX›	Ÿ\ÿÿ\R[
+Y]\ûT]\õìXô[
+õŸö[Kú]\õäKù”›Ÿ\êÿ\ŸJ
+J_I‹õŸö[Kúô\]Z\ô[Y[ùÀõ[ô›»	»[ôŸ[X›Y^€\⁄[€ú…»à	…ﬂKà‹[à[ûHôX⁄\H»ŸYH]ô\ûH€€\]XõHYX[[ô‹ôYY[ù»[ô›\XûK\›\[ú›ùX›[€úÀè‹è]à€\‹œHôõ^õ^]‹ò\ÿ\LKçH]Làèâ‹õŸö[Kò€€\]Y»Y]\ûTõŸö[PòYŸ\“S
+õŸö[JHà	œ‹[à€\‹œHù^VÃLHõ€ùXõX⁄»^[‹ò[ôŸKMÃèê€€\]HY]\ûH[à[à€ÿX⁄[ô»õ‹à\ú€€ò[\ÿ][€è‹‹[èâﬂOŸ]èèŸ]èèù]€à€ò€X⁄œHõ‹[î⁄YùX\ûQúõ€T‹\
+
+Hà€\‹œHù^^»õ€ùXõ€^[‹ò[ôŸKMÃôÀ[‹ò[ôŸKMLL»KLàõ›[ôY^õ^\⁄ö[öÀLèïöY]»X\ûOÿù]€èèŸ]èÇà]à€\‹œHú‹XŸK^KL»èâ€YX[\\ÀõX\
+YX[\HOà⁄YùYX[ÿ]Y€‹ûRS
+\KYX[\K]RŸ^JJKöõ⁄[ä	… _OŸ]èÇà€\‹œHù^VÃLH^\€]KM]L»èìù]ö][€àò[Y\»\ôH\›[X]\»\à›YŸŸ\›Y‹ù[€ãà⁄X⁄»Xô[À[\ôŸ[úÀŸ\ùYöXÿ][€à[ô€€⁄⁄[ô»[\\ò]\ô\»[›\úŸ[ãè‹èŸ]èÇàŸ]èò¬àBÇàù[ò›[€à[ôô\úôY⁄YùYX[[ô‹ôYY[ù YXJH¬à€€ú›ò[YHH›ö[ô YXH	âàYXKõò[YH	… Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+ò[YKö[ò€Y\ 	‹€[€›YI Hò[YKö[ò€Y\ 	‹⁄ZŸI JH¬àô]\õà…ÃÃ»õ›Z[à›Ÿ\à›Z]XõHõ‹à[›\àY]	À	ÃçL8†$ÃÃ[Z[Àõ‹ùYöYY[\õò]]ôH‹àÿ]\âÀ	’HúùZ]‹àõ]õ›\ö[ô»ò[YY[àHôX⁄\IÀ	“XŸKYàÿ[ùY	◊N¬àBàYà
+ò[YKö[ò€Y\ 	€ÿ]	 Hò[YKö[ò€Y\ 	‹‹úöYŸI Hò[YKö[ò€Y\ 	€]Y\€I Hò[YKö[ò€Y\ 	Ÿ‹ò[õ€I JH¬àô]\õà…Õå»ÿ]À]Y\€H‹à‹ò[õ€H\»ò[YY	À	ÃçL[Z[»‹àH›Z]XõHõ‹ùYöYY[\õò]]ôIÀ	Ãçx†$ÃÃ»õ›Z[à›Ÿ\à‹à[à\]Z]ò[[ùõ›Z[àŸ\ùö[ô…À	ÃL»úùZ]ò[YY[àHôX⁄\IÀ	–⁄[õò[[€à‹àŸYYÀYà›Z]XõI◊N¬àBàYà
+ò[YKö[ò€Y\ 	ﬁ[Ÿ›\ù	 Hò[YKö[ò€Y\ 	ﬁ[Ÿ⁄\ù	 Hò[YKö[ò€Y\ 	ÿ€›YŸH⁄Y\ŸI JH¬àô]\õà…Ãåå8†$ÃçL»[Ÿ›\ù‹à€›YŸH⁄Y\ŸHò[YY[àHôX⁄\IÀ	ÃL»úùZ]‹àôYŸ]Xõ\»ò[YY[àHôX⁄\IÀ	–HYX\›\ôYL8†$Ãå»‹[ôÀYà[ò€YY	À	‘ŸX\€€ö[ô»»\›I◊N¬àBàYà
+ò[YKö[ò€Y\ 	›‹ò\	 Hò[YKö[ò€Y\ 	‹]I Hò[YKö[ò€Y\ 	‹ÿ[ô⁄X⁄	 Hò[YKö[ò€Y\ 	ÿòYŸ[	 JH¬àô]\õà…ÃH⁄€Y‹òZ[à‹ò\]Kÿ[ô⁄X⁄‹àòYŸ[\»ò[YY	À	ÃML»€€⁄ŸYõ›Z[àö[[ô»‹àH\]Z]ò[[ù⁄›€âÀ	Ãà[ôù[»ÿ[Y‹à€€⁄ŸYôYŸ]Xõ\…À	ÃHú‹›Z]XõHÿ]XŸH‹àô\‹⁄[ô…◊N¬àBà€€ú›õ›Z[ì‹[€ú»H¬à…ÿ⁄X⁄Ÿ[âÀ	ÃMå8†$ÃN»€€⁄ŸY⁄X⁄Ÿ[â◊Kà…›\öŸ^IÀ	ÃMå8†$ÃN»€€⁄ŸY\öŸ^I◊Kà…ÿôYYâÀ	ÃMå8†$ÃN»X[àôYYâ◊Kà…‹ÿ[[€âÀ	ÃMÃ8†$ÃN»ÿ[[€â◊Kà…›[òIÀ	ÃM8†$ÃML»òZ[ôY[òI◊Kà…ÿ€Ÿ	À	ÃN»€Ÿ	◊Kà…›ŸùIÀ	ÃN8†$Ãåå»ö\õHŸùI◊Kà…€[ù[	À	ÃN8†$Ãåå»€€⁄ŸY[ù[…◊Kà…ÿôX[âÀ	ÃN8†$Ãåå»€€⁄ŸYôX[ú…◊Kà…ÿ⁄X⁄‹XIÀ	ÃN8†$Ãåå»€€⁄ŸY⁄X⁄‹X\…◊Kà…ŸYŸ…À	Ã∏†$Ã»YŸ‹…◊BàN¬à€€ú›ÿ\òõ⁄Yò]S‹[€ú»H¬à…‹öXŸIÀ	ÃM8†$ÃMå»€€⁄ŸYöXŸI◊Kà…‹]Z[õÿIÀ	ÃM8†$ÃMå»€€⁄ŸY]Z[õÿI◊Kà…‹\›IÀ	ÕÃ8†$Œ»ûH\›I◊Kà…€õ€ŸIÀ	ÃM8†$ÃMå»€€⁄ŸYõ€Ÿ\…◊Kà…‹›]…À	Ãåå8†$ÃçL»›]»‹à›ŸY]›]…◊Kà…ÿ€›\ÿ€›\…À	ÃML»€€⁄ŸY€›\ÿ€›\…◊BàN¬à€€ú›õ›Z[àH
+õ›Z[ì‹[€úÀôö[ô
+
+›⁄Ÿ[óJHOàò[YKö[ò€Y\ ⁄Ÿ[äJH€ù[	ÃML8†$Ãå»ŸàHõ›Z[àò[YY[àHôX⁄\I◊JVÃWN¬à€€ú›ÿ\òõ⁄Yò]HH
+ÿ\òõ⁄Yò]S‹[€úÀôö[ô
+
+›⁄Ÿ[óJHOàò[YKö[ò€Y\ ⁄Ÿ[äJH€ù[	–H‹ù[€àŸàH‹òZ[ã›]»‹à[ŸHò[YY[àHôX⁄\I◊JVÃWN¬àô]\õà‹õ›Z[ãÿ\òõ⁄Yò]K	Ãå8†$ÃçL»ôYŸ]Xõ\»ò[YY[àHôX⁄\IÀ	ÃH‹⁄[\»\òú»‹à‹XŸ\…◊N¬àBÇàù[ò›[€à⁄YùYX[ôX⁄\R⁄[ô
+YXJH¬àYà
+YXH	âàYXKö⁄[ô
+Hô]\õàYXKö⁄[ô¬à€€ú›ò[YHH›ö[ô YXH	âàYXKõò[YH	… Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+ò[YKö[ò€Y\ 	€›ô\õöY⁄	 JHô]\õà	€›ô\õöY⁄	Œ¬àYà
+ò[YKö[ò€Y\ 	‹€[€›YI Hò[YKö[ò€Y\ 	‹⁄ZŸI JHô]\õà	ÿõ[ô	Œ¬àYà
+ò[YKö[ò€Y\ 	›‹ò\	 Hò[YKö[ò€Y\ 	‹]I Hò[YKö[ò€Y\ 	‹ÿ[ô⁄X⁄	 Hò[YKö[ò€Y\ 	ÿòYŸ[	 JHô]\õà	›‹ò\	Œ¬àYà
+ò[YKö[ò€Y\ 	ÿòZŸY	 Hò[YKö[ò€Y\ 	‹õÿ\›	 Hò[YKö[ò€Y\ 	›ò^XòZŸI Hò[YKö[ò€Y\ 	⁄òX⁄Ÿ]	 JHô]\õà	ÿòZŸIŒ¬àYà
+ò[YKö[ò€Y\ 	‹›\ãYúûI Hò[YKö[ò€Y\ 	€õ€ŸI JHô]\õà	‹›\ôúûIŒ¬àYà
+ò[YKö[ò€Y\ 	ÿ›\úûI Hò[YKö[ò€Y\ 	ÿ⁄[I Hò[YKö[ò€Y\ 	‹€›\	 Hò[YKö[ò€Y\ 	‹›]… Hò[YKö[ò€Y\ 	ÿõ€Ÿ€ô\ŸI JHô]\õà	‹⁄[[Y\âŒ¬àYà
+ò[YKö[ò€Y\ 	ŸYŸ… Hò[YKö[ò€Y\ 	€€Y[]I Hò[YKö[ò€Y\ 	‹⁄Z‹⁄ZÿI Hò[YKö[ò€Y\ 	‹[òÿZŸI JHô]\õà	‹⁄⁄[]	Œ¬àYà
+ò[YKö[ò€Y\ 	ﬁ[Ÿ›\ù	 Hò[YKö[ò€Y\ 	ÿ€›YŸH⁄Y\ŸI Hò[YKö[ò€Y\ 	€ÿ]ÿZŸI JHô]\õà	‹€òX⁄…Œ¬àô]\õà	ÿõ›€	Œ¬àBÇàù[ò›[€à⁄YùYX[ôX⁄\T›\ YXJH¬à€€ú›⁄[ôH⁄YùYX[ôX⁄\R⁄[ô
+YXJN¬à€€ú››\»H¬à›ô\õöY⁄à…–YHYX\›\ôY[ô‹ôYY[ù»»HYY€€ùZ[ô\à[ô›\à‹õ›Y⁄KâÀ	–€›ô\à[ôôYúöYŸ\ò]Hõ‹à]X\›õ›\à›\ú»‹à›ô\õöY⁄âÀ	‘›\àYÿZ[ãYHúô\⁄‹[ô»[ôŸY\⁄[Y[ù[X][ãâ◊Kàõ[ôà…”YX\›\ôH]ô\ûH[ô‹ôYY[ù€»HŸŸŸY‹ù[€à›^\»Xÿ›\ò]KâÀ	–õ[ô[ù[€[€›Y[ô»H]H[‹ôH\]ZY€õHYàôYYYâÀ	—ö[ö»›òZY⁄]ÿ^H‹àŸY\⁄[Y[àHŸX[Yõ›Hõ‹àH⁄Yùâ◊Kà‹ò\à…–€€⁄»‹àÿ\õHHõ›Z[àö[[ô»[ôôYŸ]Xõ\Œ»YX]]\›ôH€€⁄ŸYõ›Y⁄âÀ	’ÿ\õHH‹ò\‹àúôXY[à^Y\à[àHö[[ôÀÿ[Y[ôYX\›\ôYÿ]XŸKâÀ	—õ€ö\õ[K⁄[õ€\HYàX⁄⁄[ôÀ[ôôZX]€õH⁄[à›Z]XõKâ◊KàòZŸNà…“X]H›ô[à»å0¨»»N0¨»ò[à[ôô\\ôHH[ô‹ôYY[ù»[à]ô[àYXŸ\ÀâÀ	‘ŸX\€€ãYHYX\›\ôY⁄[[ôòZŸH[ù[ôYŸ]Xõ\»\ôH[ô\à[ôHõ›Z[à\»ÿYô[H€€⁄ŸYõ›Y⁄âÀ	‘‹ù[€à⁄]Hô[XZ[ö[ô»⁄Y\Œ»€€€Yù›ô\ú»]ZX⁄€HôYõ‹ôHôYúöYŸ\ò][ôÀâ◊Kà›\ôúûNà…‘ô\\ôH]ô\ûH[ô‹ôYY[ùôYõ‹ôHX][ô»H[ãâÀ	–€€⁄»Hõ›Z[àÿYô[KYôYŸ]Xõ\À[àH€€⁄ŸY‹òZ[à‹àõ€Ÿ\»[ôYX\›\ôYÿ]XŸKâÀ	‘›\ãYúûH[ù[\[ô»›[ô]öYH[ù»H›YŸŸ\›Y‹ù[€ãâ◊Kà⁄[[Y\éà…‘ô\\ôHHõ›Z[ãôYŸ]Xõ\»[ôYX\›\ôYÿ\òõ⁄Yò]KâÀ	–€€⁄»\õ€X]X‹»[ôõ›Z[ãYHÿ]XŸH‹à›ÿ⁄À[à⁄[[Y\à[ù[]ô\û][ô»\»ÿYô[H€€⁄ŸY[ô[ô\ãâÀ	–YH€€⁄ŸY‹òZ[à‹à⁄YK‹ù[€ã[ô€€€[ûH⁄Yù\ô\Ÿ\ùö[ô‹»]ZX⁄€Kâ◊Kà⁄⁄[]à…‘ô\\ôH[ôYX\›\ôHH[ô‹ôYY[ù»ôYõ‹ôHX][ô»Hõ€ã\›X⁄»[ãâÀ	–€€⁄»HôYŸ]Xõ\»[ôõ›Z[à[ù[ÿYô[H€€⁄ŸYõ›Y⁄\⁄[ô»€õHHYX\›\ôY⁄[âÀ	‘Ÿ\ùôH[[YYX][H⁄]Hò[YY⁄Y\»[ôŸX\€€à»\›Kâ◊Kà€òX⁄Œà…”YX\›\ôHH\›Y[ô‹ôYY[ù»[ù»€ôH›YŸŸ\›Y‹ù[€ãâÀ	–€€Xö[ôH‹à\‹Ÿ[XõH[H[àH€X[ãŸX[Y€€ùZ[ô\ãâÀ	“ŸY\⁄[Y⁄[àô\]Z\ôY[ô⁄X⁄»HõŸX›Xô[»ôYõ‹ôHX][ôÀâ◊Kàõ›€à…–€€⁄»Hõ›Z[à[ô‹òZ[à‹à›]»Xÿ€‹ô[ô»»X⁄»›ZY[òŸN»€€⁄»[ö[X[õ›Z[ú»‹õ›Y⁄KâÀ	‘ô\\ôHHôYŸ]Xõ\»[ôYX\›\ôYô\‹⁄[ô»‹àŸX\€€ö[ôÀâÀ	–\‹Ÿ[XõH€ôH‹ù[€ã‹à€€€€€\€ô[ù»]ZX⁄€H[ô›‹ôHŸ\\ò][Hõ‹àH⁄Yùâ◊BàN¬àô]\õà›\÷⁄⁄[ôH›\Àòõ›€¬àBÇàù[ò›[€à‹[î⁄YùYX[]Z[
+\KYX[\K[ô^]RŸ^JH¬à€€ú›YX\»H⁄YùYX[YX\—õ‹ä\KYX[\JN¬àYà
+ZYX\Àõ[ô›
+H¬à⁄›’ÿ\›
+	”õ»€€\]XõHYX[YX\»õ‹à\ŸHô\]Z\ô[Y[ù… N¬àô]\õé¬àBà⁄YùYX[]Z[Ÿ[X›[€àH¬à\KàYX[\Kà[ô^àX]õX^
+X]õZ[äYX\Àõ[ô›HKù[Xô\ä[ô^
+H
+JKà]RŸ^Nà◊óÕKWÃüKWÃüIÀù\›
+›ö[ô ]RŸ^H	… JH»›ö[ô ]RŸ^JHà›]KùöY]—]BàN¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬àô[ô\î⁄YùYX[]Z[
+
+N¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€à€‹ŸT⁄YùYX[]Z[
+
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	€õ€ôIŒ¬à⁄YùYX[]Z[Ÿ[X›[€àHù[¬àBÇàù[ò›[€àŸ[X›⁄YùYX[]Z[
+[ô^
+H¬àYà
+\⁄YùYX[]Z[Ÿ[X›[€äHô]\õé¬à€€ú›YX\»H⁄YùYX[YX\—õ‹ä⁄YùYX[]Z[Ÿ[X›[€ãù\K⁄YùYX[]Z[Ÿ[X›[€ãõYX[\JN¬à⁄YùYX[]Z[Ÿ[X›[€ãö[ô^HX]õX^
+X]õZ[äYX\Àõ[ô›HKù[Xô\ä[ô^
+H
+JN¬àô[ô\î⁄YùYX[]Z[
+
+N¬àBÇàù[ò›[€àô[ô\î⁄YùYX[]Z[
+
+H¬àYà
+\⁄YùYX[]Z[Ÿ[X›[€äHô]\õé¬à€€ú›Ÿ[X›[€àH⁄YùYX[]Z[Ÿ[X›[€é¬à€€ú›YX\»H⁄YùYX[YX\—õ‹äŸ[X›[€ãù\KŸ[X›[€ãõYX[\JN¬àYà
+ZYX\Àõ[ô›
+H¬à€‹ŸT⁄YùYX[]Z[
+
+N¬à⁄›’ÿ\›
+	”õ»€€\]XõHôX⁄\\»ô[XZ[àYù\à]Y]\ûH⁄[ôŸI N¬àô]\õé¬àBàŸ[X›[€ãö[ô^HX]õX^
+X]õZ[äYX\Àõ[ô›HKŸ[X›[€ãö[ô^
+JN¬à€€ú›YXHHYX\÷‹Ÿ[X›[€ãö[ô^N¬à€€ú›[ô‹ôYY[ù»H\úò^Kö\–\úò^JYXKö[ô‹ôYY[ù H	âàYXKö[ô‹ôYY[ùÀõ[ô›à»YXKö[ô‹ôYY[ù¬àà[ôô\úôY⁄YùYX[[ô‹ôYY[ù YXJN¬à€€ú››\»H⁄YùYX[ôX⁄\T›\ YXJN¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬à€€ú›]HHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[]]I N¬à€€ú›⁄X⁄Ÿ\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[Z⁄X⁄Ÿ\â N¬à€€ú›€›[ùHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[X€›[ù	 N¬à€€ú›‹[€ú»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[[‹[€ú… N¬à€€ú›€€ù[ùHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[X€€ù[ù	 N¬à€€ú›Yù]€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[Y]Z[XY	 N¬àYà
+]]H[‹[€ú»X€€ù[ù
+Hô]\õé¬Çà]Kù^€€ù[ùHYXKõò[YN¬àYà
+⁄X⁄Ÿ\äH⁄X⁄Ÿ\ãù^€€ù[ùH	ÿZP€ÿX⁄⁄YùXô[
+Ÿ]⁄Yùõ‹ë]JŸ[X›[€ãô]RŸ^JJ_H0≠»	‹Ÿ[X›[€ãõYX[\_X¬àYà
+€›[ù
+H€›[ùù^€€ù[ùH	⁄YX\Àõ[ô›H€€\]XõH⁄⁄XŸI⁄YX\Àõ[ô›OOHH»	…»à	‹…ﬂX¬à‹[€úÀö[õô\íSHYX\ÀõX\
+
+‹[€ã[ô^
+HOà¬à€€ú›X›]ôHH[ô^OOHŸ[X›[€ãö[ô^¬àô]\õàù]€à€ò€X⁄œHúŸ[X›⁄YùYX[]Z[
+	⁄[ô^JHà€\‹œHù^[YùL»õ›[ôY^õ‹ô\ãLà	ÿX›]ôH»	ÿõ‹ô\ã[‹ò[ôŸKMLôÀ[‹ò[ôŸKML	»à	ÿõ‹ô\ã\€]KLåôÀ]⁄]IﬂHèÇà‹[à€\‹œHòõÿ⁄»^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH	ÿX›]ôH»	›^[‹ò[ôŸKMå	»à	›^\€]KM	ﬂHèê⁄⁄XŸH	⁄[ô^
+»_O‹‹[èÇà‹[à€\‹œHòõÿ⁄»õ€ùXõX⁄»^^»]LHèâŸ\ÿÿ\R[
+‹[€ãõò[YJ_O‹‹[èÇà‹[à€\‹œHòõÿ⁄»^VÃLH^\€]KML]LHèâ€‹[€ãòÿ[‹öY\ﬂHÿÿ[0≠»	€‹[€ãúõ›Z[üY»õ›Z[è‹‹[èÇàÿù]€èò¬àJKöõ⁄[ä	… N¬Çà€€ú›]SXô[Hô]»]JŸ[X›[€ãô]RŸ^H
+»	’Léåå	 Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»ŸYZŸ^Nà	€€ô…À^Nà	€ù[Y\öX…À[€ùà	€€ô…»JN¬à€€ú›ô\]Z\ô[Y[ùXô[»H
+õŸö[Kúô\]Z\ô[Y[ù»◊JKõX\
+ò[YHOàQUTñW‘ëTURTëSQSï”PëS÷›ò[YWHò[YJN¬à€€ú›[\ôŸ[ìXô[»HY]\ûSYX[[\ôŸ[ú YXJN¬à€€ú›ŸŸŸY€›[ùH
+›]KôZ[SYX[»◊JKôö[\äYX[OàYX[ô]HOOHŸ[X›[€ãô]RŸ^H	âàYX[ú⁄YùYX[YXRYOOHYXKöY
+Kõ[ô›¬à€€ù[ùö[õô\íSHà\ùX€H€\‹œHòõ‹ô\ãLàõ‹ô\ã\€]KLåõ›[ôYVÃúô[WHM€NúMàèÇà]à€\‹œHôõ^õ^X€€€Nôõ^\õ›»€Nö][\À\›\ù€Nöù\›YûKXô]ŸY[àÿ\L»èÇà]èÇà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKMåèâŸ\ÿÿ\R[
+⁄YùYX[[Z[ô”Xô[
+Ÿ[X›[€ãù\KŸ[X›[€ãõYX[\JJ_H0≠»	Ÿ\ÿÿ\R[
+]SXô[
+_O‹Çà€\‹œHù^Lûõ€ùXõX⁄»]LHèâŸ\ÿÿ\R[
+YXKõò[YJ_O⁄Çà]à€\‹œHôõ^õ^]‹ò\ÿ\LKçH]Làèâ‹⁄YùYX[YXPòYŸ\“S
+YXJ_OŸ]èÇàŸ]èÇà]à€\‹œHô‹öY‹öYX€€ÀLàÿ\Làõ^\⁄ö[öÀLèÇà‹[à€\‹œHòôÀ\€]KNL^]⁄]HL»KLàõ›[ôY^^^»õ€ùXõX⁄»^XŸ[ù\àèâ⁄YXKòÿ[‹öY\ﬂHÿÿ[‹‹[èÇà‹[à€\‹œHòôÀZ[ôY€ÀML^Z[ôY€ÀMÃL»KLàõ›[ôY^^^»õ€ùXõX⁄»^XŸ[ù\àèâ⁄YXKúõ›Z[üY»õ›Z[è‹‹[èÇàŸ]èÇàŸ]èÇà€\‹œHù^\€H^\€]KMå]MèâŸ\ÿÿ\R[
+YXKõõ›J_O‹ÇÇà]à€\‹œHô‹öY‹öYX€€ÀMÿ\Là]MèÇà]à€\‹œHòôÀ\€]KMLLàõ›[ôY^^XŸ[ù\àèè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõX⁄»èêÿ\òúœ‹è€\‹œHôõ€ùXõX⁄»^\€Hèâ⁄YXKòÿ\òúﬂYœ‹èŸ]èÇà]à€\‹œHòôÀ\€]KMLLàõ›[ôY^^XŸ[ù\àèè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõX⁄»èëò]‹è€\‹œHôõ€ùXõX⁄»^\€Hèâ⁄YXKôò]Yœ‹èŸ]èÇà]à€\‹œHòôÀ\€]KMLLàõ›[ôY^^XŸ[ù\àèè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõX⁄»èëöXúôO‹è€\‹œHôõ€ùXõX⁄»^\€Hèâ⁄YXKôöXô\üYœ‹èŸ]èÇà]à€\‹œHòôÀ\€]KMLLàõ›[ôY^^XŸ[ù\àèè€\‹œHù^VŒ\H\\òÿ\ŸH^\€]KMõ€ùXõX⁄»èîŸ\ùö[ôœ‹è€\‹œHôõ€ùXõX⁄»^\€Hèâ⁄YXKú‹ù[€êYù\›Y»	ŒII»à	ÃpÂ…ﬂO‹èŸ]èÇàŸ]èÇÇà]à€\‹œHô‹öY‹öYX€€ÀLHYô‹öYX€€ÀLàÿ\MH]MàèÇàŸX›[€èÇàH€\‹œHôõ€ùXõX⁄»õ^][\ÀXŸ[ù\àÿ\LàèèH]K[X⁄YOHú⁄‹[ôÀXò\⁄Ÿ]à€\‹œHùÀMM^[‹ò[ôŸKMåèè⁄Oà[ô‹ôYY[ùœ⁄OÇà[€\‹œHõ]L»‹XŸK^KLàèâ⁄[ô‹ôYY[ùÀõX\
+][HOàH€\‹œHôõ^][\À\›\ùÿ\Là^\€H^\€]KMåèè‹[à€\‹œHù^[‹ò[ôŸKMLõ€ùXõX⁄»è∏†(è‹‹[èè‹[èâŸ\ÿÿ\R[
+][J_O‹‹[èè€Oò
+Köõ⁄[ä	… _O›[Çà‹ŸX›[€èÇàŸX›[€èÇàH€\‹œHôõ€ùXõX⁄»õ^][\ÀXŸ[ù\àÿ\LàèèH]K[X⁄YOHõ\›[‹ô\ôYà€\‹œHùÀMM^[‹ò[ôŸKMåèè⁄Oà[ú›ùX›[€úœ⁄OÇà€€\‹œHõ]L»‹XŸK^KL»èâ‹›\ÀõX\
+
+›\[ô^
+HOàH€\‹œHôõ^][\À\›\ùÿ\L»^\€H^\€]KMåèè‹[à€\‹œHùÀMàMàôÀ\€]KNL^[‹ò[ôŸKLÃõ›[ôYYù[õ^][\ÀXŸ[ù\àù\›YûKXŸ[ù\à^VÃLHõ€ùXõX⁄»õ^\⁄ö[öÀLèâ⁄[ô^
+»_O‹‹[èè‹[èâŸ\ÿÿ\R[
+›\
+_O‹‹[èè€Oò
+Köõ⁄[ä	… _O€€Çà‹ŸX›[€èÇàŸ]èÇÇà	›\[ŸàYX[ÿYô]RSOOH	Ÿù[ò›[€â»»YX[ÿYô]RS
+YXKõŸö[JHàà]à€\‹œHõ]MàôÀX[Xô\ãMLõ‹ô\àõ‹ô\ãX[Xô\ãLåMõ›[ôY^èÇà€\‹œHôõ€ùXõX⁄»^^»^X[Xô\ãNLèëY]\ûH[ôõ€Ÿ\ÿYô]H⁄X⁄œ‹Çà€\‹œHù^VÃL\H^X[Xô\ãN]LHèâ‹ô\]Z\ô[Y[ùXô[Àõ[ô›»[›\àÿ]ôYô\]Z\ô[Y[ùŒà	Ÿ\ÿÿ\R[
+ô\]Z\ô[Y[ùXô[Àöõ⁄[ä	»0≠»	 J_Kàà	…ﬂI‹õŸö[Kõõ›\»»[›\àõ›Nà	Ÿ\ÿÿ\R[
+õŸö[Kõõ›\ _Kàà	…ﬂT‹‹⁄XõHôX⁄\HõY‹Œà	Ÿ\ÿÿ\R[
+[\ôŸ[ìXô[Àõ[ô›»[\ôŸ[ìXô[Àöõ⁄[ä	À	 Hà	€õ€ôHY[ùYöYY	 _Kà[ÿ^\»⁄X⁄»]ô\ûHXô[[ôô]ô[ù‹õ‹‹ÀX€€ù[Z[ò][€ãè‹ÇàŸ]èòBàÿ\ùX€Oò¬àYà
+Yù]€äHYù]€ãù^€€ù[ùHŸŸŸY€›[ù»8ß$»YY	€ŸŸŸY€›[ùH0≠»YYÿZ[òàY	⁄YXKõò[Y_H»X\ûX¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€àYŸ[X›Y⁄YùYX[YXJ
+H¬àYà
+\⁄YùYX[]Z[Ÿ[X›[€äHô]\õé¬à€€ú›Ÿ[X›[€àHÿöôX›ò\‹⁄Y€äﬂK⁄YùYX[]Z[Ÿ[X›[€äN¬àY⁄YùYX[YXJŸ[X›[€ãù\KŸ[X›[€ãõYX[\KŸ[X›[€ãö[ô^Ÿ[X›[€ãô]RŸ^JN¬àô[ô\î⁄YùYX[]Z[
+
+N¬àBÇÇàù[ò›[€àõ›]T⁄YùYX[YXJ\KYX[\K\ôX›[€ã]RŸ^JH¬à€€ú›YX\»H⁄YùYX[YX\—õ‹ä\KYX[\JN¬àYà
+ZYX\Àõ[ô›
+Hô]\õé¬à€€ú›Ÿ^HH\H
+»	Œâ»
+»YX[\N¬à“Qï”QPS‘ì’US”ñ⁄Ÿ^WHH
+
+ù[Xô\ä“Qï”QPS‘ì’US”ñ⁄Ÿ^WJH
+H
+»ù[Xô\ä\ôX›[€à
+H
+»YX\Àõ[ô›
+H	HYX\Àõ[ô›¬à€€ú›€›Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[[‹[€ãI»
+»\H
+»	ÀI»
+»YX[\JN¬àYà
+€›
+H€›ö[õô\íSH⁄YùYX[YXPÿ\ôS
+\KYX[\K]RŸ^JN¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€àY⁄YùYX[YXJ\KYX[\K[ô^]RŸ^JH¬à€€ú›YX\»H⁄YùYX[YX\—õ‹ä\KYX[\JN¬à€€ú›YXHHYX\»	âàYX\÷”ù[Xô\ä[ô^
+WN¬à€€ú›\ôŸ]]HH◊óÕKWÃüKWÃüIÀù\›
+›ö[ô ]RŸ^H	… JH»›ö[ô ]RŸ^JHà›]KùöY]—]N¬àYà
+ZYXHK◊óÕKWÃüKWÃüIÀù\›
+›ö[ô \ôŸ]]H	… JJH»⁄›’ÿ\›
+	”YX[YXH[ò]òZ[XõI N»ô]\õé»Bà€€ú›ò\ŸHH»ÿ[‹öY\ŒàYXKòÿ[‹öY\Àõ›Z[éàYXKúõ›Z[ãÿ\òúŒàYXKòÿ\òúÀò]àYXKôò]öXô\éàYXKôöXô\ã›Yÿ\éà\–›\›€NàùYKŸ\ùö[ôŒà	ÃH›YŸŸ\›Y‹ù[€â»N¬à€€ú›[ùûHH¬àYà]Kõõ› 
+H
+»X]úò[ô€J
+K]Nà\ôŸ]]K\NàYX[\KYX[\Kàò[YNàYXKõò[YK[XYŸNàù[ÿ[‹öY\ŒàYXKòÿ[‹öY\Àõ›Z[éàYXKúõ›Z[ãàÿ\òúŒàYXKòÿ\òúÀò]àYXKôò]öXô\éàYXKôöXô\ã›Yÿ\éàà[[›[ùàK[[›[ù\Nà	‹‹ù[€âÀò\ŸK€›\òŸNà	‹⁄Yù[YX[ZYXIÀà⁄Yù\Nà\K⁄YùYX[YXRYàYXKöY‹ôX]Y]àô]»]J
+Kù“T”‘›ö[ô 
+BàN¬àYà
+P\úò^Kö\–\úò^J›]KôZ[SYX[ JH›]KôZ[SYX[»H◊N¬à›]KôZ[SYX[Àú\⁄
+[ùûJN¬àÿ]ôT›]J
+N¬à]]‘ÿ]ôSù]ö][€ä
+N¬àô[ô\ëX\ûJ
+N¬àô[ô\ë\⁄õÿ\ô
+
+N¬à€€ú›€›Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄Yù[YX[[‹[€ãI»
+»\H
+»	ÀI»
+»YX[\JN¬àYà
+€›
+H€›ö[õô\íSH⁄YùYX[YXPÿ\ôS
+\KYX[\K\ôŸ]]JN¬à€€ú›Xô[Hô]»]J\ôŸ]]H
+»	’Léåå	 Kù”ÿÿ[Q]T›ö[ô 	Ÿ[ãQ–âÀ»ŸYZŸ^Nà	‹⁄‹ù	À^Nà	€ù[Y\öX…À[€ùà	‹⁄‹ù	»JN¬à⁄›’ÿ\›
+	⁄YXKõò[Y_HYY»	€Xô[X
+N¬àBÇàù[ò›[€àYX[õ› [YK]K\ÿÀ€ôJH¬à€€ú›€€‹ú»H¬àXZ[éà	ÿôÀZ[ôY€ÀMLõ‹ô\ãZ[ôY€ÀLå	ÀàY⁄à	ÿôÀY[Y\ò[MLõ‹ô\ãY[Y\ò[Lå	Àà]õ⁄Yà	ÿôÀ\õ‹ŸKMLõ‹ô\ã\õ‹ŸKLå	Àà€Y\à	ÿôÀ\€]KLLõ‹ô\ã\€]KLå	¬àN¬àô]\õàà]à€\‹œHôõ^ÿ\L»L»õ›[ôYLûõ‹ô\à	ÿ€€‹ú÷›€ôWH	ÿôÀ\€]KMLõ‹ô\ã\€]KLå	ﬂHXãLàèÇà]à€\‹œHù^^»õ€ùXõX⁄»^\€]KMLÀLåõ^\⁄ö[öÀLLçHèâ›[Y_OŸ]èÇà]à€\‹œHõZ[ã]ÀLèÇà€\‹œHôõ€ùXõ€^\€Hèâ›]_O‹Çà€\‹œHù^^»^\€]KML]LçHèâŸ\ÿﬂO‹ÇàŸ]èÇàŸ]èò¬àBÇàù[ò›[€àöY⁄⁄YùYX[S
+⁄Yù
+H¬à€€ú›‹H⁄Yù
+
+N¬à€€ú››\ùHU”Z[ä
+⁄Yù	âà⁄Yùú›\ù
+H‹ú⁄Yù›\ù
+N¬à€€ú›[ôHU”Z[ä
+⁄Yù	âà⁄Yùô[ô
+H‹ú⁄Yù[ô
+N¬àô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèïH€ÿ[àX][›\àXZ[àõ€ŸôYõ‹ôKŸX\õH[àH⁄YùŸY\HY\[öY⁄›\ú»Y⁄[ô€â›€»»ôY€àHù[›€XX⁄è‹Çà	€YX[õ› Z[ï“J›\ùHLå
+K	–[ò⁄‹àYX[
+ôYõ‹ôH⁄Yù
+IÀ	÷[›\àöYŸŸ\›[‹›ò[[òŸYYX[åöôYõ‹ôH›\ù[ôÀàX[àõ›Z[à
+»€€\^ÿ\òú»
+»ôY»õ‹à›XYH8†$Õö[ô\ôﬁH8†%\»\»⁄]›‹»Hÿ[Hô[ô[ôÀ[XX⁄[ôHò\âÀ	€XZ[â _Bà	€YX[õ› Z[ï“J›\ù
+»N
+K	”ZY\⁄Yùõ›Z[à€òX⁄…À	–Hõ›Z[ãYõ‹ùÿ\ô€òX⁄»å¯†$Õ[ãà‹ôYZ»[Ÿ›\ù€›YŸH⁄Y\ŸKõ⁄[YYŸ‹À‹àHX[ã\õ›Z[à‹ò\àŸY\»[›Hù[⁄]›]H›Yÿ\à‹ò\⁄âÀ	€Y⁄	 _Bà	€YX[õ› 	ÃLò[x†$Õò[IÀ	–ö[€Ÿ⁄Xÿ[öY⁄8†%ŸY\Z[ö[X[	À	’ûH»]õ⁄YHù[YX[[à\ŸH›\úŒà\»\»⁄[à[›\àõŸH[ô\»õ€Ÿ€‹ú›
+Y⁄\à€X€‹ŸH	àò][àHõ€Ÿ
+KàYà[›H]\›X]ŸY\]€X[[ôõ›Z[ã›ôY»ò\ŸYõ››Yÿ\ûH‹àX]ûKâÀ	ÿ]õ⁄Y	 _Bà	€YX[õ› Z[ï“J[ô
+K	‘‹›\⁄YùàY⁄€õIÀ	–H€X[X\ﬁK]ÀYYŸ\›YX[][‹›àö[ö\⁄X][ô»]X\›åZôYõ‹ôH€Y\€»]Ÿ\€ó	›‹ôX⁄»[›\à€Y\]X[]KâÀ	€Y⁄	 _Bà	€YX[õ› 	—^][YIÀ	‘€Y\	À	‘õ›X›[›\à€Y\⁄[ô›Àà\öÀ€€€]ZY]õ€€Kà€Y\\»⁄\ôHò][‹‹»[ô]\ÿ€KXùZ[[ô»X›X[H\[ãâÀ	‹€Y\	 _BàŸ]èò¬àBÇàù[ò›[€à^T⁄YùYX[S
+⁄Yù
+H¬à€€ú›‹H⁄Yù
+
+N¬à€€ú››\ùHU”Z[ä
+⁄Yù	âà⁄Yùú›\ù
+H‹ú⁄Yù›\ù
+N¬à€€ú›[ôHU”Z[ä
+⁄Yù	âà⁄Yùô[ô
+H‹ú⁄Yù[ô
+N¬àô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèë^][YH⁄Yù»\ôH[‹ôH⁄\òÿYX[ãYúöY[ôKàúõ€ù[ÿY[›\àÿ[‹öY\»X\õY\à[ôŸY\H]ô[ö[ô»Y⁄\ãè‹Çà	€YX[õ› Z[ï“J›\ùHå
+K	–úôXZŸò\›	À	–H€€Yõ›Z[à
+»ÿ\òàúôXZŸò\›⁄][àò[à›\àŸàÿZ⁄[ôÀà[ú›[[àŸ[ú⁄]]ö]H\»Y⁄\›X\õY\à[àH^KâÀ	€XZ[â _Bà	€YX[õ› 	”ZY^IÀ	”[ò⁄8†%XZ[àYX[	À	”XZŸH[ò⁄[›\à\ôŸ\›YX[⁄\ôH[›Hÿ[ãàõ›Z[ã€€\^ÿ\òúÀôYÀâÀ	€XZ[â _Bà	€YX[õ› Z[ï“J[ô
+K	—[õô\à8†%Y⁄\à	àX\õY\âÀ	–Z[H»ö[ö\⁄[›\àXZ[à]ô[ö[ô»X][ô»ôYõ‹ôHé\Kà]K\ôŸH[õô\ú»\ôH[öŸY»€‹úŸHY]Xõ€X»›]€€Y\ÀâÀ	€Y⁄	 _Bà	€YX[õ› 	–Yù\à\IÀ	’⁄[ô›€âÀ	–]õ⁄Y]HX]ûHYX[»[ô›Yÿ\ûH€òX⁄‹ÀàH€X[õ›Z[à€òX⁄»\»ö[ôHYàŸ[ùZ[ô[H[ô‹ûKâÀ	ÿ]õ⁄Y	 _BàŸ]èò¬àBÇàù[ò›[€àX\õT⁄YùYX[S
+⁄Yù
+H¬à€€ú›‹H⁄Yù
+
+N¬à€€ú››\ùHU”Z[ä
+⁄Yù	âà⁄Yùú›\ù
+H‹ú⁄Yù›\ù
+N¬à€€ú›[ôHU”Z[ä
+⁄Yù	âà⁄Yùô[ô
+H‹ú⁄Yù[ô
+N¬àô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèîõ›X›€Y\ûHô\\ö[ô»úôXZŸò\›[ô⁄Yùõ€Ÿ[àYò[òŸK[àXŸH[›\àXZ[àYX[Yù\à€‹ö»ò]\à[à⁄⁄\[ô»õ›Y⁄H[‹õö[ôÀè‹Çà	€YX[õ› Z[ï“J›\ùHJK	‘ôK\⁄YùúôXZŸò\›	À	“ŸY\]]ZX⁄»ù]ò[[òŸYàõ›Z[à\»€›À\ô[X\ŸHÿ\òúÀàô\\ôH]HöY⁄ôYõ‹ôH€»HX\õH›\ùŸ\»õ›ôX€€YHHZ\‹ŸYYX[âÀ	€XZ[â _Bà	€YX[õ› Z[ï“J›\ù
+»N
+K	”ZY\⁄YùYX[‹à€òX⁄…À	’\ŸHHX⁄ŸYõ›Z[ãYõ‹ùÿ\ô‹[€à⁄]úùZ]‹à⁄€Y‹òZ[àÿ\òú»»ŸY\[ô\ôﬁH›XYY\àõ›Y⁄HX\õH⁄YùâÀ	€Y⁄	 _Bà	€YX[õ› Z[ï“J[ô
+»Ã
+K	‘‹›\⁄YùXZ[àYX[	À	“]ôH[›\à\ôŸ\›ò[[òŸYYX[€€€àYù\à€‹öÀ⁄[H\ôH\»›[[ùHŸà^][YHYùõ‹àYŸ\›[€à[ôôX€›ô\ûKâÀ	€XZ[â _Bà	€YX[õ› 	ﬂç∏†$Õ‹IÀ	”Y⁄\à]ô[ö[ô»YX[	À	“ŸY\[õô\àY⁄\à[ôö[ö\⁄X\õH[õ›Y⁄»õ›X›HX\õY\àôY[YH[›\àô^⁄YùôYYÀâÀ	€Y⁄	 _BàŸ]èò¬àBÇàù[ò›[€àŸôë^SYX[S
+
+H¬àô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèï\ŸHô\›^\»»ùYŸH[›\àõŸH€ÿ⁄»òX⁄»›ÿ\ô^][YHX][ô»8†%][»ôX€›ô\ûH[ôY]Xõ€X»X[è‹Çà	€YX[õ› 	”€àÿZ⁄[ô…À	–úôXZŸò\›	À	—X]⁄][àò[à›\àŸàÿZ⁄[ô»»[ò⁄‹à[›\àõŸH€ÿ⁄»»^][YKàõ›Z[à
+»ÿ\òúÀâÀ	€XZ[â _Bà	€YX[õ› 	”ZY^IÀ	”[ò⁄8†%XZ[àYX[	À	”\ôŸ\›YX[ŸàH^H\õ›[ôZY^H⁄[à[›\àY]Xõ€\€H\»ô\›Ÿ]\õ‹à]âÀ	€XZ[â _Bà	€YX[õ› 	ﬂç∏†$Õ‹IÀ	—X\õH[õô\âÀ	—ö[ö\⁄[›\àXZ[àX][ô»X\õY\à[àH]ô[ö[ôÀàZ[H»›‹ôYõ‹ôHé\KâÀ	€Y⁄	 _Bà	€YX[õ› 	”]IÀ	”Z[ö[Z\ŸH]HX][ô…À	“ŸY\H]KY]ô[ö[ô»›\ú»Y⁄à\»ôK]òZ[ú»[›\àﬁ\›[HYù\àöY⁄ÀâÀ	ÿ]õ⁄Y	 _BàŸ]èò¬àBÇàù[ò›[€à⁄YùòZ[ö[ô“S
+€î⁄Yù\”öY⁄\—X\õJH¬à€€ú›‹H⁄Yù
+
+N¬à€€ú›ò]‹‹»H‹ô€ÿ[OOH	Ÿò]€‹‹…Œ¬à][õô\àH	…Œ¬ÇàYà
+€î⁄Yù	âà\”öY⁄
+H¬à[õô\àHà€\‹œHù^\€H^\€]KMåXãL»èì€àHöY⁄\⁄Yù^K[›\à›ô[ô›XZ»[ô[›\à]òZ[XõH[ô\ôﬁH€â›[ôH\⁄]Hõ‹õX[ÿ⁄Y[Kàô\›‹[€úŒè‹Çà	›òZ[ï\
+	–ôYõ‹ôH[›\à⁄Yù
+∏†$ÕYù\àÿZ⁄[ô IÀ	÷[›\àô\›⁄[ô›»€àHöY⁄\⁄Yù^Kà€‹ôHõŸH[\\ò]\ôH[ôô]\õ€]\ÿ›[\àôXY[ô\‹»\ôHY⁄\àHô]»›\ú»Yù\à[›HÿZŸH8†%]	‹»⁄[à»»[›\à\ô\›Yù[ô»‹à[ù\ùò[Àõ›öY⁄Yù\àõ€[ô»›]ŸàôYâÀ	‹ö[X\ûI _Bà	›òZ[ï\
+	”€àHZY\⁄YùúôXZ…À	–H⁄‹ù›Ÿ\ã\›ŸX]›ô[ô›Ÿ\‹⁄[€à
+€€\›[ôYùÀ[Ÿ\ò]HÿY
+H€‹ö‹»Ÿ[ZY\⁄Yù[ôÿ[àõ€‹›[\ùô\‹»⁄]›]úûZ[ô»[›KâÀ	€⁄… _Bà	›òZ[ï\
+	–Yù\àHöY⁄⁄Yù8†%ŸY\]Ÿ[ùIÀ	‘‹›\⁄Yù[›\àõŸH[\\»]]»›Ÿ\›[ô€‹ù\€€ÿ[à‹ZŸHúõ€H\ôòZ[ö[ôÀàÿ]ôHX]ûHŸ\‹⁄[€ú»õ‹à[õ›\à[YN»H⁄‹ùÿ[»»⁄[ô›€à\»YX[ôYõ‹ôH€Y\âÀ	ÿ]õ⁄Y	 _X¬àH[ŸHYà
+€î⁄Yù	âà\—X\õJH¬à[õô\àHà€\‹œHù^\€H^\€]KMåXãL»èëX\õH⁄Yù»XZŸH€Y\Hö[‹ö]Kà»õ›òYH€Y\õ‹àH\ôôK\⁄Yù€‹ö€›]è‹Çà	›òZ[ï\
+	–Yù\à€‹öÀYà[ô\ôﬁH\»›XYIÀ	’òZ[àYù\à[›\à⁄Yù[ôYù\àH[õôYYX[‹à€òX⁄ÀàŸY\HŸ\‹⁄[€à€€ò⁄\ŸH€»[›Hÿ[à›[⁄[ô›€àõ‹à[àX\õHôY[YKâÀ	‹ö[X\ûI _Bà	›òZ[ï\
+	–ôYõ‹ôH€‹öŒà[ÿö[]H€õIÀ	“Yà[›ö[ô»ö\ú›[»[›HÿZŸH\\ŸHH⁄‹ùÿ[»‹à[ÿö[]Hõ›][ôKàÿ]ôHX]ûHYù[ô»[ô\ô[ù\ùò[»õ‹àYù\à€‹ö»‹à[àŸôà^KâÀ	€⁄… _X¬àH[ŸHYà
+€î⁄Yù
+H¬à[õô\àHà€\‹œHù^\€H^\€]KMåXãL»èë^H⁄Yù»ö]HõŸH€ÿ⁄»ô]\ãà›ô[ô›ò]\ò[HXZ‹»]HYù\õõ€€ãŸX\õH]ô[ö[ôÀè‹Çà	›òZ[ï\
+	–ôYõ‹ôH‹àYù\à[›\à⁄Yù	À	“Yà[›\àõÿà\»\⁄Xÿ[H\ö[ôÀòZ[àôYõ‹ôH€‹ö»€»ò]Y›YHŸ\€ó	›õÿàHŸ\‹⁄[€ãàYà]	‹»H\⁄»õÿã]HYù\õõ€€ãŸ]ô[ö[ô»Yù\à€‹ö»\»[›\àò]\ò[›ô[ô›XZÀâÀ	‹ö[X\ûI _Bà	›òZ[ï\
+	–€€ú⁄\›[òﬁHôX]»\ôôX›[€âÀ	’òZ[ö[ô»]Hÿ[YH[YHZ[HòZ[ú»[›\à]\ÿ€H€ÿ⁄‹»»\ôõ‹õH[à8†%]ô[àHõõ€ã[‹[X[à[YHôX€€Y\»‹[X[⁄]€€ú⁄\›[òﬁKâÀ	€⁄… _X¬àH[ŸH¬à[õô\àHà€\‹œHù^\€H^\€]KMåXãL»èîô\›^\»\ôHYX[õ‹à[›\à\ô\›òZ[ö[ô»8†%[›I‹ôHõ›[€»ÿ\úûZ[ô»⁄Yùò]Y›YKè‹Çà	›òZ[ï\
+	”]HYù\õõ€€à»X\õH]ô[ö[ô»
+ç8†$Õ‹JIÀ	”X^[X[›ô[ô›XZ‹»[àH]ô[ö[ô»[ô\»›Ÿ\›X\õH[‹õö[ôÀàYà[›Hÿ[ùHX]ûHŸ\‹⁄[€ã\»\»H⁄[ô›ÀâÀ	‹ö[X\ûI _Bà	›òZ[ï\
+ò]‹‹»»	–YX\ﬁHÿ\ô[»»›\…»à	‘ö[‹ö]\ŸHõŸ‹ô\‹⁄]ôH›ô\õÿY	Àò]‹‹»»	”€àô\›^\À›ÀZ[ù[ú⁄]Hÿ\ô[»‹àH€ô»ÿ[»Y»ò][‹‹»⁄]›][ù[ô»ôX€›ô\ûKâ»à	‘\⁄[›\àŸ^HYù»H]HX]öY\à‹àYHô\8†%ô\›^\»\ôH⁄[à[›Hÿ[àŸ[ùZ[ô[HõŸ‹ô\‹ÀâÀ	€⁄… _X¬àBÇàô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèï[YY»[›\à⁄\òÿYX[à\ŸKõ›H€ÿ⁄»€àHÿ[è‹Çà	⁄[õô\üBàŸ]èò¬àBÇàù[ò›[€àòZ[ï\
+]K\ÿÀ€ôJH¬à€€ú››H»ö[X\ûNà	ÿôÀZ[ôY€ÀML	À⁄Œà	ÿôÀY[Y\ò[ML	À]õ⁄Yà	ÿôÀ\õ‹ŸKM	»V›€ôWH	ÿôÀ\€]KM	Œ¬àô]\õàà]à€\‹œHôõ^ÿ\L»XãL»èÇà]à€\‹œHùÀLãçHLãçHõ›[ôYYù[	Ÿ›Hõ^\⁄ö[öÀL]LKçHèèŸ]èÇà]à€\‹œHõZ[ã]ÀLèÇà€\‹œHôõ€ùXõ€^\€Hèâ›]_O‹Çà€\‹œHù^^»^\€]KML]LçHèâŸ\ÿﬂO‹ÇàŸ]èÇàŸ]èò¬àBÇôù[ò›[€àò\›[ô—›ZY[òŸRS
+€î⁄Yù⁄Yù\JH¬à€€ú›\”öY⁄H€î⁄Yù	âà⁄Yù\HOOH	€öY⁄	Œ¬àô]\õàà]à€\‹œHòõ‹ô\ãLàõ‹ô\ãY\⁄Yõ‹ô\ãZ[ôY€ÀLåõ›[ôYLûMèÇà€\‹œHù^^»^\€]KMLXãMèñ[›\àÿ]ôY[à\Ÿ\»[ù\õZ][ùò\›[ôÀàëíU⁄[ôŸ\»H[\\⁄\»ûH⁄Yù[ú›XYŸà\Z[ô»€ôHöY⁄Y€ÿ⁄»⁄[ô›»]ô\ûH^Kè‹Çà	⁄\”öY⁄à»]à€\‹œHúL»ôÀX[Xô\ãMLõ‹ô\àõ‹ô\ãX[Xô\ãLåõ›[ôYLûXãL»èè€\‹œHù^\€Hõ€ùXõ€^X[Xô\ãNLèìöY⁄⁄Yùà[\ùô\‹»[ôÿYô]H€€YHö\ú›‹è€\‹œHù^^»^X[Xô\ãN]LHèë»õ›õ‹òŸHHò\›õ›Y⁄€‹ö»Yà]ÿ]\Ÿ\»^ûö[ô\‹À€‹à€€òŸ[ùò][€ã[ù\›X[ò]Y›YH‹à[\Z\ôY\ôõ‹õX[òŸKàHòX›Xÿ[‹[€à\»»[ò⁄‹àHX][ô»⁄[ô›»Yù\àÿZ⁄[ô»[ôõ›Y⁄HX\õH\ùŸàH⁄Yùè‹èŸ]èòàà€î⁄Yùà»YX[õ› 	’\»⁄Yù	À	“ŸY\H⁄[ô›»òX›Xÿ[	À	‘XŸHHX][ô»⁄[ô›»\õ›[ôHXZ[à€‹ö»úôXZ»[ôHòZ[ö[ô»‹àôX€›ô\ûHYX[à»õ›ÿX‹öYöXŸHõZY»‹àY\]X]Hõ›Z[à»]H€ÿ⁄»\ôŸ]âÀ	€Y⁄	 BààYX[õ› 	”Ÿôà^IÀ	‘ô]\õàH⁄[ô›»»^][YIÀ	’\ŸHH€€ú⁄\›[ù^][YH⁄[ô›»Yà]ôY[»›\›Z[òXõK⁄[H›[YY][ô»õ›Z[ã[ô\ôﬁKöXúôH[ôYò][€àôYYÀâÀ	€XZ[â _Bà€\‹œHù^VÃL\H^\€]KM]Làèëò\›[ô»\»õ››Z]XõHõ‹à]ô\û[€ôKàŸ]\õ‹öX]H€[öXÿ[YöXŸHö\ú›Yà[›H]ôHXXô]\»‹à[õ›\àX[€€ô][€ãZŸHYYXÿ][€àYôôX›YûHõ€Ÿ[Z[ôÀ\ôHôY€ò[ù‹à]ôHH\›‹ûHŸà\€‹ô\ôYX][ôÀà›‹Yà[›HôY[[ùŸ[è‹ÇàŸ]èò¬üBÇàù[ò›[€à‹ôX]Y⁄Yùõ€ŸYX\“S
+]RŸ^JH¬à€€ú››\›€SYX[»H
+›]Kò‹ôX]YYX[»◊JKôö[\äYX[OàYX[	âà
+YX[ú⁄›“[î⁄Yùõ€ŸYX\»OOHùYHYX[òY‘⁄Yùõ€ŸYX\»OOHùYJJN¬àYà
+X›\›€SYX[Àõ[ô›
+Hô]\õà	…Œ¬à€€ú›\ôŸ]]HH◊óÕKWÃüKWÃüIÀù\›
+›ö[ô ]RŸ^H	… JBà»›ö[ô ]RŸ^JBàà
+◊óÕKWÃüKWÃüIÀù\›
+›ö[ô ›]KùöY]—]H	… JH»›ö[ô ›]KùöY]—]JHàÿÿ[]RŸ^J
+JN¬à€€ú›ò[Y€›»H…ÿúôXZŸò\›	À	€[ò⁄	À	Ÿ[õô\âÀ	‹€òX⁄…◊N¬àô]\õàà]à€\‹œHõ]Mõ‹ô\ã]õ‹ô\ã[‹ò[ôŸKLLMà]KX‹ôX]Y\⁄Yù[YX[œHùùYHèÇà]à€\‹œHôõ^][\À\›\ùù\›YûKXô]ŸY[àÿ\L»XãL»èè]èè€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^[‹ò[ôŸKMåèì^H‹ôX]Y⁄YùYX[œ‹è€\‹œHù^^»^\€]KM]LHèì€õHYX[»[›HŸ[X›Y[à‹ôX]HYX[\X\à\ôKè‹èŸ]èè‹[à€\‹œHù^VÃLHõ€ùXõX⁄»^[‹ò[ôŸKMåôÀ[‹ò[ôŸKLLLàKLHõ›[ôY[»èâÿ›\›€SYX[Àõ[ô›Hÿ]ôY‹‹[èèŸ]èÇà]à€\‹œHú‹XŸK^KLàèÇà	ÿ›\›€SYX[ÀõX\
+YX[Oà¬à€€ú›YX[\HHò[Y€›Àö[ò€Y\ YX[ôYò][YX[\JH»YX[ôYò][YX[\Hà
+ò[Y€›Àö[ò€Y\ YX[ú[õôYYX[\JH»YX[ú[õôYYX[\Hà	‹€òX⁄… N¬à€€ú›YX[Xô[HYX[\Kò⁄\ê]
+
+Kù’\\êÿ\ŸJ
+H
+»YX[\Kú€XŸJJN¬àô]\õà]à€\‹œHòôÀ[‹ò[ôŸKMLõ‹ô\àõ‹ô\ã[‹ò[ôŸKLLõ›[ôYLûL»èè]à€\‹œHôõ^][\À\›\ùù\›YûKXô]ŸY[àÿ\L»èè]à€\‹œHõZ[ã]ÀLèè€\‹œHôõ€ùXõ€^\€Hù[òÿ]HèâŸ\ÿÿ\R[
+YX[õò[YH	–‹ôX]YYX[	 _O‹è€\‹œHù^VÃL\H^\€]KML]LHèâ”X]úõ›[ô
+ù[Xô\äYX[òÿ[‹öY\ H
+_Hÿÿ[0≠»	 ù[Xô\äYX[úõ›Z[äH
+Kù—ö^Y
+J_Y»õ›Z[à0≠»	€YX[Xô[O‹èŸ]èèù]€à€ò€X⁄œHòY‹ôX]YYX[—X\ûJ	…Ÿ\ÿÿ\Rú‘›ö[ô YX[öY
+_IÀ	…›\ôŸ]]_IÀ	…€YX[\_I Hà€\‹œHôõ^\⁄ö[öÀLôÀ\€]KNL^]⁄]HL»KLàõ›[ôY^õ€ùXõ€^VÃL\Hèä»Y»X\ûOÿù]€èèŸ]èèŸ]èò¬àJKöõ⁄[ä	… _BàŸ]èÇàŸ]èò¬àBÇôù[ò›[€à⁄Yùõ€ŸYX\“S
+[\\⁄\ŸSöY⁄]RŸ^JH¬à€€ú›õŸö[HHY]\ûTõŸö[J
+N¬à€€ú›\›»H¬àôYÿ[éà¬à…¸'ÍÊôX[ú»	à[ù[…À	–ò]⁄X€€⁄»õ‹àõ›€À€›\»[ô⁄[IÀ	…◊Kà…¸'„,HŸùIÀ	–òZŸH‹à›\ãYúûHŸ]ô\ò[‹ù[€ú…À	‹€ﬁI◊Kà…¸'„/»[\Z	À	“Y⁄\õ›Z[à‹[€àõ‹à‹ò\»[ôõ€Ÿ\…À	‹€ﬁI◊Kà…¸'Èe»Y[X[YIÀ	‘‹ùXõHÿ]õ›\ûHõ›Z[à€òX⁄…À	‹€ﬁI◊Kà…¸'ÈiXH‹à€ﬁHõ›Z[âÀ	”YX\›\ôYòX⁄›\õ‹à⁄‹ùúôXZ‹…À	‹€ﬁI◊Kà…¸'„/àŸZ][âÀ	‘õ›Z[ã\öX⁄Yà€][à›Z]»[›\àô\]Z\ô[Y[ù…À	Ÿ€][â◊Kà…¸'Èh»õ‹ùYöYY€ﬁH[Ÿ›\ù	À	”õÀX€€⁄»úôXZŸò\›‹à€òX⁄…À	‹€ﬁI◊Kà…¸'È·à⁄X⁄‹X\»	à[[]\…À	—öXúôH\»[ùõ›Z[âÀ	‹Ÿ\ÿ[YI◊BàKàôYŸ]\öX[éà¬à…¸'ÈfàYŸ‹…À	–õ⁄[ZXY‹à\ŸH[à]ZX⁄»YX[…À	ŸYŸ…◊Kà…¸'Èf»‹ôYZ»[Ÿ›\ù	À	“Y⁄õ›Z[à[ô›»Yôõ‹ù	À	ŸZ\ûI◊Kà…¸'È‡€›YŸH⁄Y\ŸIÀ	–⁄[Y€òX⁄»‹à›]»‹[ô…À	ŸZ\ûI◊Kà…¸'„,HŸùH	à[\Z	À	‘[ù\õ›Z[àõ›][€àõ‹àYX[ô\	À	‹€ﬁI◊Kà…¸'ÍÊôX[ú»	à[ù[…À	—öXúôH\»[ùõ›Z[âÀ	…◊Kà…¸'Èiõ›Z[à⁄ZŸIÀ	—ò\›YX\›\ôYòX⁄›\⁄[àù\ﬁIÀ	ŸZ\ûI◊Kà…¸'È‡ôYXŸYYò]⁄Y\ŸIÀ	”YX\›\ôH‹ù[€ú»õ‹àôYX›XõHÿ[‹öY\…À	ŸZ\ûI◊Kà…¸'Èe»Y[X[YIÀ	‘‹ùXõHÿ]õ›\ûHõ›Z[à€òX⁄…À	‹€ﬁI◊BàKàŸ]ŸŸ[öXŒà¬à…¸'„e»⁄X⁄Ÿ[à‹à\öŸ^IÀ	–ò]⁄X€€⁄»Z[à‹ù[€ú»õ‹àÿ[Y…À	…◊Kà…¸'‰'»ÿ[[€à‹à[òIÀ	‘õ›Z[à[ôò]Œ»ŸY\⁄[Y	À	Ÿö\⁄	◊Kà…¸'ÈfàYŸ‹…À	‘‹ùXõH[ôX\ﬁH»ô\\ôHZXY	À	ŸYŸ…◊Kà…¸'„,HŸùIÀ	”›Ÿ\ãXÿ\òõ⁄Yò]H[ùõ›Z[âÀ	‹€ﬁI◊Kà…¸'Èf»[ú›ŸY][ôY‹ôYZ»[Ÿ›\ù	À	–⁄X⁄»ÿ\òõ⁄Yò]H€àHXô[	À	ŸZ\ûI◊Kà…¸'È‡€›YŸH⁄Y\ŸIÀ	”YX\›\ôH‹ù[€ú»[ô⁄X⁄»HXô[	À	ŸZ\ûI◊Kà…¸'Èe»Y[X[YIÀ	—öXúôK\öX⁄[ù‹[€âÀ	‹€ﬁI◊Kà…¸'„,ŸYY…À	”YX\›\ôH‹ù[€úŒ»⁄X⁄»[\ôﬁHôYY…À	€ù]…◊BàKàò[[òŸYà¬à…¸'Èfàõ⁄[YYŸ‹…À	‘ô\ZXY»‹òXà∏†$Ã…À	ŸYŸ…◊Kà…¸'„e»‹ö[Y⁄X⁄Ÿ[âÀ	–ò]⁄X€€⁄»[ô‹ù[€à›]	À	…◊Kà…¸'Èf»‹ôYZ»[Ÿ›\ù	À	“Y⁄õ›Z[à[ô›»Yôõ‹ù	À	ŸZ\ûI◊Kà…¸'È‡€›YŸH⁄Y\ŸIÀ	‘€›À\ô[X\ŸHõ›Z[à‹[€âÀ	ŸZ\ûI◊Kà…¸'Ègù]»	àŸYY…À	”YX\›\ôH‹ù[€ú»ÿ\ôYù[IÀ	€ù]…◊Kà…¸'‰'»[õôY[òH‹àÿ[[€âÀ	”€àÿ]ÿZŸ\»‹à⁄€Y‹òZ[àúôXY	À	Ÿö\⁄€][â◊Kà…¸'ÍÊôX[ú»	à[ù[…À	—öXúôH\»[ùõ›Z[âÀ	…◊Kà…¸'Èiõ›Z[à⁄ZŸIÀ	—ò\›òX⁄›\⁄[àù\ﬁIÀ	ŸZ\ûI◊BàBàN¬à€€ú›ÿ[ôY]\»H\›÷‹õŸö[Kú]\õóH\›Àòò[[òŸY¬à€€ú›YX\»Hÿ[ôY]\Àôö[\ä
+€ò[YKõ›K[\ôŸ[ú◊JHOÇàYX[X]⁄\—Y]\ûTô\]Z\ô[Y[ù »ò[YKõ›K[\ôŸ[úŒà›ö[ô [\ôŸ[ú»	… Kú‹]
+	ﬂ	 Kôö[\äõ€€X[äHKõŸö[JBà
+N¬àô]\õàà]èÇà€\‹œHù^^»^\€]KMXãMèâŸ[\\⁄\ŸSöY⁄à»	‘ô\\ôHõ›Z[ãYõ‹ùÿ\ô⁄⁄XŸ\»ôYõ‹ôHHöY⁄⁄Yù€»[›\àY\\›[öY⁄úôXZ»Ÿ\»õ›\[ô€àô[ô[ôÀ[XX⁄[ôHõ€Ÿâ¬àà	–H[Xô\ò]Hõ›Z[à€›\òŸH]XX⁄XZ[àYX[›\‹ù»ôX€›ô\ûH[ô[»XZŸHH[à[‹ôHö[[ôÀâﬂO‹Çà]à€\‹œHô‹öY‹öYX€€ÀLàÿ\LàèÇà	⁄YX\ÀõX\
+
+€ò[YKõ›WJHOàõ€ŸYXJò[YKõ›JJKöõ⁄[ä	… H	œ€\‹œHò€€\‹[ãLà^^»^X[Xô\ãMÃôÀX[Xô\ãMLL»õ›[ôY^èìõ»Ÿ[ô\öX»YX\»X]⁄]ô\ûHŸ[X›Y^€\⁄[€ãà\ŸHHõŸX›‹àôX⁄\H[›H]ôH\ú€€ò[Hô\öYöYY\»ÿYôKè‹âﬂBàŸ]èÇà	ÿ‹ôX]Y⁄Yùõ€ŸYX\“S
+]RŸ^J_Bà]à€\‹œHõ]L»L»ôÀ\€]KMLõ›[ôYLûèÇà€\‹œHù^^»^\€]KMLèèèî⁄Yùô\èÿèà‹ù[€àõ€ŸôYõ‹ôH€‹öÀÿ\úûHõZY»[ôŸY\Hô\öYöYYòX⁄›\YX[]òZ[XõKà⁄X⁄»]ô\ûHõŸX›YÿZ[ú›[›\àÿ]ôYô\]Z\ô[Y[ùÀè‹ÇàŸ]èÇàŸ]èò¬üBÇàù[ò›[€àõ€ŸYXJò[YKõ›JH¬àô]\õàà]à€\‹œHòôÀ\€]KMLõ›[ôYLûL»èÇà€\‹œHôõ€ùXõ€^\€Hèâ€ò[Y_O‹Çà€\‹œHù^VÃL\H^\€]KM]LçHèâ€õ›_O‹ÇàŸ]èò¬àBÇàù[ò›[€à⁄Yùÿ⁄Y[òŸRS
+
+H¬àô]\õàà]à€\‹œHú‹XŸK^KL»^\€H^\€]KMåèÇàèèñ[›\àX\›\à€ÿ⁄»8†%H–”ãèÿèàY\[à[›\àúòZ[à
+H\›[[]\ H⁄]»H›\òX⁄X\€X]X»ùX€]\À‹à–”ãà]	‹»[›\àõŸI‹»X\›\à€ÿ⁄À[ô]	‹»Ÿ]XZ[õHûHèõY⁄ÿèãà][»[›\àõŸH⁄[à»ôH[\ù⁄[à»ô[X\ŸHY[]€ö[àõ‹à€Y\[ô⁄[à[›\àY]Xõ€\€H\»ö[YYõ‹àõ€Ÿè‹ÇàèèñôZ]ŸXô\ú»8†%ù[YKY⁄]ô\ú»ãèÿèàô\⁄Y\»Y⁄[›\àõŸHZŸ\»[Z[ô»›Y\»úõ€Hèôõ€ŸX›]ö]H[ô[\\ò]\ôOÿèãà\ŸH\ôHÿ[YôZ]ŸXô\ú»
+Ÿ\õX[àõ‹àù[YKY⁄]ô\ú»äKà[›\à›][ô]\ÿ€\»]ôHZ\à›€àú\ö\\ò[€ÿ⁄‹»à]ô\‹€ô»⁄[à[›HX][ôòZ[à8†%õ›ù\›»Y⁄è‹Çàèèï⁄H⁄Yù€‹ö»\»\ôèÿèà€àöY⁄À[›\à–”à›[[ö‹»]	‹»öY⁄
+ôXÿ]\ŸHŸàHY⁄Ÿ\ö»ﬁX€JKù][›I‹ôHX][ô»[ô€‹ö⁄[ôÀà\»èô\ﬁ[ò⁄õ€ö\Ÿ\œÿèà[›\àX\›\à€ÿ⁄»úõ€H[›\à›][ô]\ÿ€H€ÿ⁄‹ÀàX][ô»]ÿ[HYX[ú»YŸ\›[ô»õ€Ÿ⁄[à[›\àõŸH\»Y]Xõ€Xÿ[HŸ]»€Y\8†%⁄X⁄\»⁄HHÿ[YHYX[òZ\Ÿ\»õ€Ÿ›Yÿ\à[ôò][‹ôH]öY⁄[à[àH^Kè‹Çàèèï⁄]ŸH»Xõ›]]èÿèàŸH\ŸHHôZ]ŸXô\ú»[›HOòÿ[è⁄Oà€€ùõ€8†%õ€Ÿ[Z[ô»[ôòZ[ö[ô»[Z[ô»8†%»ôYXŸH]Z\€X]⁄à€€òŸ[ùò]HX][ô»⁄[à[›\àõŸH\»[‹ôH[Y€ôYŸY\HY\[öY⁄›\ú»Y⁄[ôXŸHòZ[ö[ô»ôX\à[›\àùYH›ô[ô›XZ»
+Hô]»›\ú»Yù\àÿZ⁄[ôÀ⁄[à€‹ôH[\\ò]\ôH\»\
+Kè‹Çà€\‹œHù^^»^\€]KMèï\»\»H⁄[\YöYY›[[X\ûHŸàX›]ôHô\ŸX\ò⁄àHÿ⁄Y[òŸH\»›[]ô[‹[ô»[ô[ô]öYX[ô\‹€úŸ\»ò\ûH8†%[õ›\àôX\€€à»€‹ö»⁄][›\à‘è‹ÇàŸ]èò¬àBÇàÀ»€õH\X\ú»⁄[àH€Y[ùX›X[H\»H€ÿX⁄Çà\ﬁ[ò»ù[ò›[€àô[ô\ê€ÿX⁄[í[ïòZ[ö[ô 
+H¬à€€ú›ÿ\ôHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄\[ãXÿ\ô	 N¬à€€ú›\›Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄\[ã[\›	 N¬àYà
+Xÿ\ô[\›
+Hô]\õé¬ÇàÀ»YH[ù\ô[H[õ\‹»\»\Ÿ\à\»H€ÿX⁄àYà
+›\úô[ù\Ÿ\îõ€HOOH	€Y[Xô\â»Yö\ôXò\ŸU\Ÿ\ë]HYö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY
+H¬àÿ\ôò€\‹”\›òY
+	⁄Y[â N¬àô]\õé¬àBÇà]\‹⁄Y€ôYH◊N¬àûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à\‹⁄Y€ôYH
+YQÿÀô]J
+HﬂJKò\‹⁄Y€ôY€‹ö€›]»◊N¬àHÿ]⁄
+JH» àŸôõ[ôH8†%X]ôHY[à
+ã»BÇàYà
+\‹⁄Y€ôYõ[ô›OOH
+H¬àÀ»\»H€ÿX⁄ù]õ›[ô»\‹⁄Y€ôYY]8†%YHHÿ\ô[ù\ô[BàÀ»
+€õH⁄›»⁄[àH€ÿX⁄\»X›X[HŸ]H€‹ö€›]
+KÇàÿ\ôò€\‹”\›òY
+	⁄Y[â N¬àô]\õé¬àBÇàÿ\ôò€\‹”\›úô[[›ôJ	⁄Y[â N¬à\›ö[õô\íSH\‹⁄Y€ôYú€XŸJ
+Kúô]ô\úŸJ
+KõX\
+
+ÀY
+HOà¬à€€ú›ôX[YH\‹⁄Y€ôYõ[ô›HHHY¬à€€ú›^ò[Y\»H
+Àô^\ò⁄\Ÿ\»◊JKõX\
+HOà\ÿÿ\R[
+Kõò[YJJKöõ⁄[ä	À	 N¬à€€ú›\—õÿ›\»H
+Àô^\ò⁄\Ÿ\»◊JKú€€YJHOàKôõÿ›\ N¬àô]\õàà]à€\‹œHòôÀ\€]KMLõ›[ôYLûMèÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\À\›\ùXãLHèÇà]à€\‹œHõZ[ã]ÀLèÇà€\‹œHôõ€ùXõX⁄»èâŸ\ÿÿ\R[
+Àù]H	–€ÿX⁄€‹ö€›]	 _O‹Çà€\‹œHù^VÃLH^\€]KMèëúõ€H	Ÿ\ÿÿ\R[
+Àò\‹⁄Y€ôYûH	–€ÿX⁄	 _H0≠»	Ÿ\ÿÿ\R[
+
+Àò\‹⁄Y€ôY]	… Kú‹]
+	’	 VÃJ_O‹ÇàŸ]èÇà	⁄\—õÿ›\»»	œ‹[à€\‹œHù^VŒ\Hõ€ùXõX⁄»\\òÿ\ŸH^Z[ôY€ÀMåôÀZ[ôY€ÀMLLàKLHõ›[ôYYù[õ^\⁄ö[öÀLèº'„´»›Y\œ‹‹[èâ»à	…ﬂBàŸ]èÇà€\‹œHù^^»^\€]KMLXãL»ù[òÿ]HèâŸ^ò[Y\ﬂO‹Çàù]€à€ò€X⁄œHú›\ù\‹⁄Y€ôY€‹ö€›]
+	‹ôX[YJHà€\‹œHùÀYù[ôÀZ[ôY€ÀMå^]⁄]HL»õ›[ôY^õ€ùXõ€^\€Hèî›\ù\»€‹ö€›]ÿù]€èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àôYúô\⁄X€€ú 
+N¬àBÇà\ﬁ[ò»ù[ò›[€à‹[ê\‹⁄Y€ôY€‹ö€›] 
+H¬àYà
+Yö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY
+H»⁄›’ÿ\›
+	”õ»€ÿX⁄€€õôX›Y	 N»ô]\õé»Bà]\‹⁄Y€ôYH◊N¬àûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à\‹⁄Y€ôYH
+YQÿÀô]J
+HﬂJKò\‹⁄Y€ôY€‹ö€›]»◊N¬àHÿ]⁄
+JH» àY€õ‹ôH
+ã»BÇà€€ú›õﬁHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ôY]€‹ö€›]ÀXõŸI N¬àYà
+\‹⁄Y€ôYõ[ô›OOH
+H¬àõﬁö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKNèñ[›\à€ÿX⁄\€ó	›\‹⁄Y€ôY[ûH€‹ö€›]»Y]è‹âŒ¬àH[ŸH¬àõﬁö[õô\íSH\‹⁄Y€ôYú€XŸJ
+Kúô]ô\úŸJ
+KõX\
+
+ÀY
+HOà¬à€€ú›ôX[YH\‹⁄Y€ôYõ[ô›HHHY¬àô]\õàà]à€\‹œHòôÀ\€]KMLMõ›[ôYLûXãL»èÇà]à€\‹œHôõ^ù\›YûKXô]ŸY[à][\À\›\ùXãLàèÇà]èÇà€\‹œHôõ€ùXõX⁄»èâŸ\ÿÿ\R[
+Àù]H	’€‹ö€›]	 _O‹Çà€\‹œHù^VÃLH^\€]KMèëúõ€H	Ÿ\ÿÿ\R[
+Àò\‹⁄Y€ôYûH	–€ÿX⁄	 _H0≠»	Ÿ\ÿÿ\R[
+
+Àò\‹⁄Y€ôY]	… Kú‹]
+	’	 VÃJ_O‹ÇàŸ]èÇàŸ]èÇà]à€\‹œHú‹XŸK^KLàXãL»èÇà	 Àô^\ò⁄\Ÿ\»◊JKõX\
+^Oàà]èÇà€\‹œHù^\€HèèèâŸ\ÿÿ\R[
+^õò[YJ_Oÿèà8†%	 ^úŸ]»◊JKõX\
+»Oà	Ÿ\ÿÿ\R[
+ÀùŸZY⁄OOH	…»ÀùŸZY⁄OHù[»	¯†%	»àÀùŸZY⁄
+_ZŸÂ…Ÿ\ÿÿ\R[
+Àúô\»OOH	…»Àúô\»OHù[»	¯†%	»àÀúô\ _X
+Köõ⁄[ä	À	 _O‹Çà	Ÿ^ôõÿ›\»»€\‹œHù^VÃL\H^Z[ôY€ÀMåLà]LçHèº'„´»	Ÿ\ÿÿ\R[
+^ôõÿ›\ _O‹òà	…ﬂBàŸ]èÇà
+Köõ⁄[ä	… _BàŸ]èÇàù]€à€ò€X⁄œHú›\ù\‹⁄Y€ôY€‹ö€›]
+	‹ôX[YJHà€\‹œHùÀYù[ôÀZ[ôY€ÀMå^]⁄]HL»õ›[ôY^õ€ùXõ€^\€Hèî›\ù\»€‹ö€›]ÿù]€èÇàŸ]èò¬àJKöõ⁄[ä	… N¬àBàÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ôY]€‹ö€›]À[[Ÿ[	 Kú›[Kô\‹^HH	Ÿõ^	Œ¬àôYúô\⁄X€€ú 
+N¬àBÇàù[ò›[€à€‹ŸP\‹⁄Y€ôY€‹ö€›] 
+H¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ\‹⁄Y€ôY]€‹ö€›]À[[Ÿ[	 Kú›[Kô\‹^HH	€õ€ôIŒ¬àBÇà\ﬁ[ò»ù[ò›[€à›\ù\‹⁄Y€ôY€‹ö€›]
+Y
+H¬à]\‹⁄Y€ôYH◊N¬àûH¬à€€ú›YQÿ»H]ÿZ]ãò€€X›[€ä	›\Ÿ\ú… Kôÿ ›\úô[ù\Ÿ\ãùZY
+KôŸ]
+
+N¬à\‹⁄Y€ôYH
+YQÿÀô]J
+HﬂJKò\‹⁄Y€ôY€‹ö€›]»◊N¬àHÿ]⁄
+JH» àY€õ‹ôH
+ã»Bà€€ú›»H\‹⁄Y€ôY⁄YN¬àYà
+] H»⁄›’ÿ\›
+	’€‹ö€›]õ›õ›[ô	 N»ô]\õé»BÇà€‹ŸP\‹⁄Y€ôY€‹ö€›] 
+N¬à›⁄]⁄Xä	›òZ[ö[ô… N¬à⁄[ô›ÀóÿX›]ôP\‹⁄Y€ôY€‹ö€›]H»]NàÀù]H	–€ÿX⁄€‹ö€›]	À€ÿX⁄ZYàö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZYN¬ÇàÀ»Ÿ]\HX›]ôH€‹ö€›]öY]»\ôX›H⁄]H\‹⁄Y€ôY^\ò⁄\Ÿ\¬à›\úô[ù€‹ö€›]€€ù^H»[ùéà›]Kù€‹ö€›][ùà	Ÿﬁ[IÀõÿ›\ŒàÀù]H	–€ÿX⁄€‹ö€›]	À]\ÿ€\Œàù[N¬à€‹ö€›]›\ù[YHH]Kõõ› 
+N¬à€‹ö€›]Xÿ›[][]YŸX€€ô»H¬à›\ù€‹ö€›][Y\ä
+N¬àûH»\›‹ûKú\⁄›]J»€‹ö€›]àùYHK	… N»Hÿ]⁄
+JHﬂBÇàÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]\Ÿ]\	 Kò€\‹”\›òY
+	⁄Y[â N¬à»€€ú›ÿ‹»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄\[ãXÿ\ô	 N»Yà
+ÿ‹ Hÿ‹Àò€\‹”\›òY
+	⁄Y[â N»Bàÿ›[Y[ùôŸ][[Y[ùûRY
+	›€‹ö€›]XX›]ôI Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬à€€ú›]Q[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿX›]ôK]€‹ö€›]]]I N¬àYà
+]Q[
+H]Q[ö[õô\ï^H	¸'‰‚»	»
+»
+Àù]H	–€ÿX⁄€‹ö€›]	 N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	Ÿ^\ò⁄\ŸK[\›	 Kö[õô\íSH	…Œ¬ÇàÀ»ùZ[Hò[Yx°§ôõÿ›\»X\€»XX⁄^\ò⁄\ŸHÿ\ô⁄›‹»H€ÿX⁄	‹»õÿ›\»õ›KÇà⁄[ô›Àóÿ\‹⁄Y€ôYõÿ›\–ûSò[YHHÿöôX›ò‹ôX]Jù[
+N¬à
+Àô^\ò⁄\Ÿ\»◊JKôõ‹ëXX⁄
+^Oà¬àYà
+^ôõÿ›\ H⁄[ô›Àóÿ\‹⁄Y€ôYõÿ›\–ûSò[YVŸ^õò[YWHH^ôõÿ›\Œ¬àJN¬Çà
+Àô^\ò⁄\Ÿ\»◊JKôõ‹ëXX⁄
+^Oà¬àY^\ò⁄\ŸJ^õò[YH	…À»⁄⁄\[ö]X[Ÿ]àùYHJN¬à€€ú›ÿ\ô»Hÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	»Ÿ^\ò⁄\ŸK[\›à]â N¬à€€ú›ÿ\ôHÿ\ô÷ÿÿ\ôÀõ[ô›HWN¬àYà
+Xÿ\ô
+Hô]\õé¬àÀ»\ôX›H]X⁄\»^\ò⁄\ŸI‹»õÿ›\»õ›H
+[ô\»\Xÿ]Hò[Y\»€ BàYà
+^ôõÿ›\ H¬à€€ú›ò[YP€€ùZ[ô\àHÿ\ôú]Y\ûTŸ[X›‹ä	Àúô[]]ôI N¬àYà
+ò[YP€€ùZ[ô\à	âàXÿ\ôú]Y\ûTŸ[X›‹ä	Àò€ÿX⁄Yõÿ›\À[õ›I JH¬à€€ú›õ›HHÿ›[Y[ùò‹ôX]Q[[Y[ù
+	Ÿ]â N¬àõ›Kò€\‹”ò[YHHò€ÿX⁄Yõÿ›\À[õ›H]LàL»ôÀZ[ôY€ÀMLõ‹ô\ã[Mõ‹ô\ãZ[ôY€ÀMLõ›[ôY\ã^é¬àõ›Kö[õô\íSHà€\‹œHù^VÃLHõ€ùXõX⁄»\\òÿ\ŸH^Z[ôY€ÀMåXãLçHèº'„´»€ÿX⁄	‹»õÿ›\œ‹Çà€\‹œHù^\€H^\€]KMÃèâŸ\ÿÿ\R[
+^ôõÿ›\ _O‹ò¬àò[YP€€ùZ[ô\ãò\[ô⁄[
+õ›JN¬àBàBà€€ú›Ÿ]–€€ùZ[ô\àHÿ\ôú]Y\ûTŸ[X›‹ä	÷⁄YèHúŸ]ÀHóI N¬à€€ú›^YHŸ]–€€ùZ[ô\à»Ÿ]–€€ùZ[ô\ãöYúô\XŸJ	‹Ÿ]ÀIÀ	… Hàù[¬à€€ú›\‹⁄Y€ôYŸ]»H\úò^Kö\–\úò^J^úŸ] H	âà^úŸ]Àõ[ô›»^úŸ]»àﬁ»ŸZY⁄à	…Àô\Œà	…»WN¬à\‹⁄Y€ôYŸ]Àôõ‹ëXX⁄
+»Oà¬àYà
+^Y
+HYŸ]—^\ò⁄\ŸJ^Y^õò[YH»Ÿ]\ú€€ò[ôX€‹ô
+^õò[YJHàù[^õò[YH	… N¬à€€ú›õ›‹»Hÿ\ôú]Y\ûTŸ[X›‹ê[
+	ÀúŸ]\õ›… N¬à€€ú›õ›»Hõ›‹÷‹õ›‹Àõ[ô›HWN¬àYà
+õ› H¬à€€ú›ÃàHõ›Àú]Y\ûTŸ[X›‹ä	ÀúŸ]]ŸZY⁄	 N¬à€€ú›åàHõ›Àú]Y\ûTŸ[X›‹ä	ÀúŸ]\ô\… N¬àYà
+ÃäHÃãùò[YHHÀùŸZY⁄	…Œ¬àYà
+åäHåãùò[YHHÀúô\»	…Œ¬àBàJN¬àJN¬àÀ»›\õ›Y⁄]€ôH^\ò⁄\ŸH]H[YHZŸH›\à€‹ö€›]¬àŸ][Y[›]
+
+
+HOà[ù\ï⁄^ò\ô[ŸJ
+KLå
+N¬à\ú⁄\›X›]ôU€‹ö€›]
+
+N¬à⁄›’ÿ\›
+	—õ€›⁄[ô»[›\à€ÿX⁄	‹»€‹ö€›]<'‰™â N¬àBÇàù[ò›[€à‹[ìY[Xô\ìõ›\ 
+H¬àYà
+Yö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY
+H»⁄›’ÿ\›
+	”õ»€ÿX⁄€€õôX›Y	 N»ô]\õé»Bà€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ã[õ›\À[[Ÿ[	 N¬àYà
+[Ÿ[
+H¬à[Ÿ[ú›[Kô\‹^HH	Ÿõ^	Œ¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ã[õ›\ÀX€ÿX⁄[ò[YI Kù^€€ù[ùHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ò[YH	–€ÿX⁄	Œ¬àÿYY[Xô\ìõ›\’ôXY
+
+N¬àBàBÇàù[ò›[€à€‹ŸSY[Xô\ìõ›\ 
+H¬à€€ú›[Ÿ[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ã[õ›\À[[Ÿ[	 N¬àYà
+[Ÿ[
+H[Ÿ[ú›[Kô\‹^HH	€õ€ôIŒ¬àBÇà\ﬁ[ò»ù[ò›[€àÿYY[Xô\ìõ›\’ôXY
+
+H¬à€€ú›ôXY[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ã[õ›\À]ôXY	 N¬àYà
+]ôXY[
+Hô]\õé¬à€€ú›€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬à€€ú›Y[Xô\ïZYH›\úô[ù\Ÿ\ãùZY¬àYà
+X€ÿX⁄ZY
+H»ôXY[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»€ÿX⁄€€õôX›Yè‹âŒ»ô]\õé»BàûH¬à€€ú›õ›Qÿ»H]ÿZ]ãò€€X›[€ä	€õ›\… Kôÿ õ›\—ÿ“Y
+€ÿX⁄ZYY[Xô\ïZY
+JKôŸ]
+
+N¬à€€ú›õ›\»H
+õ›QÿÀô^\›»	âàõ›QÿÀô]J
+KõY\‹ÿYŸ\ H»õ›QÿÀô]J
+KõY\‹ÿYŸ\»à◊N¬àYà
+õ›\Àõ[ô›OOH
+H¬àôXY[ö[õô\íSH	œ€\‹œHù^\€H^\€]KM^XŸ[ù\àKL»èìõ»õ›\»Y]à›\ùH€€ùô\úÿ][€àô[›Àè‹âŒ¬àô]\õé¬àBàôXY[ö[õô\íSHô[ô\ìõ›SY\‹ÿYŸ\ õ›\ N¬àôXY[úÿ‹õ€‹HôXY[úÿ‹õ€ZY⁄¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹àÿY[ô»Y[Xô\àõ›\ŒâÀ\úõ‹äN¬àôXY[ö[õô\íSH	œ€\‹œHù^\€H^\õ‹ŸKML^XŸ[ù\àKL»èê€›[õ›ÿYõ›\»
+⁄X⁄»ö\ô\›‹ôHù[\ Kè‹âŒ¬àBàBÇà\ﬁ[ò»ù[ò›[€à‹›Y[Xô\ìõ›J
+H¬à€€ú›[ú]Hÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y[Xô\ã[õ›KZ[ú]	 N¬à€€ú›^H
+[ú]ùò[YH	… Kùö[J
+Kú€XŸJL
+N¬àYà
+]^
+Hô]\õé¬à€€ú›€ÿX⁄ZYHö\ôXò\ŸU\Ÿ\ë]Kò€ÿX⁄ZY¬à€€ú›Y[Xô\ïZYH›\úô[ù\Ÿ\ãùZY¬àYà
+X€ÿX⁄ZY
+H»⁄›’ÿ\›
+	”õ»€ÿX⁄€€õôX›Y	 N»ô]\õé»Bà€€ú›Y\‹ÿYŸHH¬àúõ€UZYà›\úô[ù\Ÿ\ãùZYàúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH
+›\úô[ù\Ÿ\ãô\‹^Sò[YJH	÷[›IÀàúõ€Tõ€Nà	€Y[Xô\âÀà^à^à]àô]»]J
+Kù“T”‘›ö[ô 
+BàN¬àûH¬à]ÿZ]\[ôõ›J€ÿX⁄ZYY[Xô\ïZYY\‹ÿYŸJN¬à]ÿZ]\⁄õ›YöXÿ][€ä€ÿX⁄ZY¬à\Nà	€õ›IÀà]Nà	”ô]»Y\‹ÿYŸHúõ€H	»
+»
+ö\ôXò\ŸU\Ÿ\ë]Kõò[YH	ﬁ[›\à€Y[ù	 KàõŸNà^õ[ô›àå»^ú€XŸJM H
+»	Àããâ»à^àúõ€Sò[YNàö\ôXò\ŸU\Ÿ\ë]Kõò[YH	–€Y[ù	¬àJN¬à[ú]ùò[YHH	…Œ¬àÿYY[Xô\ìõ›\’ôXY
+
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	—\úõ‹à‹›[ô»Y[Xô\àõ›NâÀ\úõ‹äN¬à⁄›’ÿ\›
+	”õ›HòZ[Yà	»
+»
+\úõ‹ãò€ŸH\úõ‹ãõY\‹ÿYŸH	›[ö€õ›€â Kå
+N¬àBàBÇàÀ»ô[ô\àõŸö[H⁄]ö\ôXò\ŸH]Bàù[ò›[€àô[ô\îõŸö[J
+H¬àYà
+X›\úô[ù\Ÿ\äHô]\õé¬Çà€€ú›ò[YHH
+›\úô[ù\Ÿ\ãô\‹^Sò[YJH
+ö\ôXò\ŸU\Ÿ\ë]H	âàö\ôXò\ŸU\Ÿ\ë]Kõò[YJH	’\Ÿ\âŒ¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[K[ò[YI Kù^€€ù[ùHò[YN¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[KY[XZ[	 Kù^€€ù[ùH›\úô[ù\Ÿ\ãô[XZ[¬ÇàYà
+ö\ôXò\ŸU\Ÿ\ë]H	âàö\ôXò\ŸU\Ÿ\ë]Kò‹ôX]Y]
+H¬àûH¬à€€ú›]HHö\ôXò\ŸU\Ÿ\ë]Kò‹ôX]Y]ù—]Bà»ö\ôXò\ŸU\Ÿ\ë]Kò‹ôX]Y]ù—]J
+Bààô]»]Jö\ôXò\ŸU\Ÿ\ë]Kò‹ôX]Y]
+N¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[KX‹ôX]Y	 Kù^€€ù[ùH]Kù”ÿÿ[Q]T›ö[ô 
+N¬àHÿ]⁄
+JH¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[KX‹ôX]Y	 Kù^€€ù[ùH	‘ôXŸ[ùIŒ¬àBàH[ŸH¬àÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[KX‹ôX]Y	 Kù^€€ù[ùH	‘ôXŸ[ùIŒ¬àBÇàÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[K]€‹ö€›]… Kù^€€ù[ùH›]Kù€‹ö€›]\›‹ûKõ[ô›¬à€€ú›Xÿ€›[ù›]\»Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹õŸö[KXXÿ€›[ù\›]\… N¬à€€ú›ô\öYûPù]€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	›ô\öYûKY[XZ[Xùâ N¬àYà
+Xÿ€›[ù›]\ H¬àXÿ€›[ù›]\Àù^€€ù[ùH›\úô[ù\Ÿ\ãô[XZ[ô\öYöYY»	¯ß$»X›]ôH0≠»[XZ[ô\öYöYY	»à	–X›]ôH0≠»[XZ[ô\öYöXÿ][€àôYYY	Œ¬àXÿ€›[ù›]\Àò€\‹”ò[YHH›\úô[ù\Ÿ\ãô[XZ[ô\öYöYY»	Ÿõ€ùXõ€^Y[Y\ò[Må	»à	Ÿõ€ùXõ€^X[Xô\ãMå	Œ¬àBàYà
+ô\öYûPù]€äHô\öYûPù]€ãò€\‹”\›ùŸŸ€J	⁄Y[âÀHX›\úô[ù\Ÿ\ãô[XZ[ô\öYöYY
+N¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»’UHPSêQ—SQSïàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇà€€ú›QêUS‘’UHH¬àY]Nà¬àÿ⁄[XUô\ú⁄[€éàëíU‘’UW‘–“SPW’ëTî“S”ãà\]Y]àù[à\›€›Yﬁ[ò–]àù[àKàöY]—]Nàÿÿ[]RŸ^J
+KàY]öX‹—]Nàÿÿ[]RŸ^J
+Kà€ÿ[Œà»ÿ[‹öY\ŒàçLÿ]\éàçL›\ŒàLKàÿ]\ìŸ‹ŒàﬂKà›\”Ÿ‹ŒàﬂKàZ[SYX[Œà◊Kà€‹ö€›]\›‹ûNà◊Kàù]ö][€í\›‹ûNà◊KàY]öX‹“\›‹ûNà◊Kà‹ôX]YYX[Œà◊Kà›\›€Qõ€ŸŒà◊KÀ»Ÿôõ[ôHÿX⁄HŸàH›€ô\ã[X[òYŸY⁄\ôYõ€Ÿ]Xò\ŸBàò\ò€ŸQõ€ŸŒà◊KàÀ»Ÿ]ô[ãY^H⁄YùX]ÿ\ôH[õô\à[ô]»\ú⁄\›[ùX[ùX[‹ÿÿ[õôY⁄‹[ô»][\ÀÇàŸYZ€SYX[[éàﬂKà⁄‹[ô“][\Œà◊Kà⁄‹[ô–⁄X⁄‹ŒàﬂKà€‹ö€›][ùéà	Ÿﬁ[IÀà›\úô[ù›‹Œà»úõ€ùàù[⁄YNàù[òX⁄Œàù[KàXö]Œà◊KàXö]—[òXõYàò[ŸKàXö]€€\][€úŒàﬂKàYò][€ë€ÿ[€€\][€úŒàﬂKà›\—€ÿ[€€\][€úŒàﬂKàòX⁄“Yò][€éàùYKàòX⁄‘›\ŒàùYKà\Ÿ\ë€ÿ[Œà◊KàÀ»Y]€ÿ[õ‹àÿ[‹öYH\ôŸ][ôŒà	€‹ŸI»	€XZ[ùZ[â»	ŸÿZ[â¬àY]€ÿ[à»[ŸNà	…Àò]NàKò]U[ö]à	€ú…ÀÿZ[îò]NàçLKàÀ»ÿ]ôY€ÿX⁄[ô»[ú›Ÿ\ú»\ŸY»\ú€€ò[\ŸH⁄Yùù]ö][€à[ôYX[YX\ÀÇàY]\ûTõŸö[Nà¬à€€\]Yàò[ŸKà]\õéà	ÿò[[òŸY	ÀÀ»	ÿò[[òŸY	»	›ôYÿ[â»	›ôYŸ]\öX[â»	⁄Ÿ]ŸŸ[öX…¬à\õÿX⁄\Œà◊KÀ»	⁄[ù\õZ][ùŸò\›[ô…»[ô€‹à	ÿÿ[‹öYWŸYöX⁄]	¬àô\]Z\ô[Y[ùŒà◊KÀ»Y]\ûH^€\⁄[€ú»‹àŸ\ùYöXÿ][€àôYY¬àõ›\Œà	…Àà€›\òŸNàù[à\]Y]àù[àKàÿ\ô[”Ÿ‹Œà◊KàYò][€ìŸ‹ŒàﬂKàZP€ÿX⁄[òXõYàùYKàõ›Z[ë€ÿ[àMLàŸZY⁄[ö]à	⁄Ÿ…ÀÀ»\Ÿ\â‹»ôYô\úôY\‹^H[ö]à	⁄Ÿ…»	€ú…»	‹›	¬àõ€ŸôY⁄[€éà	›Z…ÀÀ»õ€ŸŸX\ò⁄ôY⁄[€éà	›Z…»	›\…»	›€‹õ	¬àÀ»⁄Yù]€‹öŸ\à[ŸNàù[[ù[Ÿ]\à⁄[à[òXõYö]ô\»⁄õ€õÀ[ù]ö][€ÇàÀ»YX[][Z[ô»›ZY[òŸH[ôòZ[ö[ô»›YŸŸ\›[€ú»Ÿ^YY»H⁄Yù]\õãÇà⁄YùõŸö[Nà¬à[òXõYàò[ŸKàX⁄€õ›€YŸY\ÿ€Z[Y\éàò[ŸKà⁄Yù\Nà	€öY⁄…ÀÀ»	Ÿ^\…»	€öY⁄…»	‹õ›][ô…»	ŸX\õY\…¬à⁄Yù›\ùà	ÃNNå	ÀÀ»€ÿ⁄»[YHH⁄Yù›\ù¬à⁄Yù[ôà	ÃŒå	ÀÀ»€ÿ⁄»[YHH⁄Yù[ô¬à€‹ö—^\ŒàÃKãÀWKÀ»T›[ããçèTÿ]]^I‹ôH€à⁄Yùà€ÿ[à	Ÿò]€‹‹…ÀÀ»	Ÿò]€‹‹…»	€]\ÿ€WŸÿZ[â¬à\ŸQò\›[ôŒàò[ŸKÀ»‹[€ò[Nåã\›[Hò\›[ô»
+ô\›^\»€õJBàõ›NàﬂHÀ»]KZŸ^YY›ô\úöY\¬àKà⁄X⁄“[úŒà◊Kà€ÿX⁄€€ùô\úÿ][€úŒà◊KàôXY[ô\‹”Ÿ‹ŒàﬂKàÀ»€ôH€€\]YZ[Hù]ö][€ã›òZ[ö[ô»ôXY[ô\‹»[à\àÿÿ[]KÇàÀ»\»\»Ÿ\\ò]Húõ€HH€ÿX⁄[ô»Xâ‹»€ôŸ\àôXY[ô\‹»ÿ€‹ôH€¬àÀ»HL[H⁄X⁄ÀZ[àÿ[àZ[‹àŸ^I‹»ÿ[‹öY\»[ôòZ[ö[ô»ÿYô[KÇàZ[TôXY[ô\‹ŒàﬂKà€ÿX⁄[ô’\ôŸ]Œà¬à€‹ö€›]‘\ïŸYZŒàÀàÿ[‹öYU€\ò[òŸT\òŸ[ùàLàõ›Z[êY\ô[òŸT\òŸ[ùàLàKàõŸ‹ô\‹⁄[€îŸ][ô‹Œà¬à[òXõYàùYKà\ôŸ]ö\éàãà]X]TŸ\‹⁄[€úŒàÀà[ÿY\òŸ[ùàLàKà[ÿY[éà¬àX›]ôNàò[ŸKà›\ù]Nàù[à[ô]Nàù[à€›\òŸNàù[à‹ôX]Y]àù[àKàõ›YöXÿ][€îŸ][ô‹Œà¬à[òXõYàò[ŸKàô[Z[ô\ï[YNà	ÃNå	Àà€‹ö€›]ŒàùYKà⁄X⁄“[úŒàùYKàYò][€éàò[ŸKà€ÿX⁄Y\‹ÿYŸ\ŒàùYKà]öXŸRYàù[àKàö]òXﬁTŸ][ô‹Œà¬à€›YX[]NàùYKàõ›XŸUô\ú⁄[€éàù[àX⁄€õ›€YŸY]àù[àKàÀ»õŸ‹ô\‹À]\]Hô[Z[ô\úÀàôYH[ô\[ô[ùòX⁄Ÿ\ú»
+ŸZY⁄õŸBàÀ»YX\›\ô[Y[ùÀõŸ‹ô\‹»›‹ KXX⁄⁄]]»›€àÿ⁄Y[H
+»[]ô\ûKÇàÀ»úô\]Y[òﬁNà	ŸZ[I»	›ŸYZ€I»	€[€ùI»	ÿ›\›€I¬àÀ»›\›€Q^\Œà\úò^HŸàŸYZŸ^Hù[Xô\ú»
+T›[ããçèTÿ]
+Hõ‹àŸYZ€Kÿ›\›€BàÀ»›\›€Q]Nà^K[Ÿã[[€ù
+KãåÃJHõ‹à[€ùK‹àH⁄‹Ÿ[àôX›\úö[ô»]BàÀ»[]ô\ûNà	ÿZI»
+RH€ÿX⁄Y[ù[€ú»]
+H	ÿ[\ù	»
+⁄Y€ãZ[àX⁄€õ›€YŸ[Y[ù
+BàÀ»\›€ôNàT”»]H›ö[ô»ŸàH\›[YH]\]Hÿ\»ŸŸŸYà\]Tô[Z[ô\úŒà¬àŸZY⁄à»[òXõYàò[ŸKúô\]Y[òﬁNà	›ŸYZ€IÀ›\›€Q^\ŒàÃWK›\›€Q]NàK[]ô\ûNà	ÿ[\ù	À\›€ôNàù[KàYX\›\ô[Y[ùà»[òXõYàò[ŸKúô\]Y[òﬁNà	€[€ùIÀ›\›€Q^\ŒàÃWK›\›€Q]NàK[]ô\ûNà	ÿ[\ù	À\›€ôNàù[Kà›Œà»[òXõYàò[ŸKúô\]Y[òﬁNà	€[€ùIÀ›\›€Q^\ŒàÃWK›\›€Q]NàK[]ô\ûNà	ÿ[\ù	À\›€ôNàù[BàKà^\ò⁄\ŸTò][ô‹ŒàﬂKÀ»»	–ô[ò⁄ô\‹…Œà»›[àM€›[ùàKããàH8†%]ô\òYŸHH›[ÿ€›[ùàÀ»\Ÿ\ãX‹ôX]Y^\ò⁄\Ÿ\Œà»ò[YK[ùãõÿ›\À]\ÿ€\Œñ◊K\Nâÿ€€\›[ô	ﬂ	⁄\€€][€â»Bà›\›€Q^\ò⁄\Ÿ\Œà◊KàÀ»^\ò⁄\Ÿ\»H\Ÿ\à\»\õôY—ëà
+õ›]òZ[XõH]Z\àﬁ[JKÇàÀ»›‹ôY\»»ﬁ[Nà…”XX⁄[ôHöXŸ\›\õ	ÀããóK€YNàÀããóHBà\ÿXõY^\ò⁄\Ÿ\Œà»ﬁ[Nà◊K€YNà◊HKàÀ»HôYúô\⁄\ÿYôH€ò\⁄›ŸàH€‹ö€›]›\úô[ùHôZ[ô»ŸŸŸYÇàX›]ôU€‹ö€›]àù[à\Ÿ\îõŸö[Nà¬àŸ[ô\éà	…ÀÀ»	€X[I»	Ÿô[X[I»	…¬àZY⁄€Nàù[À»ù[Xô\ÇàYŸNàù[À»ù[Xô\ÇàYX\ú’òZ[ö[ôŒàù[À»ù[Xô\à8†%\ŸY»\ö]ôH^\öY[òŸH]ô[àX›]ö]S]ô[à	…»À»	‹ŸY[ù\ûI»	€Y⁄	»	€[Ÿ\ò]I»	ÿX›]ôI»	›ô\ûWÿX›]ôI»	…¬àKà\]Z\Y[ùà¬àﬁ[Nà¬à	–ò\òô[	ŒàùYKà	—[Xòô[…ŒàùYKà	–ÿXõHXX⁄[ôIŒàùYKà	’ŸZY⁄YXX⁄[ôIŒàùYKà	”Y»ô\‹…ŒàùYKà	‘[\ò\âŒàùYKà	–ô[ò⁄	ŒàùYBàKà€YNà¬à	—[Xòô[…Œàò[ŸKà	‘ô\⁄\›[òŸHò[ô…Œàò[ŸKà	‘[\ò\âŒàò[ŸKà	÷[ŸÿHX]	ŒàùYBàBàBàN¬Çà]›]HHî””ãú\úŸJî””ãú›ö[ô⁄YûJQêUS‘’UJJN¬Çà]€‹ö€›][Y\àHù[¬à]€‹ö€›]›\ù[YHHù[»À»Xú€€]Hÿ[X€ÿ⁄»[Y\›[\⁄[àH€‹ö€›]ôYÿ[Çà]€‹ö€›]Xÿ›[][]YŸX€€ô»H»À»YÿXﬁHô\›‹ôHò[òX⁄»õ‹àôKXô]KçH€ò\⁄›¬à]›\úô[ù€‹ö€›]€€ù^Hù[»À»Ÿ[ùãõÿ›\À]\ÿ€\ﬂH8†%Ÿ]⁄[àH€‹ö€›]›\ù¬à]⁄›–[^\ò⁄\Ÿ\“[îX⁄Ÿ\àHò[ŸN»À»ŸŸ€YûHHî⁄›»[à[ö»[àHõ‹›€Çà]›\úô[ùõ€Ÿ][HHù[¬à]\›⁄X⁄—]HHù[¬à]ZYöY⁄⁄X⁄“[ù\ùò[Hù[¬à]Ÿ[X›Yô]ö[›\”YX[»H◊N¬à]›\úô[ùY][ô”YX[Hù[¬à]Y][[›[ù\HH	‹‹ù[€âŒ¬à]›\úô[ù[[›[ù\HH	‹‹ù[€âŒ¬à]ŸX\ò⁄ô\›[»H◊N¬à]YX[[ô‹ôYY[ù»H◊N¬à]⁄YùYX[]Z[Ÿ[X›[€àHù[¬à][T\ê€ŸHHù[¬à]Y]öX‹–⁄\ùHù[¬à]›\úô[ù›’\HHù[¬à]X[ùX[õ€Ÿ[XYŸQ]HHù[¬à]ZYöY⁄ÿ]ôU[Y[›]Hù[¬à]ÿÿ[ÿ]ôP€›[ù\àH¬à]€›Yﬁ[ò’[Y\àHù[¬à]€›Yﬁ[ò‘õ€Z\ŸHHù[¬à]€›Y\ùHHò[ŸN¬à]€›Yﬁ[ò—\úõ‹àHù[¬ÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»Tî“T’Sê—BàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇà äàH›»\»Z]\àYÿXﬁH[õ[ôH[XYŸH]H‹àH\òXõH[ô^YàôYô\ô[òŸKà
+ã¬àù[ò›[€à\’ò[Y›—]JäH¬àô]\õà\[ŸààOOH	‹›ö[ô…¬à	âà
+ãö[ô^Ÿä	Ÿ]Nö[XYŸK… HOOHãö[ô^Ÿä	›ôö]\›Œâ HOOH
+N¬àBÇàù[ò›[€àY\€€ôJò[YJH¬àô]\õàî””ãú\úŸJî””ãú›ö[ô⁄YûJò[YJJN¬àBÇàù[ò›[€à\‘Z[îôX€‹ô
+ò[YJH¬àô]\õàH]ò[YH	âà\[Ÿàò[YHOOH	€ÿöôX›	»	âàP\úò^Kö\–\úò^Jò[YJN¬àBÇàù[ò›[€àÿ[ö]^ôT›‹ôYò[YJò[YK\
+H¬à€€ú›]ô[H\¬àYà
+]ô[à
+Hô]\õàù[¬àYà
+\úò^Kö\–\úò^Jò[YJJHô]\õàò[YKõX\
+][HOàÿ[ö]^ôT›‹ôYò[YJ][K]ô[
+»JJN¬àYà
+Z\‘Z[îôX€‹ô
+ò[YJJHô]\õàò[YN¬à€€ú›€X[àHﬂN¬àÿöôX›öŸ^\ ò[YJKôõ‹ëXX⁄
+Ÿ^HOà¬àYà
+Ÿ^HOOH	◊◊‹õ›◊◊…»Ÿ^HOOH	‹õ››\I»Ÿ^HOOH	ÿ€€ú›ùX›‹â Hô]\õé¬à€X[ñ⁄Ÿ^WHHÿ[ö]^ôT›‹ôYò[YJò[YV⁄Ÿ^WK]ô[
+»JN¬àJN¬àô]\õà€X[é¬àBÇà äàŸY\€õHH›]HöY[»ëíU›€ú»[ôô\Z\à€\à]H⁄\\Àà
+ã¬àù[ò›[€àõ‹õX[^ôT›]J[ú]
+H¬à€€ú›ò]»H\‘Z[îôX€‹ô
+[ú]
+H»ÿ[ö]^ôT›‹ôYò[YJ[ú]
+HàﬂN¬à€€ú›õ‹õX[^ôYHY\€€ôJQêUS‘’UJN¬ÇàÿöôX›öŸ^\ QêUS‘’UJKôõ‹ëXX⁄
+Ÿ^HOà¬àYà
+ÿöôX›úõ››\Kö\”›€îõ‹\ùKòÿ[
+ò]ÀŸ^JJHõ‹õX[^ôY⁄Ÿ^WHHY\€€ôJò]÷⁄Ÿ^WJN¬àJN¬Çàõ‹õX[^ôYõY]HHÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKõY]K\‘Z[îôX€‹ô
+ò]ÀõY]JH»ò]ÀõY]HàﬂK¬àÿ⁄[XUô\ú⁄[€éàëíU‘’UW‘–“SPW’ëTî“S”ÇàJN¬àõ‹õX[^ôYô€ÿ[»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKô€ÿ[À\‘Z[îôX€‹ô
+ò]Àô€ÿ[ H»ò]Àô€ÿ[»àﬂJN¬àõ‹õX[^ôYôY]€ÿ[HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKôY]€ÿ[\‘Z[îôX€‹ô
+ò]ÀôY]€ÿ[
+H»ò]ÀôY]€ÿ[àﬂJN¬àõ‹õX[^ôYôY]\ûTõŸö[HHÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKôY]\ûTõŸö[K\‘Z[îôX€‹ô
+ò]ÀôY]\ûTõŸö[JH»ò]ÀôY]\ûTõŸö[HàﬂJN¬àõ‹õX[^ôYôY]\ûTõŸö[Kú]\õàH…ÿò[[òŸY	À	›ôYÿ[âÀ	›ôYŸ]\öX[âÀ	⁄Ÿ]ŸŸ[öX…◊Kö[ò€Y\ õ‹õX[^ôYôY]\ûTõŸö[Kú]\õäBà»õ‹õX[^ôYôY]\ûTõŸö[Kú]\õÇàà	ÿò[[òŸY	Œ¬àõ‹õX[^ôYôY]\ûTõŸö[Kò\õÿX⁄\»H\úò^Kö\–\úò^Jõ‹õX[^ôYôY]\ûTõŸö[Kò\õÿX⁄\ Bà»õ‹õX[^ôYôY]\ûTõŸö[Kò\õÿX⁄\Àôö[\äò[YHOà…⁄[ù\õZ][ùŸò\›[ô…À	ÿÿ[‹öYWŸYöX⁄]	◊Kö[ò€Y\ ò[YJJBàà◊N¬àõ‹õX[^ôYôY]\ûTõŸö[Kúô\]Z\ô[Y[ù»H\úò^Kö\–\úò^Jõ‹õX[^ôYôY]\ûTõŸö[Kúô\]Z\ô[Y[ù Bà»õ‹õX[^ôYôY]\ûTõŸö[Kúô\]Z\ô[Y[ùÀôö[\äò[YHOà\[Ÿàò[YHOOH	‹›ö[ô… Kú€XŸJMäBàà◊N¬àõ‹õX[^ôYôY]\ûTõŸö[Kõõ›\»H›ö[ô õ‹õX[^ôYôY]\ûTõŸö[Kõõ›\»	… Kú€XŸJÕL
+N¬àõ‹õX[^ôYù\Ÿ\îõŸö[HHÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKù\Ÿ\îõŸö[K\‘Z[îôX€‹ô
+ò]Àù\Ÿ\îõŸö[JH»ò]Àù\Ÿ\îõŸö[HàﬂJN¬àõ‹õX[^ôYú⁄YùõŸö[HHÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKú⁄YùõŸö[K\‘Z[îôX€‹ô
+ò]Àú⁄YùõŸö[JH»ò]Àú⁄YùõŸö[HàﬂJN¬àõ‹õX[^ôYú⁄YùõŸö[Kúõ›HH\‘Z[îôX€‹ô
+ò]Àú⁄YùõŸö[H	âàò]Àú⁄YùõŸö[Kúõ›JBà»Y\€€ôJò]Àú⁄YùõŸö[Kúõ›JBààﬂN¬àõ‹õX[^ôYò€ÿX⁄[ô’\ôŸ]»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKò€ÿX⁄[ô’\ôŸ]À\‘Z[îôX€‹ô
+ò]Àò€ÿX⁄[ô’\ôŸ] H»ò]Àò€ÿX⁄[ô’\ôŸ]»àﬂJN¬àõ‹õX[^ôYúõŸ‹ô\‹⁄[€îŸ][ô‹»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKúõŸ‹ô\‹⁄[€îŸ][ô‹À\‘Z[îôX€‹ô
+ò]ÀúõŸ‹ô\‹⁄[€îŸ][ô‹ H»ò]ÀúõŸ‹ô\‹⁄[€îŸ][ô‹»àﬂJN¬àõ‹õX[^ôYô[ÿY[àHÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKô[ÿY[ã\‘Z[îôX€‹ô
+ò]Àô[ÿY[äH»ò]Àô[ÿY[ààﬂJN¬àõ‹õX[^ôYõõ›YöXÿ][€îŸ][ô‹»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKõõ›YöXÿ][€îŸ][ô‹À\‘Z[îôX€‹ô
+ò]Àõõ›YöXÿ][€îŸ][ô‹ H»ò]Àõõ›YöXÿ][€îŸ][ô‹»àﬂJN¬àõ‹õX[^ôYúö]òXﬁTŸ][ô‹»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKúö]òXﬁTŸ][ô‹À\‘Z[îôX€‹ô
+ò]Àúö]òXﬁTŸ][ô‹ H»ò]Àúö]òXﬁTŸ][ô‹»àﬂJN¬àõ‹õX[^ôYò›\úô[ù›‹»HÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKò›\úô[ù›‹À\‘Z[îôX€‹ô
+ò]Àò›\úô[ù›‹ H»ò]Àò›\úô[ù›‹»àﬂJN¬àõ‹õX[^ôYô\]Z\Y[ùH¬àﬁ[NàÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKô\]Z\Y[ùôﬁ[K\‘Z[îôX€‹ô
+ò]Àô\]Z\Y[ù	âàò]Àô\]Z\Y[ùôﬁ[JH»ò]Àô\]Z\Y[ùôﬁ[HàﬂJKà€YNàÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKô\]Z\Y[ùö€YK\‘Z[îôX€‹ô
+ò]Àô\]Z\Y[ù	âàò]Àô\]Z\Y[ùö€YJH»ò]Àô\]Z\Y[ùö€YHàﬂJBàN¬àõ‹õX[^ôYù\]Tô[Z[ô\ú»H¬àŸZY⁄àÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKù\]Tô[Z[ô\úÀùŸZY⁄\‘Z[îôX€‹ô
+ò]Àù\]Tô[Z[ô\ú»	âàò]Àù\]Tô[Z[ô\úÀùŸZY⁄
+H»ò]Àù\]Tô[Z[ô\úÀùŸZY⁄àﬂJKàYX\›\ô[Y[ùàÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKù\]Tô[Z[ô\úÀõYX\›\ô[Y[ù\‘Z[îôX€‹ô
+ò]Àù\]Tô[Z[ô\ú»	âàò]Àù\]Tô[Z[ô\úÀõYX\›\ô[Y[ù
+H»ò]Àù\]Tô[Z[ô\úÀõYX\›\ô[Y[ùàﬂJKà›ŒàÿöôX›ò\‹⁄Y€äﬂKQêUS‘’UKù\]Tô[Z[ô\úÀú›À\‘Z[îôX€‹ô
+ò]Àù\]Tô[Z[ô\ú»	âàò]Àù\]Tô[Z[ô\úÀú› H»ò]Àù\]Tô[Z[ô\úÀú›»àﬂJBàN¬àõ‹õX[^ôYô\ÿXõY^\ò⁄\Ÿ\»H¬àﬁ[Nà\úò^Kö\–\úò^Jò]Àô\ÿXõY^\ò⁄\Ÿ\»	âàò]Àô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[JH»ò]Àô\ÿXõY^\ò⁄\Ÿ\Àôﬁ[Kôö[\äàOà\[ŸààOOH	‹›ö[ô… Hà◊Kà€YNà\úò^Kö\–\úò^Jò]Àô\ÿXõY^\ò⁄\Ÿ\»	âàò]Àô\ÿXõY^\ò⁄\Ÿ\Àö€YJH»ò]Àô\ÿXõY^\ò⁄\Ÿ\Àö€YKôö[\äàOà\[ŸààOOH	‹›ö[ô… Hà◊BàN¬Çà€€ú›\úò^QöY[»H¬à	ŸZ[SYX[…À	›€‹ö€›]\›‹ûIÀ	€ù]ö][€í\›‹ûIÀ	€Y]öX‹“\›‹ûIÀà	ÿ‹ôX]YYX[…À	ÿ›\›€Qõ€Ÿ…À	ÿò\ò€ŸQõ€Ÿ…À	‹⁄‹[ô“][\…À	⁄Xö]…À	›\Ÿ\ë€ÿ[…À	ÿÿ\ô[”Ÿ‹…Àà	ÿ›\›€Q^\ò⁄\Ÿ\…À	ÿ⁄X⁄“[ú…À	ÿ€ÿX⁄€€ùô\úÿ][€ú…¬àN¬à\úò^QöY[Àôõ‹ëXX⁄
+Ÿ^HOà¬àYà
+P\úò^Kö\–\úò^Jõ‹õX[^ôY⁄Ÿ^WJJHõ‹õX[^ôY⁄Ÿ^WHH◊N¬àJN¬à€€ú›ôX€‹ôöY[»H¬à	›ÿ]\ìŸ‹…À	‹›\”Ÿ‹…À	⁄Xö]€€\][€ú…À	⁄Yò][€ë€ÿ[€€\][€ú…Àà	‹›\—€ÿ[€€\][€ú…À	⁄Yò][€ìŸ‹…À	Ÿ^\ò⁄\ŸTò][ô‹…À	‹ôXY[ô\‹”Ÿ‹…À	ŸZ[TôXY[ô\‹…Àà	›ŸYZ€SYX[[âÀ	‹⁄‹[ô–⁄X⁄‹…¬àN¬àôX€‹ôöY[Àôõ‹ëXX⁄
+Ÿ^HOà¬àYà
+Z\‘Z[îôX€‹ô
+õ‹õX[^ôY⁄Ÿ^WJJHõ‹õX[^ôY⁄Ÿ^WHHﬂN¬àJN¬ÇàÀ»ZY‹ò][€éà€\àYX[»\ŸY\X»[›\úô[ùöY]‹»\ŸHYX[\XÇàõ‹õX[^ôYôZ[SYX[Àôõ‹ëXX⁄
+YX[Oà¬àYà
+\‘Z[îôX€‹ô
+YX[
+H	âà[YX[õYX[\H	âàYX[ù\JHYX[õYX[\HHYX[ù\N¬àJN¬ÇàÀ»ô[[›ôH[ùò[Y›»Ÿ[ù[ô[»⁄[Hô\Ÿ\ùö[ô»]ô\ûHôX[[XYŸKÇàõ‹õX[^ôYõY]öX‹“\›‹ûKôõ‹ëXX⁄
+Y]öX»Oà¬àYà
+Z\‘Z[îôX€‹ô
+Y]öX HZ\‘Z[îôX€‹ô
+Y]öXÀú›‹ JHô]\õé¬à€€ú›€X[î›‹»HﬂN¬àÿöôX›ô[ùöY\ Y]öXÀú›‹ Kôõ‹ëXX⁄
+
+ÿ[ô€Kò[YWJHOà¬àYà
+…Ÿúõ€ù	À	‹⁄YIÀ	ÿòX⁄…◊Kö[ò€Y\ [ô€JH	âà\’ò[Y›—]Jò[YJJH€X[î›‹÷ÿ[ô€WHHò[YN¬àJN¬àYà
+ÿöôX›öŸ^\ €X[î›‹ Kõ[ô›
+HY]öXÀú›‹»H€X[î›‹Œ¬à[ŸH[]HY]öXÀú›‹Œ¬àJN¬Çàõ‹õX[^ôYò›\›€Q^\ò⁄\Ÿ\Àôõ‹ëXX⁄
+^\ò⁄\ŸHOà¬àYà
+^\ò⁄\ŸH	âà^\ò⁄\ŸKõò[YH	âà\úò^Kö\–\úò^J^\ò⁄\ŸKõ]\ÿ€\ H	âà\[ŸàVTê“T—W’◊”UT–”T»OOH	›[ôYö[ôY	 H¬àVTê“T—W’◊”UT–”T÷Ÿ^\ò⁄\ŸKõò[YWHH^\ò⁄\ŸKõ]\ÿ€\Àú€XŸJ
+N¬àBàJN¬àô]\õàõ‹õX[^ôY¬àBÇàù[ò›[€à›]T›‹òYŸRŸ^JZY
+H¬àô]\õà’UW“—VW‘ëQíV
+»›ö[ô ZY
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZY
+H	Ÿ›Y\›	 N¬àBÇàù[ò›[€àôX€›ô\ûT›‹òYŸRŸ^JZY
+H¬àô]\õà’UW–êP“’T‘ëQíV
+»›ö[ô ZY
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZY
+H	Ÿ›Y\›	 N¬àBÇàù[ò›[€àôXY›‹ôYú€€äŸ^JH¬àûH¬à€€ú›ò[YHHÿÿ[›‹òYŸKôŸ]][JŸ^JN¬àYà
+]ò[YJHô]\õàù[¬à€€ú›\úŸYHî””ãú\úŸJò[YJN¬àô]\õà\‘Z[îôX€‹ô
+\úŸY
+H»\úŸYàù[¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kùÿ\õä	“Y€õ‹ôY[à[úôXYXõHëíUÿ]ôNâÀŸ^K\úõ‹äN¬àô]\õàù[¬àBàBÇà äàH€X[ôX€›ô\ûH€‹H^€Y\»ÿÿ[[€õH[XYŸH]H»]õ⁄Y›Xõ[ô»›‹òYŸH\ŸKà
+ã¬àù[ò›[€à›]U⁄]›]ÿÿ[[XYŸ\ ò[YJH¬àô]\õàî””ãú\úŸJî””ãú›ö[ô⁄YûJò[YK
+Ÿ^K][JHOà¬àYà
+Ÿ^HOOH	‹›‹…»Ÿ^HOOH	ÿ›\úô[ù›‹… Hô]\õà[ôYö[ôY¬àYà
+\[Ÿà][HOOH	‹›ö[ô…»	âà][Kö[ô^Ÿä	Ÿ]Nö[XYŸK… HOOH
+Hô]\õà[ôYö[ôY¬àô]\õà][N¬àJJN¬àBÇàù[ò›[€àÿ]ôT›]J‹[€ú H¬à€€ú›€€ôöY»H‹[€ú»ﬂN¬àYà
+Z\‘Z[îôX€‹ô
+›]KõY]JJH›]KõY]HHY\€€ôJQêUS‘’UKõY]JN¬à›]KõY]Kúÿ⁄[XUô\ú⁄[€àHëíU‘’UW‘–“SPW’ëTî“S”é¬àYà
+X€€ôöYÀúô\Ÿ\ùôU\]Y]
+H›]KõY]Kù\]Y]Hô]»]J
+Kù“T”‘›ö[ô 
+N¬Çà€€ú›Ÿ^HH›]T›‹òYŸRŸ^J€€ôöYÀùZY
+N¬àûH¬àÿÿ[›‹òYŸKúŸ]][JŸ^Kî””ãú›ö[ô⁄YûJ›]JJN¬àÿÿ[ÿ]ôP€›[ù\à
+œHN¬àYà
+€€ôöYÀôõ‹òŸPòX⁄›\ÿÿ[ÿ]ôP€›[ù\à	HLOOHH[ÿÿ[›‹òYŸKôŸ]][JôX€›ô\ûT›‹òYŸRŸ^J€€ôöYÀùZY
+JJH¬àûH¬àÿÿ[›‹òYŸKúŸ]][JôX€›ô\ûT›‹òYŸRŸ^J€€ôöYÀùZY
+Kî””ãú›ö[ô⁄YûJ›]U⁄]›]ÿÿ[[XYŸ\ ›]JJJN¬àHÿ]⁄
+òX⁄›\\úõ‹äH¬à€€ú€€Kùÿ\õä	‘ôX€›ô\ûHÿ]ôH⁄⁄\YâÀòX⁄›\\úõ‹äN¬àBàBàYà
+X€€ôöYÀú⁄⁄\€›Y
+Hÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò 
+N¬à\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàùYN¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	‘ÿ]ôH\úõ‹éâÀ\úõ‹äN¬àÀ»ô\Ÿ\ùôHHù[[ã[Y[[‹ûH›]H[ô]X\›ôYúô\⁄H›ÀYúôYBàÀ»ôX€›ô\ûHôX€‹ôàô]ô\à[]H€\à›‹»]]€X]Xÿ[KÇàûH¬àÿÿ[›‹òYŸKúŸ]][JôX€›ô\ûT›‹òYŸRŸ^J€€ôöYÀùZY
+Kî””ãú›ö[ô⁄YûJ›]U⁄]›]ÿÿ[[XYŸ\ ›]JJJN¬àHÿ]⁄
+òX⁄›\\úõ‹äH¬à€€ú€€Kùÿ\õä	‘ôX€›ô\ûHÿ]ôH[€»òZ[YâÀòX⁄›\\úõ‹äN¬àBàYà
+\úõ‹à	âà
+\úõ‹ãõò[YHOOH	‘][›Q^ŸYYY\úõ‹â»\úõ‹ãò€ŸHOOHåäJH¬à⁄›’ÿ\›
+	–\›‹òYŸH\»ù[à[›\à›»ÿ[\ûH\»Ÿ\Ÿ\\ò][H8†%^‹ùHòX⁄›\[ôúôYH]öXŸH‹XŸKâÀÃ
+N¬àH[ŸH¬à⁄›’ÿ\›
+	–€›[õ›ÿ]ôH€à\»]öXŸKà^‹ùHòX⁄›\õ›ÀâÀå
+N¬àBà\]Q]Tﬁ[ò‘›]\ 
+N¬àô]\õàò[ŸN¬àBàBÇà äàÿY€õH\»⁄Y€ôYZ[àXÿ€›[ùàHYÿXﬁH⁄\ôYÿ]ôH\»€Z[YY€òŸKà
+ã¬àù[ò›[€àÿY›]JZY
+H¬à€€ú›Xÿ€›[ùYHZY
+›\úô[ù\Ÿ\à	âà›\úô[ù\Ÿ\ãùZY
+H	Ÿ›Y\›	Œ¬à]\úŸYHôXY›‹ôYú€€ä›]T›‹òYŸRŸ^JXÿ€›[ùY
+JN¬à]€›\òŸHH	Ÿ]öXŸIŒ¬ÇàYà
+\\úŸY
+H¬à\úŸYHôXY›‹ôYú€€äôX€›ô\ûT›‹òYŸRŸ^JXÿ€›[ùY
+JN¬à€›\òŸHH\úŸY»	‹ôX€›ô\ûI»à	ŸYò][	Œ¬àBÇàYà
+\\úŸY	âàXÿ€›[ùYOOH	Ÿ›Y\›	 H¬à]ZY‹ò]YZYHù[¬àûH»ZY‹ò]YZYHÿÿ[›‹òYŸKôŸ]][JQ–P÷W”RQ‘êUS”ó“—VJN»Hÿ]⁄
+\úõ‹äHﬂBàYà
+[ZY‹ò]YZYZY‹ò]YZYOOHXÿ€›[ùY
+H¬à€€ú›YÿXﬁHHôXY›‹ôYú€€äQ–P÷W‘’UW“—VJN¬àYà
+YÿXﬁJH¬à\úŸYHYÿXﬁN¬à€›\òŸHH	€YÿXﬁIŒ¬àûH»ÿÿ[›‹òYŸKúŸ]][JQ–P÷W”RQ‘êUS”ó“—VKXÿ€›[ùY
+N»Hÿ]⁄
+\úõ‹äHﬂBàBàBàBÇà›]HHõ‹õX[^ôT›]J\úŸYQêUS‘’UJN¬àYà
+€›\òŸHOOH	€YÿXﬁI»€›\òŸHOOH	‹ôX€›ô\ûI H¬àÿ]ôT›]J»ZYàXÿ€›[ùY⁄⁄\€›YàùYKô\Ÿ\ùôU\]Y]àùYKõ‹òŸPòX⁄›\àùYHJN¬àBàô]\õà€›\òŸN¬àBÇàù[ò›[€à^‹ùôö]òX⁄›\
+
+H¬àûH¬à€€ú›^[ÿYH¬à\à	’ëíU	Àà\ô\ú⁄[€éàëíU–T’ëTî“S”ãàÿ⁄[XUô\ú⁄[€éàëíU‘’UW‘–“SPW’ëTî“S”ãà^‹ùY]àô]»]J
+Kù“T”‘›ö[ô 
+KàXÿ€›[ù[XZ[à›\úô[ù\Ÿ\à»
+›\úô[ù\Ÿ\ãô[XZ[	… Hà	…Àà›]Nà›]BàN¬à€€ú›õÿàHô]»õÿä“î””ãú›ö[ô⁄YûJ^[ÿYù[äWK»\Nà	ÿ\Xÿ][€ã⁄ú€€â»JN¬à€€ú›\õHTìò‹ôX]SÿöôX›Tì
+õÿäN¬à€€ú›[ö»Hÿ›[Y[ùò‹ôX]Q[[Y[ù
+	ÿI N¬à[öÀöôYàH\õ¬à[öÀô›€õÿYHôö]XòX⁄›\I€ÿÿ[]RŸ^J
+_Köú€€ò¬àÿ›[Y[ùòõŸKò\[ô⁄[
+[ö N¬à[öÀò€X⁄ 
+N¬à[öÀúô[[›ôJ
+N¬àŸ][Y[›]
+
+
+HOàTìúô]õ⁄ŸSÿöôX›Tì
+\õ
+KL
+N¬à⁄›’ÿ\›
+	–òX⁄›\›€õÿYY8†%ŸY\]ö]ò]IÀL
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	–òX⁄›\^‹ùòZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+	–€›[õ›‹ôX]HHòX⁄›\	ÀL
+N¬àBàBÇà\ﬁ[ò»ù[ò›[€à[\‹ùôö]òX⁄›\
+]ô[ù
+H¬à€€ú›[ú]H]ô[ù	âà]ô[ùù\ôŸ]¬à€€ú›ö[HH[ú]	âà[ú]ôö[\»	âà[ú]ôö[\÷ÃN¬àYà
+Yö[JHô]\õé¬àûH¬àYà
+ö[Kú⁄^ôHàL
+àLç
+àLç
+Hõ›»ô]»\úõ‹ä	–òX⁄›\\»\ôŸ\à[àLPâ N¬à€€ú›\úŸYHî””ãú\úŸJ]ÿZ]ö[Kù^
+
+JN¬à€€ú›[\‹ùYH\‘Z[îôX€‹ô
+\úŸY	âà\úŸYú›]JH»\úŸYú›]Hà\úŸY¬àYà
+Z\‘Z[îôX€‹ô
+[\‹ùY
+JHõ›»ô]»\úõ‹ä	’\»\»õ›HëíU›]HòX⁄›\	 N¬à€€ú›€›\òŸQ[XZ[H\úŸY	âà\úŸYòXÿ€›[ù[XZ[»›ö[ô \úŸYòXÿ€›[ù[XZ[
+Hà	…Œ¬à€€ú›Xÿ€›[ùÿ\õö[ô»H€›\òŸQ[XZ[	âà›\úô[ù\Ÿ\à	âà€›\òŸQ[XZ[ù”›Ÿ\êÿ\ŸJ
+HOOH
+›\úô[ù\Ÿ\ãô[XZ[	… Kù”›Ÿ\êÿ\ŸJ
+Bà»óï\»òX⁄›\ÿ\»^‹ùYõ‹à	‹€›\òŸQ[XZ[Kòàà	…Œ¬à€€ú›\õ›ôYH€€ôö\õJà	‘ô\›‹ôH\»ëíUòX⁄›\»[\‹ùY\›‹ûH⁄[ôHY\ôŸY⁄]\»Xÿ€›[ù€»^\›[ô»€‹ö€›]»[ô›‹»\ôHŸ\â»
+»Xÿ€›[ùÿ\õö[ô¬à
+N¬àYà
+X\õ›ôY
+Hô]\õé¬à€€ú›ôYô\úôY[\‹ùHõ‹õX[^ôT›]J[\‹ùY
+N¬àôYô\úôY[\‹ùõY]Kù\]Y]Hô]»]J]Kõõ› 
+H
+»L
+Kù“T”‘›ö[ô 
+N¬à›]HHY\ôŸT›]T€ò\⁄› ›]KôYô\úôY[\‹ù
+N¬àYà
+\ÿ]ôT›]J»õ‹òŸPòX⁄›\àùYHJJHõ›»ô]»\úõ‹ä	’Hô\›‹ôY]H€›[õ›ôHÿ]ôY€à\»]öXŸI N¬à]ÿZ]õ\⁄€›Yﬁ[ò »⁄[[ùàùYHJN¬à⁄›’ÿ\›
+	–òX⁄›\ô\›‹ôY8ß$… N¬àŸ][Y[›]
+
+
+HOà⁄[ô›Àõÿÿ][€ãúô[ÿY
+
+KL
+N¬àHÿ]⁄
+\úõ‹äH¬à€€ú€€Kô\úõ‹ä	–òX⁄›\ô\›‹ôHòZ[YâÀ\úõ‹äN¬à⁄›’ÿ\›
+\úõ‹ãõY\‹ÿYŸH	–€›[õ›ô\›‹ôH]òX⁄›\	Àå
+N¬àHö[ò[H¬àYà
+[ú]
+H[ú]ùò[YHH	…Œ¬àBàBÇà]Yô\úôY[ú›[õ€\Hù[¬Çàù[ò›[€à\‘›[ô[€ôP\
+
+H¬àô]\õà⁄[ô›ÀõX]⁄YYXJ	 \‹^K[[ŸNà›[ô[€ôJI KõX]⁄\»⁄[ô›Àõò]öYÿ]‹ãú›[ô[€ôHOOHùYN¬àBÇàù[ò›[€àô\]Y\›\ú⁄\›[ù]öXŸT›‹òYŸJ
+H¬àYà
+ò]öYÿ]‹ãú›‹òYŸH	âà\[Ÿàò]öYÿ]‹ãú›‹òYŸKú\ú⁄\›OOH	Ÿù[ò›[€â H¬àò]öYÿ]‹ãú›‹òYŸKú\ú⁄\›
+
+Kòÿ]⁄
+
+
+HOàò[ŸJN¬àBàBÇàù[ò›[€à\]R[ú›[ù]€ä
+H¬à€€ú›ù]€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	⁄[ú›[X\Xùâ N¬àYà
+Xù]€äHô]\õé¬àYà
+\‘›[ô[€ôP\
+
+JH¬àù]€ãù^€€ù[ùH	–\[ú›[Y	Œ¬àù]€ãô\ÿXõYHùYN¬àH[ŸH¬àù]€ãù^€€ù[ùHYô\úôY[ú›[õ€\»	“[ú›[ëíU\	»à	–Y»€YHÿ‹ôY[âŒ¬àù]€ãô\ÿXõYHò[ŸN¬àBàBÇà\ﬁ[ò»ù[ò›[€à[ú›[ôö]\
+
+H¬àYà
+\‘›[ô[€ôP\
+
+JH¬à⁄›’ÿ\›
+	’ëíU\»[ôXYH[ú›[Y	 N¬àô]\õé¬àBàYà
+Yô\úôY[ú›[õ€\
+H¬àYô\úôY[ú›[õ€\úõ€\
+
+N¬à€€ú›⁄⁄XŸHH]ÿZ]Yô\úôY[ú›[õ€\ù\Ÿ\ê⁄⁄XŸN¬àYô\úôY[ú›[õ€\Hù[¬à\]R[ú›[ù]€ä
+N¬àYà
+⁄⁄XŸH	âà⁄⁄XŸKõ›]€€YHOOH	ÿXÿŸ\Y	 H¬àô\]Y\›\ú⁄\›[ù]öXŸT›‹òYŸJ
+N¬à⁄›’ÿ\›
+	’ëíU[ú›[Y8ß$… N¬àBàô]\õé¬àBà⁄›’ÿ\›
+	“[à⁄õ€YK‹[à8¢Îà[à\8†'Y»€YHÿ‹ôY[∏†'H‹à8†'[ú›[\8†'IÀÃ
+N¬àBÇàù[ò›[€àôY⁄\›\ïôö]Ÿ\ùöXŸU€‹öŸ\ä
+H¬àYà
+J	‹Ÿ\ùöXŸU€‹öŸ\â»[àò]öYÿ]‹äH]⁄[ô›Àö\‘ŸX›\ôP€€ù^
+Hô]\õé¬àò]öYÿ]‹ãúŸ\ùöXŸU€‹öŸ\ãúôY⁄\›\ä	Àã‹›Àöú…À»ÿ€‹Nà	Àã…»JBàù[äôY⁄\›ò][€àOàôY⁄\›ò][€ãù\]J
+Kòÿ]⁄
+
+
+HOàﬂJJBàòÿ]⁄
+\úõ‹àOà€€ú€€Kùÿ\õä	”Ÿôõ[ôH\Ÿ]\[ò]òZ[XõNâÀ\úõ‹äJN¬àBÇà⁄[ô›ÀòY]ô[ù\›[ô\ä	ÿôYõ‹ôZ[ú›[õ€\	À]ô[ùOà¬à]ô[ùúô]ô[ùYò][
+
+N¬àYô\úôY[ú›[õ€\H]ô[ù¬à\]R[ú›[ù]€ä
+N¬àJN¬à⁄[ô›ÀòY]ô[ù\›[ô\ä	ÿ\[ú›[Y	À
+
+HOà¬àYô\úôY[ú›[õ€\Hù[¬à\]R[ú›[ù]€ä
+N¬àJN¬à⁄[ô›ÀòY]ô[ù\›[ô\ä	€€õ[ôIÀ
+
+HOà¬à\]Sô]€‹ö‘›]\ ùYJN¬àYà
+›\úô[ù\Ÿ\äHÿ⁄Y[P€›Y€ò\⁄›ﬁ[ò çL
+N¬àJN¬à⁄[ô›ÀòY]ô[ù\›[ô\ä	€Ÿôõ[ôIÀ
+
+HOà\]Sô]€‹ö‘›]\ ò[ŸJJN¬Çàù[ò›[€àŸ]\ZYöY⁄ÿ]ôJ
+H¬àYà
+ZYöY⁄ÿ]ôU[Y[›]
+H€X\ï[Y[›]
+ZYöY⁄ÿ]ôU[Y[›]
+N¬à€€ú›õ›»Hô]»]J
+N¬à€€ú›€[‹úõ›»Hô]»]Jõ› N¬à€[‹úõ›ÀúŸ]]J€[‹úõ›ÀôŸ]]J
+H
+»JN¬à€[‹úõ›ÀúŸ]›\ú 
+N¬à€€ú›\’[ù[ZYöY⁄H€[‹úõ›»Hõ›Œ¬ÇàZYöY⁄ÿ]ôU[Y[›]HŸ][Y[›]
+
+
+HOà¬àÿ]ôQZ[Sù]ö][€ä
+N¬àŸ]\ZYöY⁄ÿ]ôJ
+N¬àK\’[ù[ZYöY⁄
+N¬àBÇàù[ò›[€àÿ]ôQZ[Sù]ö][€ä
+H¬à€€ú›]U‘ÿ]ôHH›]KùöY]—]N¬à€€ú›YX[—õ‹ë]HH›]KôZ[SYX[Àôö[\äHOàKô]HOOH]U‘ÿ]ôJN¬ÇàYà
+YX[—õ‹ë]Kõ[ô›à
+H¬à€€ú››[ÿ[»HYX[—õ‹ë]KúôYXŸJ
+›[KJHOà›[H
+»
+Kòÿ[‹öY\»
+K
+N¬à€€ú››[õ›Z[àHYX[—õ‹ë]KúôYXŸJ
+›[KJHOà›[H
+»
+Kúõ›Z[à
+K
+N¬à€€ú››[ÿ\òú»HYX[—õ‹ë]KúôYXŸJ
+›[KJHOà›[H
+»
+Kòÿ\òú»
+K
+N¬à€€ú››[ò]HYX[—õ‹ë]KúôYXŸJ
+›[KJHOà›[H
+»
+Kôò]
+K
+N¬à€€ú››[öXô\àHYX[—õ‹ë]KúôYXŸJ
+›[KJHOà›[H
+»
+KôöXô\à
+K
+N¬Çà›]Kõù]ö][€í\›‹ûHH›]Kõù]ö][€í\›‹ûKôö[\äOàô]HOOH]U‘ÿ]ôJN¬Çà€€ú›[ùûHH¬à]Nà]U‘ÿ]ôKàÿ[‹öY\Œà›[ÿ[Ààõ›Z[éà›[õ›Z[ãàÿ\òúŒà›[ÿ\òúÀàò]à›[ò]àöXô\éà›[öXô\ãàYX[ŒàYX[—õ‹ë]Kàÿ]ôY]àô]»]J
+Kù“T”‘›ö[ô 
+BàN¬à›]Kõù]ö][€í\›‹ûKù[ú⁄Yù
+[ùûJN¬Çà›]Kõù]ö][€í\›‹ûHH›]Kõù]ö][€í\›‹ûKú€XŸJÕçJN¬Çàÿ]ôT›]J
+N¬àH[ŸH¬à›]Kõù]ö][€í\›‹ûHH›]Kõù]ö][€í\›‹ûKôö[\äOàô]HOOH]U‘ÿ]ôJN¬àÿ]ôT›]J
+N¬àBàBÇà äÇà
+à]]À\ÿ]ôHù]ö][€à⁄[ô]ô\àHYX[\»YY‹àô[[›ôYÇà
+ã¬àù[ò›[€à]]‘ÿ]ôSù]ö][€ä
+H¬àÿ]ôQZ[Sù]ö][€ä
+N¬àYà
+›\úô[ù\Ÿ\à	âàäH¬àﬁ[ò’—ö\ôXò\ŸJ
+N¬àBàBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»PàPSêQ—SQSïàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇà€€ú›—USë‘◊‘Q—W—URS»HÿöôX›ôúôY^ôJ¬à€ÿX⁄[ôŒà¬à]Nà	–€ÿX⁄[ô»XâÀà\ÿ‹ö\[€éà	—Z[HYöXŸKôXY[ô\‹À⁄Yùõ›K⁄X⁄ÀZ[ú»[ôõŸ‹ô\‹⁄[€ãâ¬àKà\ú€€ò[à¬à]Nà	‘\ú€€ò[]Z[…Àà\ÿ‹ö\[€éà	’\]HõŸH›]ÀXZ[ù[ò[òŸHÿ[‹öY\»[ôõŸ‹ô\‹»ô[Z[ô\úÀâ¬àKà€ÿ[Œà¬à]Nà	—€ÿ[»	àù]ö][€à\ôŸ]…Àà\ÿ‹ö\[€éà	‘Ÿ][›\àõÿ›\Àÿ[‹öYH\ôŸ][ô€ôŸ\ã]\õH€ÿ[Àâ¬àKà\]Z\Y[ùà¬à]Nà	—\]Z\Y[ù	à^\ò⁄\Ÿ\…Àà\ÿ‹ö\[€éà	–⁄€‹ŸHHﬁ[K€YH[ô›\›€H^\ò⁄\Ÿ\»]òZ[XõH»[›Kâ¬àKà	ÿZKX€ÿX⁄	Œà¬à]Nà	–RH€ÿX⁄ôYô\ô[òŸ\…Àà\ÿ‹ö\[€éà	–€€ùõ€\ú€€ò[\ŸYòZ[ö[ôÀù]ö][€à[ôôX€›ô\ûHYöXŸKâ¬àKàXö]Œà¬à]Nà	—Z[HXö]…Àà\ÿ‹ö\[€éà	–‹ôX]H[ôX[òYŸHHXö]»⁄›€à€à[›\à\⁄õÿ\ôâ¬àKàòX⁄⁄[ôŒà¬à]Nà	’òX⁄⁄[ô»‹[€ú…Àà\ÿ‹ö\[€éà	–⁄€‹ŸH⁄]\àYò][€à[ô›\»\X\à[àZ[HòX⁄⁄[ôÀâ¬àKàõ›YöXÿ][€úŒà¬à]Nà	–[ôõ⁄Yõ›YöXÿ][€ú…Àà\ÿ‹ö\[€éà	‘Ÿ]⁄YùX]ÿ\ôH€‹ö€›]⁄X⁄ÀZ[à[ôYò][€àô[Z[ô\úÀâ¬àKàö]òXﬁNà¬à]Nà	‘ö]òXﬁH	àXÿ€›[ù	Àà\ÿ‹ö\[€éà	‘ô]öY]»€›Yö]òXﬁK^‹ù»[ôXÿ€›[ù€€ùõ€Àâ¬àKà]Nà¬à]Nà	—]H	àŸôõ[ôH\	Àà\ÿ‹ö\[€éà	‘ﬁ[òÀòX⁄»\ô\›‹ôH‹à[ú›[ëíU€à[›\à]öXŸKâ¬àKàôYYòX⁄Œà¬à]Nà	–ô]HôYYòX⁄»	àôXY[ô\‹…Àà\ÿ‹ö\[€éà	‘ô\‹ùùY‹»‹àYX\»⁄]ÿYôHXY€õ‹›X‹»[ôô]öY]»][ò⁄⁄X⁄‹Àâ¬àBàJN¬à]X›]ôTŸ][ô‹‘YŸHH	⁄€YIŒ¬Çàù[ò›[€à‹[îŸ][ô‹‘YŸJYŸRY‹[€ú H¬à€€ú›€€ôöY»H‹[€ú»ﬂN¬à€€ú›ô\]Y\›YH›ö[ô YŸRY	⁄€YI N¬à€€ú›ô^YŸHHô\]Y\›YOOH	⁄€YI»—USë‘◊‘Q—W—URS÷‹ô\]Y\›YBà»ô\]Y\›Yàà	⁄€YIŒ¬à€€ú›\“€YHHô^YŸHOOH	⁄€YIŒ¬à€€ú›Y[ùHHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹À[Y[ùI N¬à€€ú›⁄[Hÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹À\›XúYŸK\⁄[	 N¬à€€ú›€€ù[ùÿ\ôHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹ÀX€€ù[ùXÿ\ô	 N¬à€€ú›]HHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹À\›XúYŸK]]I N¬à€€ú›\ÿ‹ö\[€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹À\›XúYŸKY\ÿ‹ö\[€â N¬ÇàYà
+[Y[ùH\⁄[
+Hô]\õàò[ŸN¬àY[ùKò€\‹”\›ùŸŸ€J	⁄Y[âÀZ\“€YJN¬à⁄[ò€\‹”\›ùŸŸ€J	⁄Y[âÀ\“€YJN¬Çàÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	»‹Ÿ][ô‹»Ÿ]K\Ÿ][ô‹À\YŸWI Kôõ‹ëXX⁄
+[ô[Oà¬à€€ú›ö\⁄XõHHZ\“€YH	âà[ô[ô]\Ÿ]úŸ][ô‹‘YŸHOOHô^YŸN¬à[ô[ò€\‹”\›ùŸŸ€J	⁄Y[âÀ]ö\⁄XõJN¬à[ô[úŸ]]öXù]J	ÿ\öXKZY[âÀö\⁄XõH»	Ÿò[ŸI»à	›ùYI N¬àJN¬ÇàYà
+€€ù[ùÿ\ô
+H¬à€€ù[ùÿ\ôò€\‹”\›ùŸŸ€J	⁄Y[âÀ\“€YHô^YŸHOOH	ÿ€ÿX⁄[ô… N¬àBÇàYà
+Z\“€YJH¬à€€ú›]Z[»H—USë‘◊‘Q—W—URS÷€ô^YŸWN¬àYà
+]JH]Kù^€€ù[ùH]Z[Àù]N¬àYà
+\ÿ‹ö\[€äH\ÿ‹ö\[€ãù^€€ù[ùH]Z[Àô\ÿ‹ö\[€é¬àYà
+ô^YŸHOOH	ÿ€ÿX⁄[ô… H¬à[›[ù€ÿX⁄[ô“Xí[îŸ][ô‹ 
+N¬àYà
+€€ôöYÀúô[ô\àOOHò[ŸJHô[ô\ê€ÿX⁄[ô“Xä
+N¬à‹[ê€ÿX⁄[ô‘YŸJ	⁄€YIÀ»ÿ‹õ€àò[ŸKõÿ›\Œàò[ŸKô[ô\éàò[ŸHJN¬àH[ŸHYà
+€€ôöYÀúô[ô\àOOHò[ŸJH¬àô[ô\îŸ][ô‹ 
+N¬àBàBÇàX›]ôTŸ][ô‹‘YŸHHô^YŸN¬àYà
+€€ôöYÀúÿ‹õ€OOHò[ŸJH⁄[ô›Àúÿ‹õ€ »‹àôZ]ö[‹éà	ÿ]]…»JN¬àYà
+€€ôöYÀôõÿ›\»OOHò[ŸJH¬à€€ú›õÿ›\’\ôŸ]H\“€YH»ÿ›[Y[ùôŸ][[Y[ùûRY
+	‹Ÿ][ô‹À[Y[ùK]]I Hà]N¬àYà
+õÿ›\’\ôŸ]	âàõÿ›\’\ôŸ]ôõÿ›\ H¬àûH»õÿ›\’\ôŸ]ôõÿ›\ »ô]ô[ùÿ‹õ€àùYHJN»Hÿ]⁄
+\úõ‹äH»õÿ›\’\ôŸ]ôõÿ›\ 
+N»BàBàBàÿ⁄Y[PXÿŸ\‹⁄XõQ€TôYúô\⁄
+
+N¬àôYúô\⁄X€€ú 
+N¬àô]\õàùYN¬àBÇàù[ò›[€à€‹ŸTŸ][ô‹‘YŸJ
+H¬àÿ]ôT›]J
+N¬àô]\õà‹[îŸ][ô‹‘YŸJ	⁄€YI N¬àBÇàù[ò›[€à‹[îôYô\ô[òŸ\–[ô€ÿ[ YŸRY
+H¬àô]\õà›⁄]⁄Xä	‹Ÿ][ô‹…À»Ÿ][ô‹‘YŸNàYŸRY	⁄€YI»JN¬àBÇà€€ú›”–P“Së◊‘Q—W—URS»HÿöôX›ôúôY^ôJ¬àZ[Nà…’Ÿ^x†&\»€ÿX⁄[ô…À	—Z[H€€ùô\úÿ][€ãôXY[ô\‹»[ôYöXŸHò\ŸY€àŸ^x†&\»⁄Yùâ◊KàòZ[ö[ôŒà…’òZ[ö[ô»	à€ÿ[…À	’ŸYZ€HŸ]\ôŸ]ÀõŸ‹ô\‹⁄[€ã]X]\»[ô[ÿY›ZY[òŸKâ◊Kà⁄YùŒà…‘⁄Yù[à	àYöXŸIÀ	‘Ÿ]Hõ›H]›Ÿ\ú»Ÿ^x†&\»⁄YùX]ÿ\ôH€ÿX⁄[ô»›ZY[òŸKâ◊KàY]à…—Y]\ûH[à	àYX[…À	—Y]\ûHô\]Z\ô[Y[ùÀX][ô»\õÿX⁄[ôYX[»Y\Y»[›\à⁄Yùâ◊Kà€ÿX⁄à…–€ÿX⁄	à⁄X⁄ÀZ[ú…À	–€ÿX⁄Y\‹ÿYŸ\À⁄\ôY[ú»[ô[›\àŸYZ€H⁄X⁄ÀZ[ãâ◊Kàô\‹ùŒà…‘õŸ‹ô\‹»ô\‹ù…À	‘ô]öY]»‹à›€õÿY[›\àŸYZ€HòZ[ö[ô»[ôù]ö][€àô\‹ùâ◊KàY[Xô\ú⁄\à…”Y[Xô\ú⁄\	À	’öY]»[›\à›\úô[ù[à[ô]òZ[XõHY[Xô\ú⁄\‹[€úÀâ◊BàJN¬à]X›]ôP€ÿX⁄[ô‘YŸHH	⁄€YIŒ¬Çàù[ò›[€à‹[ê€ÿX⁄[ô‘YŸJYŸRY‹[€ú H¬à€€ú›€€ôöY»H‹[€ú»ﬂN¬à€€ú›ô\]Y\›YH›ö[ô YŸRY	⁄€YI N¬à€€ú›ô^YŸHHô\]Y\›YOOH	⁄€YI»”–P“Së◊‘Q—W—URS÷‹ô\]Y\›YH»ô\]Y\›Yà	⁄€YIŒ¬à€€ú›\“€YHHô^YŸHOOH	⁄€YIŒ¬à€€ú›Y[ùHHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ[Y[ùI N¬à€€ú›XY\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ\›XúYŸKZXY\â N¬à€€ú›]HHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ\›XúYŸK]]I N¬à€€ú›\ÿ‹ö\[€àHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ\›XúYŸKY\ÿ‹ö\[€â N¬àYà
+[Y[ùHZXY\äHô]\õàò[ŸN¬ÇàYà
+Z\“€YH	âà€€ôöYÀúô[ô\àOOHò[ŸJHô[ô\ê€ÿX⁄[ô“Xä
+N¬àY[ùKò€\‹”\›ùŸŸ€J	⁄Y[âÀZ\“€YJN¬àXY\ãò€\‹”\›ùŸŸ€J	⁄Y[âÀ\“€YJN¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	»ÿ€ÿX⁄[ô»Ÿ]KX€ÿX⁄[ôÀ\YŸWI Kôõ‹ëXX⁄
+[ô[Oà¬à€€ú›ö\⁄XõHHZ\“€YH	âà[ô[ô]\Ÿ]ò€ÿX⁄[ô‘YŸHOOHô^YŸN¬à[ô[ò€\‹”\›ùŸŸ€J	⁄Y[âÀ]ö\⁄XõJN¬à[ô[úŸ]]öXù]J	ÿ\öXKZY[âÀö\⁄XõH»	Ÿò[ŸI»à	›ùYI N¬àJN¬àYà
+Z\“€YJH¬à€€ú›]Z[»H”–P“Së◊‘Q—W—URS÷€ô^YŸWN¬àYà
+]JH]Kù^€€ù[ùH]Z[÷ÃN¬àYà
+\ÿ‹ö\[€äH\ÿ‹ö\[€ãù^€€ù[ùH]Z[÷ÃWN¬àBàX›]ôP€ÿX⁄[ô‘YŸHHô^YŸN¬àYà
+€€ôöYÀúÿ‹õ€OOHò[ŸJH⁄[ô›Àúÿ‹õ€ »‹àôZ]ö[‹éà	ÿ]]…»JN¬àYà
+€€ôöYÀôõÿ›\»OOHò[ŸJH¬à€€ú›\ôŸ]H\“€YH»ÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ[Y[ùK]]I Hà]N¬àYà
+\ôŸ]	âà\ôŸ]ôõÿ›\ H¬àûH»\ôŸ]ôõÿ›\ »ô]ô[ùÿ‹õ€àùYHJN»Hÿ]⁄
+\úõ‹äH»\ôŸ]ôõÿ›\ 
+N»BàBàBàÿ⁄Y[PXÿŸ\‹⁄XõQ€TôYúô\⁄
+
+N¬àôYúô\⁄X€€ú 
+N¬àô]\õàùYN¬àBÇàù[ò›[€à€‹ŸP€ÿX⁄[ô‘YŸJ
+H¬àô]\õà‹[ê€ÿX⁄[ô‘YŸJ	⁄€YI N¬àBÇàù[ò›[€à[›[ù€ÿX⁄[ô“Xí[îŸ][ô‹ 
+H¬à€€ú›XàHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ô… N¬à€€ú›€›Hÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ôÀ\Ÿ][ô‹À\€›	 N¬àYà
+ZXà\€›
+Hô]\õàò[ŸN¬àYà
+Xãú\ô[ùõŸHOOH€›
+H€›ò\[ô⁄[
+XäN¬àXãò€\‹”\›úô[[›ôJ	⁄Y[â N¬àô]\õàùYN¬àBÇàù[ò›[€à‹[ê€ÿX⁄[ô“Xä
+H¬àô]\õà›⁄]⁄Xä	ÿ€ÿX⁄[ô… N¬àBÇàù[ò›[€à›⁄]⁄XäXíY‹[€ú H¬à€€ú›€€ôöY»H‹[€ú»ﬂN¬àYà
+UêSQ’Pó“QÀö\ XíY
+JH¬à€€ú€€Kùÿ\õä	“Y€õ‹ôY[ö€õ›€àXéâÀXíY
+N¬àô]\õàò[ŸN¬àBà€€ú›ô\]Y\›YXíYHXíY¬à€€ú›\ôŸ]XíYHXíYOOH	ÿ€ÿX⁄[ô…»»	‹Ÿ][ô‹…»àXíY¬àYà
+\ôŸ]XíYOOH	‹Ÿ][ô‹… H[›[ù€ÿX⁄[ô“Xí[îŸ][ô‹ 
+N¬à€€ú›XàHÿ›[Y[ùôŸ][[Y[ùûRY
+\ôŸ]XíY
+N¬àYà
+]Xà]Xãò€\‹”\›ò€€ùZ[ú 	›XãX€€ù[ù	 JHô]\õàò[ŸN¬Çàÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	ÀùXãX€€ù[ù	 Kôõ‹ëXX⁄
+€€ù[ùOà¬à€€ú›X›]ôHH€€ù[ùOOHXé¬à€€ù[ùò€\‹”\›ùŸŸ€J	ÿX›]ôIÀX›]ôJN¬à€€ù[ùúŸ]]öXù]J	ÿ\öXKZY[âÀX›]ôH»	Ÿò[ŸI»à	›ùYI N¬àJN¬àÿ›[Y[ùú]Y\ûTŸ[X›‹ê[
+	÷€€ò€X⁄ èHú›⁄]⁄XäóI Kôõ‹ëXX⁄
+€€ùõ€Oà¬à€€ú›[ô\àH€€ùõ€ôŸ]]öXù]J	€€ò€X⁄… H	…Œ¬à€€ú›X›]ôHH[ô\ãö[ò€Y\ ›⁄]⁄Xä	…›\ôŸ]XíYI X
+H[ô\ãö[ò€Y\ ›⁄]⁄Xäâ›\ôŸ]XíYHäX
+N¬àYà
+X›]ôJH€€ùõ€úŸ]]öXù]J	ÿ\öXKX›\úô[ù	À	‹YŸI N¬à[ŸH€€ùõ€úô[[›ôP]öXù]J	ÿ\öXKX›\úô[ù	 N¬àJN¬àûH»Ÿ\‹⁄[€î›‹òYŸKúŸ]][J	›ôö]ÿX›]ôW›XâÀô\]Y\›YXíY
+N»Hÿ]⁄
+\úõ‹äHﬂBÇà€€ú›ô[ô\ú»H¬àŸ‹Œà
+
+HOà»ô[ô\ìŸ‹ 
+N»ö[\ï€‹ö€›] 
+N»KàõŸö[Nàô[ô\îõŸö[KàŸ][ô‹Œà
+
+HOà»ô[ô\îŸ][ô‹ 
+N»ô[ô\ê€ÿX⁄[ô“Xä
+N»Kà\⁄õÿ\ôàô[ô\ë\⁄õÿ\ôàòZ[ö[ôŒàô[ô\ê€ÿX⁄[í[ïòZ[ö[ôÀàY]öX‹Œà
+
+HOà¬à€€ú›X⁄Ÿ\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	€Y]öX‹ÀY]K\X⁄Ÿ\â N¬àYà
+X⁄Ÿ\à	âà\X⁄Ÿ\ãùò[YJHX⁄Ÿ\ãùò[YHH›]KõY]öX‹—]Hÿÿ[]RŸ^J
+N¬àô[ô\ìY]öX‹‘›]\”[ô\ 
+N¬àô[ô\ìY]öX‹“\›‹ûJ
+N¬àBàN¬àYà
+ô[ô\ú÷›\ôŸ]XíYJHÿYôR[ùõ⁄ŸJ	›\ôŸ]XíYHXòô[ô\ú÷›\ôŸ]XíYJN¬àYà
+\ôŸ]XíYOOH	‹Ÿ][ô‹… H¬à€€ú›Ÿ][ô‹‘YŸHHô\]Y\›YXíYOOH	ÿ€ÿX⁄[ô…¬à»	ÿ€ÿX⁄[ô…¬àà
+€€ôöYÀúŸ][ô‹‘YŸH	⁄€YI N¬à‹[îŸ][ô‹‘YŸJŸ][ô‹‘YŸK»ÿ‹õ€àò[ŸKõÿ›\Œàò[ŸKô[ô\éàò[ŸHJN¬àBàYà
+€€ôöYÀúÿ‹õ€OOHò[ŸJH⁄[ô›Àúÿ‹õ€ »‹àôZ]ö[‹éà	ÿ]]…»JN¬àYà
+ô\]Y\›YXíYOOH	ÿ€ÿX⁄[ô…»	âà€€ôöYÀúÿ‹õ€OOHò[ŸJH¬àŸ][Y[›]
+
+
+HOà¬à€€ú›XàHÿ›[Y[ùôŸ][[Y[ùûRY
+	ÿ€ÿX⁄[ô… N¬àYà
+Xà	âàXãúÿ‹õ€[ù’öY] HXãúÿ‹õ€[ù’öY] »õÿ⁄Œà	‹›\ù	ÀôZ]ö[‹éà	ÿ]]…»JN¬àK
+N¬àBàÿ⁄Y[PXÿŸ\‹⁄XõQ€TôYúô\⁄
+
+N¬àôYúô\⁄X€€ú 
+N¬àô]\õàùYN¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»“QPêTÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇàù[ò›[€àŸŸ€T⁄YXò\äõ‹òŸS‹[äH¬à€€ú›⁄YXò\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄YXò\â N¬à€€ú››ô\õ^HHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄YXò\ã[›ô\õ^I N¬à€€ú›öYŸŸ\àHÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄YXò\ã[Y[ùKXù]€â N¬àYà
+\⁄YXò\à[›ô\õ^JHô]\õé¬à€€ú›\”‹[àH⁄YXò\ãò€\‹”\›ò€€ùZ[ú 	›ò[ú€]K^L	 N¬à€€ú›⁄›[‹[àH\[Ÿàõ‹òŸS‹[àOOH	ÿõ€€X[â»»õ‹òŸS‹[ààZ\”‹[é¬àYà
+\⁄›[‹[äH¬à⁄YXò\ãò€\‹”\›úô[[›ôJ	›ò[ú€]K^L	 N¬à⁄YXò\ãò€\‹”\›òY
+	À]ò[ú€]K^Yù[	 N¬à›ô\õ^Kò€\‹”\›òY
+	⁄Y[â N¬à⁄YXò\ãúŸ]]öXù]J	ÿ\öXKZY[âÀ	›ùYI N¬à›ô\õ^KúŸ]]öXù]J	ÿ\öXKZY[âÀ	›ùYI N¬àYà
+öYŸŸ\äH¬àöYŸŸ\ãúŸ]]öXù]J	ÿ\öXKY^[ôY	À	Ÿò[ŸI N¬àöYŸŸ\ãúŸ]]öXù]J	ÿ\öXK[Xô[	À	”‹[àY[ùI N¬àYà
+\”‹[äHöYŸŸ\ãôõÿ›\ »ô]ô[ùÿ‹õ€àùYHJN¬àBàH[ŸH¬à⁄YXò\ãò€\‹”\›òY
+	›ò[ú€]K^L	 N¬à⁄YXò\ãò€\‹”\›úô[[›ôJ	À]ò[ú€]K^Yù[	 N¬à›ô\õ^Kò€\‹”\›úô[[›ôJ	⁄Y[â N¬à⁄YXò\ãúŸ]]öXù]J	ÿ\öXKZY[âÀ	Ÿò[ŸI N¬à›ô\õ^KúŸ]]öXù]J	ÿ\öXKZY[âÀ	Ÿò[ŸI N¬àYà
+öYŸŸ\äH¬àöYŸŸ\ãúŸ]]öXù]J	ÿ\öXKY^[ôY	À	›ùYI N¬àöYŸŸ\ãúŸ]]öXù]J	ÿ\öXK[Xô[	À	–€‹ŸHY[ùI N¬àBàŸ][Y[›]
+
+
+HOàÿ›[Y[ùôŸ][[Y[ùûRY
+	‹⁄YXò\ãX€‹ŸKXù]€â OÀôõÿ›\ »ô]ô[ùÿ‹õ€àùYHJK
+N¬àBàôYúô\⁄X€€ú 
+N¬àBÇàÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBàÀ»–T’àÀ»OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOBÇàù[ò›[€à⁄›’ÿ\›
+Y\‹ÿYŸK\ò][€äH¬àYà
+\ò][€àOOH[ôYö[ôY
+H\ò][€àHÃ¬à€€ú›ÿ\›Hÿ›[Y[ùôŸ][[Y[ùûRY
+	›ÿ\›	 N¬àÿ\›ù^€€ù[ùHY\‹ÿYŸN¬àÿ\›ò€\‹”\›òY
+	‹⁄›… N¬àŸ][Y[›]
+
+
+HOàÿ\›ò€\‹”\›úô[[›ôJ	‹⁄›… K\ò][€äN¬àB
