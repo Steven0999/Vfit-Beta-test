@@ -215,6 +215,17 @@ assert.ok(source.includes('startedAt: workoutStartTime'), 'active workouts must 
 assert.ok(source.includes('return elapsedWorkoutSeconds(workoutStartTime, workoutAccumulatedSeconds, Date.now())'), 'workout duration must derive from wall-clock time');
 assert.ok(!source.includes('workoutAccumulatedSeconds += Math.floor'), 'backgrounding must not freeze and bank the workout timer');
 
+const foodDatabaseStart = html.indexOf('<div id="food-database-modal"');
+const foodDatabaseEnd = html.indexOf('<!-- GOAL SETTING MODAL -->', foodDatabaseStart);
+const foodDatabaseMarkup = html.slice(foodDatabaseStart, foodDatabaseEnd);
+assert.ok(foodDatabaseMarkup.includes('id="food-database-add-button"') && foodDatabaseMarkup.includes('Manually Add Food'), 'authorized database editors need a clear manual food action');
+assert.ok(foodDatabaseMarkup.includes('Enter portion weight, calories and protein'), 'manual food action must explain its core nutrition fields');
+for (const requiredFoodField of ['manual-food-name', 'manual-food-calories', 'manual-food-protein', 'manual-food-serving-grams']) {
+  assert.match(html, new RegExp(`id="${requiredFoodField}"[^>]*required[^>]*aria-required="true"`), `${requiredFoodField} must be required`);
+}
+assert.ok(source.includes("addButton.classList.toggle('hidden', !canManage)"), 'manual database entry must stay restricted to the owner and approved editors');
+assert.ok(source.includes('const requiredNutritionInputs = [') && source.includes("showToast('Please enter calories and protein')"), 'manual database saves must require calories and protein');
+
 const runtimeConfig = fs.readFileSync(path.join(root, 'vfit-config.js'), 'utf8');
 assert.ok(runtimeConfig.includes('paymentsEnabled: false'), 'payments must default off until Stripe is configured');
 assert.ok(runtimeConfig.includes('pushEnabled: false'), 'push must default off until FCM is configured');

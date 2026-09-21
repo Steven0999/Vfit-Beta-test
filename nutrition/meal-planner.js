@@ -1566,6 +1566,21 @@
         const servingGrams = nutritionNumber(document.getElementById('manual-food-serving-grams').value);
         if (servingGrams <= 0) { showToast('Please enter the exact portion weight'); return; }
 
+        const requiredNutritionInputs = [
+            document.getElementById('manual-food-calories'),
+            document.getElementById('manual-food-protein')
+        ];
+        const invalidNutritionInput = requiredNutritionInputs.find(input => {
+            const rawValue = input ? String(input.value).trim() : '';
+            const value = Number(rawValue);
+            return rawValue === '' || !Number.isFinite(value) || value < 0;
+        });
+        if (invalidNutritionInput) {
+            showToast('Please enter calories and protein');
+            invalidNutritionInput.focus();
+            return;
+        }
+
         const basis = document.getElementById('manual-food-basis').value || 'portion';
         const entered = manualFoodNutrients();
         const per100g = basis === '100g' ? entered : scaleFoodNutrients(entered, 100 / servingGrams);
