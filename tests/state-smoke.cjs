@@ -204,6 +204,8 @@ const expose = `
   plannerWeekStart,
   plannerWeekDates,
   plannerShiftType,
+  plannerMealCalorieLimit,
+  plannerMealIsAppropriate,
   plannerMealIdeas,
   shoppingListPlannerMealIdeas,
   createdMealPlannerIdeas,
@@ -317,6 +319,11 @@ plannerState.createdMeals = [{
   ingredients: [{ name: 'Firm tofu', grams: 180 }, { name: 'Wholegrain wrap', grams: 70 }],
   createdAt: '2026-09-02T12:00:00.000Z'
 }];
+plannerState.createdMeals.push(
+  { id: 'excluded-chinese', name: 'Chinese takeaway', calories: 600, protein: 30, defaultMealType: 'breakfast', ingredients: ['Chicken'] },
+  { id: 'excluded-fish-chips', name: 'Fish & Chips', calories: 700, protein: 28, defaultMealType: 'breakfast', ingredients: ['Fish'] },
+  { id: 'excluded-oversized', name: 'Oversized buffet plate', calories: 1800, protein: 70, defaultMealType: 'breakfast', ingredients: ['Mixed food'] }
+);
 plannerState.nutritionHistory = [{
   date: '2026-09-01',
   meals: [{
@@ -343,6 +350,13 @@ assert.ok(allowedBreakfasts.some(idea => idea.createdMealSource));
 assert.ok(allowedBreakfasts.some(idea => idea.diarySource));
 assert.ok(allowedBreakfasts.some(idea => idea.shoppingListSource));
 assert.ok(allowedBreakfasts.every(idea => idea.createdMealSource || idea.diarySource || idea.shoppingListSource));
+assert.equal(app.plannerMealCalorieLimit('2026-09-03', 'breakfast'), 875);
+assert.ok(allowedBreakfasts.every(idea => app.plannerMealIsAppropriate('2026-09-03', 'breakfast', idea)));
+assert.ok(!allowedBreakfasts.some(idea => ['Chinese takeaway', 'Fish & Chips', 'Oversized buffet plate'].includes(idea.name)));
+assert.equal(app.plannerMealIsAppropriate('2026-09-03', 'breakfast', { name: 'Chinese takeaway', calories: 600 }), false);
+assert.equal(app.plannerMealIsAppropriate('2026-09-03', 'breakfast', { name: 'Fish & Chips', calories: 700 }), false);
+assert.equal(app.plannerMealIsAppropriate('2026-09-03', 'breakfast', { name: 'Oversized buffet plate', calories: 1800 }), false);
+assert.equal(app.plannerMealIsAppropriate('2026-09-03', 'breakfast', { name: 'Balanced breakfast', calories: 500 }), true);
 const plannedMeal = app.plannerMealSelection('2026-09-03', 'breakfast');
 assert.ok(plannedMeal.idea.createdMealSource || plannedMeal.idea.diarySource || plannedMeal.idea.shoppingListSource);
 assert.equal(app.getState().weeklyMealPlan['2026-09-03'].meals.breakfast.recipeId, plannedMeal.idea.id);

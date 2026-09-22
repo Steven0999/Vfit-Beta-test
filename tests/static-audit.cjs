@@ -204,6 +204,10 @@ assert.ok(source.includes('View Recipe &amp; More Meals'), 'meal cards must open
 assert.ok(source.includes('function curatedMealSafetyCoverage(') && source.includes('CURATED_MEAL_SAFETY'), 'built-in recipes need structured safety records');
 assert.equal((moduleSources.get('nutrition/meal-safety.js').match(/^\s*'[^']+': \[/gm) || []).length, 64, 'all 64 original shift meals need explicit allergen records');
 assert.ok(source.includes('function openWeeklyMealPlanner(') && source.includes('Combined shopping list'), 'seven-day meal planning and shopping must be available');
+assert.ok(source.includes('function plannerMealCalorieLimit(') && source.includes('function plannerMealIsAppropriate('), 'weekly planner must filter unsuitable high-calorie meals');
+assert.ok(source.includes('WEEKLY_MEAL_EXCLUDED_NAME') && source.includes('Chinese or fish and chips'), 'weekly planner must exclude requested takeaway-style choices without deleting them');
+assert.ok(source.includes('function selectWeeklyMeal(') && source.includes('onchange="selectWeeklyMeal('), 'every planned meal needs a suitable-meal dropdown');
+assert.ok(source.includes('Choose a suitable meal'), 'weekly meal dropdown needs a clear label');
 assert.ok(source.includes('Scan a product in Shopping List') && source.includes('function addShoppingProductFromBarcode('), 'barcode results must return to the planner shopping list');
 assert.ok(source.includes('function submitBetaFeedback(') && source.includes('Safe diagnostics included'), 'in-app beta feedback must include privacy-safe diagnostics');
 assert.ok(source.includes('function openCoachPlanBuilder(') && source.includes('function acceptMemberCoachPlan('), 'coach/member seven-day plan workflow must be present');

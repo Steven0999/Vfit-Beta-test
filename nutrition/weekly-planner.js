@@ -2,6 +2,13 @@
     // SEVEN-DAY SHIFT MEAL PLANNER + EMBEDDED SHOPPING SCANNER
     // ========================================================================
     const WEEKLY_MEAL_TYPES = Object.freeze(['breakfast', 'lunch', 'dinner', 'snack']);
+    const WEEKLY_MEAL_CALORIE_RULES = Object.freeze({
+        breakfast: Object.freeze({ share: 0.35, min: 650, max: 900 }),
+        lunch: Object.freeze({ share: 0.42, min: 800, max: 1100 }),
+        dinner: Object.freeze({ share: 0.42, min: 800, max: 1100 }),
+        snack: Object.freeze({ share: 0.20, min: 350, max: 500 })
+    });
+    const WEEKLY_MEAL_EXCLUDED_NAME = /\b(?:chinese(?:\s+takeaway)?|fish\s*(?:&|and)\s*chips|chip\s+shop|chippy|takeaway)\b/i;
     let weeklyPlannerStartDate = '';
     let weeklyPlannerTab = 'plan';
 
@@ -269,12 +276,30 @@
             }));
     }
 
+    function plannerMealCalorieLimit(dateKey, mealType) {
+        const validType = WEEKLY_MEAL_TYPES.includes(mealType) ? mealType : 'snack';
+        const rule = WEEKLY_MEAL_CALORIE_RULES[validType];
+        const currentTarget = typeof getDailyCalorieTarget === 'function'
+            ? Number(getDailyCalorieTarget(dateKey))
+            : Number(state.goals && state.goals.calories);
+        const dailyTarget = Number.isFinite(currentTarget) && currentTarget > 0 ? currentTarget : 2500;
+        return Math.round(Math.min(rule.max, Math.max(rule.min, dailyTarget * rule.share)));
+    }
+
+    function plannerMealIsAppropriate(dateKey, mealType, idea) {
+        if (!idea || WEEKLY_MEAL_EXCLUDED_NAME.test(String(idea.name || ''))) return false;
+        const calories = Number(idea.calories);
+        return Number.isFinite(calories) && calories > 0 && calories <= plannerMealCalorieLimit(dateKey, mealType);
+    }
+
     function plannerMealIdeas(dateKey, mealType) {
         const createdIdeas = createdMealPlannerIdeas(mealType);
         const diaryIdeas = diaryPlannerMealIdeas(mealType);
         const shoppingIdeas = shoppingListPlannerMealIdeas(dateKey, mealType);
         const seen = new Set();
-        return createdIdeas.concat(diaryIdeas, shoppingIdeas).filter(idea => {
+        return createdIdeas.concat(diaryIdeas, shoppingIdeas)
+            .filter(idea => plannerMealIsAppropriate(dateKey, mealType, idea))
+            .filter(idea => {
             const key = String(idea.name || '').trim().toLowerCase();
             if (!key || seen.has(key)) return false;
             seen.add(key);
@@ -405,6 +430,17 @@
         if (!result.selection || ideas.length < 2) return;
         const next = (result.index + Number(direction || 1) + ideas.length) % ideas.length;
         result.selection.recipeId = ideas[next].id;
+        result.selection.completed = false;
+        result.selection.updatedAt = new Date().toISOString();
+        saveState();
+        renderWeeklyMealPlanner();
+    }
+
+    function selectWeeklyMeal(dateKey, mealType, recipeId) {
+        const result = plannerMealSelection(dateKey, mealType);
+        const choice = plannerMealIdeas(dateKey, mealType).find(idea => String(idea.id) === String(recipeId));
+        if (!result.selection || !choice) return;
+        result.selection.recipeId = choice.id;
         result.selection.completed = false;
         result.selection.updatedAt = new Date().toISOString();
         saveState();
@@ -555,12 +591,13 @@
 
     function weeklyMealPlannerCardHTML(dateKey, mealType) {
         const result = plannerMealSelection(dateKey, mealType);
+        const calorieLimit = plannerMealCalorieLimit(dateKey, mealType);
         if (!result.idea) {
             return `
                 <div class="border border-dashed border-slate-300 bg-white rounded-2xl p-3">
                     <p class="text-[9px] font-black uppercase text-slate-400">${escapeHtml(mealType)}</p>
-                    <p class="font-black text-sm text-slate-600 mt-1">No meal available from your saved sources</p>
-                    <p class="text-[10px] text-slate-400 mt-1">Add ingredients to the Shopping List, save a meal in Create Meal, or log this meal type in your diary.</p>
+                    <p class="font-black text-sm text-slate-600 mt-1">No suitable meal available from your saved sources</p>
+                    <p class="text-[10px] text-slate-400 mt-1">Add or log a balanced ${escapeHtml(mealType)} up to ${calorieLimit} kcal. High-calorie and takeaway-style entries remain saved but are not suggested here.</p>
                 </div>`;
         }
         const idea = result.idea;
@@ -574,12 +611,20 @@
                 ? '<span class="bg-indigo-100 text-indigo-700 text-[8px] font-black px-2 py-0.5 rounded-full">FROM YOUR DIARY</span>'
                 : '<span class="bg-orange-100 text-orange-700 text-[8px] font-black px-2 py-0.5 rounded-full">SHOPPING LIST</span>');
         const swapDisabled = choices.length < 2;
+        const optionHTML = choices.map(choice => {
+            const source = choice.createdMealSource ? 'Created' : (choice.diarySource ? 'Diary' : 'Shopping list');
+            const label = `${choice.name} — ${Math.round(Number(choice.calories) || 0)} kcal · ${Number(choice.protein || 0).toFixed(1)}g protein · ${source}`;
+            return `<option value="${escapeHtml(String(choice.id))}" ${String(choice.id) === String(selection.recipeId) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('');
         return `
             <div class="border ${selection.completed ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'} rounded-2xl p-3">
                 <div class="flex items-start justify-between gap-2">
                     <div class="min-w-0"><div class="flex flex-wrap items-center gap-1.5"><p class="text-[9px] font-black uppercase text-orange-600">${escapeHtml(mealType)} · ${escapeHtml(timing)}</p>${sourceBadge}</div><p class="font-black text-sm mt-1">${escapeHtml(idea.name)}</p><p class="text-[10px] text-slate-500 mt-1">${Math.round(Number(idea.calories) || 0)} kcal · ${Number(idea.protein || 0).toFixed(1)}g protein${safety.allergens.length ? ` · Check: ${escapeHtml(safety.allergens.join(', '))}` : ''}</p></div>
                     <button onclick="toggleWeeklyMealComplete('${escapeJsString(dateKey)}','${escapeJsString(mealType)}')" class="w-9 h-9 rounded-full flex-shrink-0 ${selection.completed ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}" aria-label="${selection.completed ? 'Mark meal not completed' : 'Mark meal completed'}">${selection.completed ? '✓' : '○'}</button>
                 </div>
+                <label class="block mt-3 text-[9px] font-black uppercase text-slate-400">Choose a suitable meal · up to ${calorieLimit} kcal
+                    <select onchange="selectWeeklyMeal('${escapeJsString(dateKey)}','${escapeJsString(mealType)}',this.value)" class="w-full mt-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400">${optionHTML}</select>
+                </label>
                 <div class="grid grid-cols-4 gap-1.5 mt-3">
                     <button onclick="swapWeeklyMeal('${escapeJsString(dateKey)}','${escapeJsString(mealType)}',1)" ${swapDisabled ? 'disabled' : ''} class="bg-slate-100 p-2 rounded-lg text-[10px] font-black ${swapDisabled ? 'opacity-40 cursor-not-allowed' : ''}">Swap</button>
                     <button onclick="openWeeklyPlannerRecipe('${escapeJsString(dateKey)}','${escapeJsString(mealType)}')" class="bg-orange-50 text-orange-700 p-2 rounded-lg text-[10px] font-black">${idea.shoppingListSource ? 'Recipe' : 'Details'}</button>
@@ -606,9 +651,10 @@
         const completed = dates.reduce((count, dateKey) => count + WEEKLY_MEAL_TYPES.filter(mealType => plannerMealSelection(dateKey, mealType).selection?.completed).length, 0);
         const available = dates.reduce((count, dateKey) => count + WEEKLY_MEAL_TYPES.filter(mealType => plannerMealSelection(dateKey, mealType).idea).length, 0);
         const profile = dietaryProfile();
-        const diaryPatternCount = WEEKLY_MEAL_TYPES.reduce((count, mealType) => count + diaryPlannerMealIdeas(mealType).length, 0);
-        const createdMealCount = new Set(WEEKLY_MEAL_TYPES.flatMap(mealType => createdMealPlannerIdeas(mealType).map(idea => idea.id))).size;
-        const shoppingRecipeCount = new Set(dates.flatMap(dateKey => WEEKLY_MEAL_TYPES.flatMap(mealType => shoppingListPlannerMealIdeas(dateKey, mealType).map(idea => idea.id)))).size;
+        const eligibleIdeas = dates.flatMap(dateKey => WEEKLY_MEAL_TYPES.flatMap(mealType => plannerMealIdeas(dateKey, mealType)));
+        const diaryPatternCount = new Set(eligibleIdeas.filter(idea => idea.diarySource).map(idea => idea.id)).size;
+        const createdMealCount = new Set(eligibleIdeas.filter(idea => idea.createdMealSource).map(idea => idea.id)).size;
+        const shoppingRecipeCount = new Set(eligibleIdeas.filter(idea => idea.shoppingListSource).map(idea => idea.id)).size;
         return `
             <div class="flex items-center gap-2 mb-4">
                 <button onclick="changeWeeklyMealPlannerWeek(-1)" class="w-10 h-10 bg-slate-100 rounded-xl" aria-label="Previous week">‹</button>
@@ -617,7 +663,7 @@
             </div>
             <div class="bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-4">
                 <div class="flex flex-wrap gap-1.5">${dietaryProfileBadgesHTML(profile)}</div>
-                <p class="text-[11px] text-orange-900 mt-2">Only meals from your saved Shopping List ingredients, Create Meal history or Nutrition Diary are shown. Available now: ${createdMealCount} created meal${createdMealCount === 1 ? '' : 's'}, ${diaryPatternCount} diary pattern${diaryPatternCount === 1 ? '' : 's'} and ${shoppingRecipeCount} shopping-list recipe${shoppingRecipeCount === 1 ? '' : 's'}. Dietary exclusions still apply.</p>
+                <p class="text-[11px] text-orange-900 mt-2">Only suitable meals from your saved Shopping List ingredients, Create Meal history or Nutrition Diary are shown. Takeaway-style choices such as Chinese or fish and chips, plus meals above the calorie limit for that slot, stay saved but are excluded from the plan. Available now: ${createdMealCount} created meal${createdMealCount === 1 ? '' : 's'}, ${diaryPatternCount} diary pattern${diaryPatternCount === 1 ? '' : 's'} and ${shoppingRecipeCount} shopping-list recipe${shoppingRecipeCount === 1 ? '' : 's'}. Dietary exclusions still apply.</p>
                 <div class="flex items-center justify-between gap-2 mt-3"><span class="text-xs font-black">${completed}/${available} available meals completed${available < total ? ` · ${total - available} empty slot${total - available === 1 ? '' : 's'}` : ''}</span><div class="flex gap-2"><button onclick="goToCurrentMealPlannerWeek()" class="bg-white border border-orange-200 px-3 py-2 rounded-xl text-[10px] font-black">This week</button><button onclick="autoFillWeeklyMealPlanner()" class="bg-slate-900 text-white px-3 py-2 rounded-xl text-[10px] font-black">Refresh plan</button></div></div>
             </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${dates.map(dateKey => {
@@ -788,7 +834,7 @@
         const start = plannerWeekStart(state.viewDate || localDateKey());
         const dates = plannerWeekDates(start);
         const planned = dates.reduce((count, dateKey) => count + WEEKLY_MEAL_TYPES.filter(mealType => plannerMealSelection(dateKey, mealType).idea).length, 0);
-        return `<div class="glass-card p-5 rounded-[2.5rem] border-2 border-orange-200" data-weekly-meal-planner-entry><div class="flex items-start justify-between gap-3"><div><p class="text-[10px] font-black uppercase text-orange-600">Meal prep and shopping</p><h3 class="text-xl font-black mt-1">7-Day Shift Meal Planner</h3><p class="text-xs text-slate-500 mt-2">${planned} meals using only your Shopping List ingredients, meals saved in Create Meal or foods previously logged in your Nutrition Diary. Each day includes total calories and protein.</p></div><i data-lucide="calendar-range" class="w-8 h-8 text-orange-500 flex-shrink-0"></i></div><button onclick="openWeeklyMealPlanner('${escapeJsString(start)}')" class="w-full mt-4 bg-slate-900 border border-orange-500 text-white p-4 rounded-2xl font-black">Open 7-Day Planner &amp; Shopping Scanner</button></div>`;
+        return `<div class="glass-card p-5 rounded-[2.5rem] border-2 border-orange-200" data-weekly-meal-planner-entry><div class="flex items-start justify-between gap-3"><div><p class="text-[10px] font-black uppercase text-orange-600">Meal prep and shopping</p><h3 class="text-xl font-black mt-1">7-Day Shift Meal Planner</h3><p class="text-xs text-slate-500 mt-2">${planned} suitable meals using only your Shopping List ingredients, meals saved in Create Meal or foods previously logged in your Nutrition Diary. High-calorie takeaway-style choices are excluded, and each slot has a replacement dropdown. Each day includes total calories and protein.</p></div><i data-lucide="calendar-range" class="w-8 h-8 text-orange-500 flex-shrink-0"></i></div><button onclick="openWeeklyMealPlanner('${escapeJsString(start)}')" class="w-full mt-4 bg-slate-900 border border-orange-500 text-white p-4 rounded-2xl font-black">Open 7-Day Planner &amp; Shopping Scanner</button></div>`;
     }
 
     const renderShiftWorkerWithoutWeeklyPlanner = renderShiftWorker;
