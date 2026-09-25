@@ -2083,8 +2083,8 @@
                 <button onclick="toggleDetailedNutrition()" class="w-full mt-2 text-[10px] font-bold text-indigo-600 hover:text-indigo-700">
                     <span id="toggle-text">Show More ▼</span>
                 </button>
-                <p id="popup-nutrition" class="text-xs text-center text-slate-500 mt-3" aria-live="polite"></p>
-                <div id="popup-serving-detail" class="hidden mt-3 bg-white/70 border border-indigo-100 rounded-xl p-3 text-center text-xs font-bold text-slate-600" aria-live="polite"></div>
+                <p id="popup-nutrition" class="text-xs text-center text-slate-500 mt-3"></p>
+                <div id="popup-serving-detail" class="hidden mt-3 bg-white/70 border border-indigo-100 rounded-xl p-3 text-center text-xs font-bold text-slate-600"></div>
 
                 <!-- Edit the scanned/looked-up values if they're wrong -->
                 <button onclick="openEditFoodValues()" class="w-full mt-3 pt-3 border-t border-indigo-200 text-[11px] font-bold text-slate-500 hover:text-indigo-600 flex items-center justify-center gap-1">
@@ -2126,6 +2126,7 @@
                     <button onclick="applyEditFoodValues()" class="flex-1 p-3 rounded-xl font-bold bg-amber-500 text-white text-sm hover:bg-amber-600">Save values</button>
                 </div>
             </div>
+            <button id="popup-database-action" onclick="saveCurrentFoodToDatabase()" class="hidden w-full mb-4 bg-orange-50 border border-orange-200 text-orange-700 p-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2"><i data-lucide="database" class="w-4 h-4"></i><span id="popup-database-action-label">Save to Food Database</span></button>
             <div class="mb-4">
                 <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Meal Type</label>
                 <select id="popup-meal-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none text-base">
@@ -2148,15 +2149,25 @@
                         <span class="absolute right-5 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">servings</span>
                     </div>
                     <p id="popup-serving-amount-help" class="text-xs text-slate-400 mt-2"></p>
-                    <button id="popup-database-action" onclick="saveCurrentFoodToDatabase(true)" class="hidden w-full mt-3 bg-orange-50 border border-orange-200 text-orange-700 p-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2"><i data-lucide="database" class="w-4 h-4"></i><span id="popup-database-action-label">Save Serving Size to Database</span></button>
+                    <div id="popup-serving-weight-editor" class="hidden mt-3 bg-orange-50 border border-orange-200 rounded-2xl p-3">
+                        <label for="popup-serving-weight" class="text-[10px] font-black uppercase text-orange-700 block mb-2">Weight of 1 serving</label>
+                        <div class="flex items-center gap-2">
+                            <div class="relative flex-1">
+                                <input id="popup-serving-weight" type="number" inputmode="decimal" min="0.1" step="0.1" class="w-full bg-white border-2 border-orange-200 rounded-xl py-3 pr-10 text-lg font-black text-center outline-none focus:border-orange-500">
+                                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400">g</span>
+                            </div>
+                            <button id="popup-serving-weight-save" onclick="savePopupServingWeight()" class="bg-orange-600 text-white px-4 py-3 rounded-xl font-black text-sm">Save</button>
+                        </div>
+                        <p class="text-[10px] text-orange-700 mt-2">Changes the saved gram weight for this serving while keeping its nutrition values the same.</p>
+                    </div>
                 </div>
                 <div id="popup-custom-weight-field" class="hidden">
-                    <label id="popup-custom-weight-label" for="popup-custom-weight" class="text-xs font-bold text-slate-500 block mb-2">Custom weight in grams</label>
+                    <label for="popup-custom-weight" class="text-xs font-bold text-slate-500 block mb-2">Custom weight</label>
                     <div class="relative">
                         <input id="popup-custom-weight" type="number" inputmode="decimal" value="100" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-16 text-4xl font-black text-center outline-none focus:border-emerald-500 transition-colors">
-                        <span id="popup-custom-weight-unit" class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">grams</span>
+                        <span class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
                     </div>
-                    <p id="popup-custom-weight-help" class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
+                    <p class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
                 </div>
             </div>
             <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6 shadow-xl">

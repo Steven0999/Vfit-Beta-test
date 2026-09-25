@@ -171,7 +171,7 @@ const expose = `
   normaliseBarcode,
   foodNutrientsPer100g,
   foodNutrientsPerServing,
-  foodPopupNutritionReference,
+  databaseFoodWithServingWeight,
   copiedMealNutritionBases,
   copiedMealNutritionForAmount,
   isPlausibleFoodBarcode,
@@ -250,14 +250,13 @@ const savedServingFood = {
 assert.equal(app.foodNutrientsPerServing(savedServingFood).calories, 200);
 assert.equal(app.foodNutrientsPer100g(savedServingFood).calories, 500);
 
-const servingReference = app.foodPopupNutritionReference(savedServingFood, 'portion', true);
-assert.match(servingReference.title, /Serving size reference/);
-assert.equal(servingReference.nutrients.calories, 200);
-assert.match(servingReference.detail, /Edit Serving Weight/);
-const customWeightReference = app.foodPopupNutritionReference(savedServingFood, 'grams', true);
-assert.match(customWeightReference.title, /Custom weight reference.*per 100g/);
-assert.equal(customWeightReference.nutrients.calories, 500);
-assert.doesNotMatch(customWeightReference.title + customWeightReference.detail, /serving size/i);
+const resizedServingFood = app.databaseFoodWithServingWeight(savedServingFood, 50, 12345);
+assert.equal(resizedServingFood.servingGrams, 50);
+assert.equal(resizedServingFood.calories, 200);
+assert.equal(resizedServingFood.protein, 10);
+assert.equal(resizedServingFood.per100g.calories, 400);
+assert.equal(resizedServingFood.per100g.protein, 20);
+assert.equal(resizedServingFood.updatedAt, 12345);
 
 const scannedServingFood = {
   isCustom: false,
