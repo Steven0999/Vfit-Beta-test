@@ -2032,17 +2032,106 @@
         }
     }
 
+    const COPIED_MEAL_NUTRIENT_KEYS = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol'];
+
+    function copiedMealNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? number : 0;
+    }
+
+    function copiedMealServingLabel(value) {
+        const label = String(value || '').trim();
+        return !label || /^(?:1\s*)?portion$/i.test(label) ? '1 serving' : label;
+    }
+
+    function copiedMealServingGrams(meal) {
+        return copiedMealNumber(meal && meal.servingGrams) || 100;
+    }
+
+    function copiedMealBaseValue(source, key) {
+        if (key === 'sodiumMg') {
+            if (source && source.sodiumMg !== undefined) return copiedMealNumber(source.sodiumMg);
+            return copiedMealNumber(source && source.sodium) * 1000;
+        }
+        return copiedMealNumber(source && source[key]);
+    }
+
+    function copiedMealNutritionBases(meal) {
+        meal = meal || {};
+        const servingGrams = copiedMealServingGrams(meal);
+        const originalAmount = copiedMealNumber(meal.amount) || (meal.amountType === 'grams' ? servingGrams : 1);
+        const originalType = meal.amountType === 'grams' ? 'grams' : 'portion';
+        const savedBase = meal.base && typeof meal.base === 'object' ? meal.base : null;
+        const baseIsServing = savedBase ? savedBase.isCustom !== false : originalType !== 'grams';
+        const perServing = {};
+        const per100g = {};
+
+        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => {
+            if (savedBase) {
+                const value = copiedMealBaseValue(savedBase, key);
+                if (baseIsServing) {
+                    perServing[key] = value;
+                    per100g[key] = value * 100 / servingGrams;
+                } else {
+                    per100g[key] = value;
+                    perServing[key] = value * servingGrams / 100;
+                }
+                return;
+            }
+
+            const total = copiedMealBaseValue(meal, key);
+            if (originalType === 'grams') {
+                per100g[key] = total * 100 / originalAmount;
+                perServing[key] = per100g[key] * servingGrams / 100;
+            } else {
+                perServing[key] = total / originalAmount;
+                per100g[key] = perServing[key] * 100 / servingGrams;
+            }
+        });
+
+        return { servingGrams, perServing, per100g };
+    }
+
+    function copiedMealNutritionForAmount(meal, amountType, amount) {
+        const bases = copiedMealNutritionBases(meal);
+        const source = amountType === 'grams' ? bases.per100g : bases.perServing;
+        const multiplier = amountType === 'grams' ? amount / 100 : amount;
+        const totals = {};
+        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => {
+            totals[key] = copiedMealNumber(source[key]) * multiplier;
+        });
+        return { bases, source, totals };
+    }
+
+    function copiedMealEditAmount() {
+        const inputId = editAmountType === 'grams' ? 'edit-meal-custom-weight' : 'edit-meal-amount';
+        const input = document.getElementById(inputId);
+        const amount = Number(input && input.value);
+        return Number.isFinite(amount) && amount > 0 ? amount : 1;
+    }
+
     function editPreviousMealItem(idx, date) {
         const entry = (state.nutritionHistory || []).find(h => h.date === date);
         if (!entry) return;
         currentEditingMeal = { ...entry.meals[idx] };
+
+        const originalType = currentEditingMeal.amountType === 'grams' ? 'grams' : 'portion';
+        const bases = copiedMealNutritionBases(currentEditingMeal);
+        const originalAmount = copiedMealNumber(currentEditingMeal.amount) || (originalType === 'grams' ? bases.servingGrams : 1);
+        const servingAmount = originalType === 'grams' ? originalAmount / bases.servingGrams : originalAmount;
+        const customWeight = originalType === 'grams' ? originalAmount : originalAmount * bases.servingGrams;
+        const servingLabel = copiedMealServingLabel(currentEditingMeal.servingLabel || (currentEditingMeal.base && currentEditingMeal.base.serving));
+
         document.getElementById('edit-meal-name').textContent = currentEditingMeal.name;
         document.getElementById('edit-meal-image').src = currentEditingMeal.image || 'https://via.placeholder.com/100';
-        document.getElementById('edit-meal-original').textContent = `Was: ${currentEditingMeal.amount || 1} ${currentEditingMeal.amountType || 'portion'} (${Math.round(currentEditingMeal.calories)} kcal)`;
-        document.getElementById('edit-meal-amount').value = currentEditingMeal.amount || 1;
-        editAmountType = currentEditingMeal.amountType || 'portion';
-        setEditAmountType(editAmountType);
-        document.getElementById('edit-meal-type').value = currentEditingMeal.type || 'lunch';
+        document.getElementById('edit-meal-original').textContent = `Was: ${Math.round(originalAmount * 100) / 100} ${originalType === 'grams' ? 'g' : (originalAmount === 1 ? 'serving' : 'servings')} (${Math.round(currentEditingMeal.calories)} kcal)`;
+        document.getElementById('edit-meal-amount').value = Math.round(servingAmount * 100) / 100;
+        document.getElementById('edit-meal-custom-weight').value = Math.round(customWeight * 10) / 10;
+        const servingHelp = document.getElementById('edit-meal-serving-help');
+        if (servingHelp) servingHelp.textContent = `1 serving = ${servingLabel} (${Math.round(bases.servingGrams * 10) / 10}g).`;
+        editAmountType = originalType;
+        setEditAmountType(originalType);
+        document.getElementById('edit-meal-type').value = currentEditingMeal.mealType || currentEditingMeal.type || 'lunch';
         updateEditPreview();
         document.getElementById('edit-copied-meal-modal').style.display = 'flex';
     }
@@ -2053,55 +2142,90 @@
     }
 
     function setEditAmountType(type) {
-        editAmountType = type;
+        const nextType = type === 'grams' ? 'grams' : 'portion';
+        const previousType = editAmountType;
         const p = document.getElementById('edit-amount-type-portion');
         const g = document.getElementById('edit-amount-type-grams');
-        if (type === 'portion') {
+        const servingField = document.getElementById('edit-meal-serving-field');
+        const customWeightField = document.getElementById('edit-meal-custom-weight-field');
+        const servingInput = document.getElementById('edit-meal-amount');
+        const weightInput = document.getElementById('edit-meal-custom-weight');
+        const servingGrams = copiedMealServingGrams(currentEditingMeal);
+
+        if (previousType !== nextType) {
+            if (nextType === 'grams' && servingInput && weightInput) {
+                const servings = Number(servingInput.value);
+                if (Number.isFinite(servings) && servings > 0) weightInput.value = Math.round(servings * servingGrams * 10) / 10;
+            } else if (nextType === 'portion' && servingInput && weightInput) {
+                const grams = Number(weightInput.value);
+                if (Number.isFinite(grams) && grams > 0) servingInput.value = Math.round((grams / servingGrams) * 100) / 100;
+            }
+        }
+
+        editAmountType = nextType;
+        if (nextType === 'portion') {
             p.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600';
             g.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400';
+            if (servingField) servingField.classList.remove('hidden');
+            if (customWeightField) customWeightField.classList.add('hidden');
         } else {
             g.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600';
             p.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400';
+            if (customWeightField) customWeightField.classList.remove('hidden');
+            if (servingField) servingField.classList.add('hidden');
         }
         updateEditPreview();
     }
 
     function updateEditPreview() {
         if (!currentEditingMeal) return;
-        const amount = parseFloat(document.getElementById('edit-meal-amount').value) || 1;
-        const originalAmount = currentEditingMeal.amount || 1;
-        const originalCal = currentEditingMeal.calories || 0;
-        const originalProtein = currentEditingMeal.protein || 0;
-
-        // Compute per-1-portion or per-gram values from original
-        const perUnitCal = originalAmount > 0 ? originalCal / originalAmount : originalCal;
-        const perUnitProt = originalAmount > 0 ? originalProtein / originalAmount : originalProtein;
-
-        const newCal = perUnitCal * amount;
-        const newProt = perUnitProt * amount;
-
-        document.getElementById('edit-total-cals').textContent = Math.round(newCal);
-        document.getElementById('edit-total-protein').textContent = newProt.toFixed(1) + 'g';
+        const amount = copiedMealEditAmount();
+        const calculated = copiedMealNutritionForAmount(currentEditingMeal, editAmountType, amount);
+        document.getElementById('edit-total-cals').textContent = Math.round(calculated.totals.calories);
+        document.getElementById('edit-total-protein').textContent = calculated.totals.protein.toFixed(1) + 'g';
     }
 
     function saveEditedMeal() {
         if (!currentEditingMeal) return;
-        const amount = parseFloat(document.getElementById('edit-meal-amount').value) || 1;
-        const originalAmount = currentEditingMeal.amount || 1;
-        const ratio = amount / originalAmount;
+        const amount = copiedMealEditAmount();
+        const calculated = copiedMealNutritionForAmount(currentEditingMeal, editAmountType, amount);
+        const servingLabel = copiedMealServingLabel(currentEditingMeal.servingLabel || (currentEditingMeal.base && currentEditingMeal.base.serving));
+        const base = {
+            calories: calculated.source.calories,
+            protein: calculated.source.protein,
+            carbs: calculated.source.carbs,
+            fat: calculated.source.fat,
+            fiber: calculated.source.fiber,
+            sugar: calculated.source.sugar,
+            satFat: calculated.source.satFat,
+            sodiumMg: calculated.source.sodiumMg,
+            cholesterol: calculated.source.cholesterol,
+            isCustom: editAmountType !== 'grams',
+            serving: editAmountType === 'grams' ? '100g' : servingLabel
+        };
+        const mealType = document.getElementById('edit-meal-type').value;
 
         const newMeal = {
             ...currentEditingMeal,
             id: Date.now() + Math.random(),
             date: state.viewDate,
-            type: document.getElementById('edit-meal-type').value,
+            type: mealType,
+            mealType,
             amount,
             amountType: editAmountType,
-            calories: (currentEditingMeal.calories || 0) * ratio,
-            protein: (currentEditingMeal.protein || 0) * ratio,
-            carbs: (currentEditingMeal.carbs || 0) * ratio,
-            fat: (currentEditingMeal.fat || 0) * ratio,
-            fiber: (currentEditingMeal.fiber || 0) * ratio
+            servingGrams: calculated.bases.servingGrams,
+            servingLabel,
+            base,
+            calories: calculated.totals.calories,
+            protein: calculated.totals.protein,
+            carbs: calculated.totals.carbs,
+            fat: calculated.totals.fat,
+            fiber: calculated.totals.fiber,
+            sugar: calculated.totals.sugar,
+            satFat: calculated.totals.satFat,
+            sodiumMg: calculated.totals.sodiumMg,
+            sodium: calculated.totals.sodiumMg / 1000,
+            cholesterol: calculated.totals.cholesterol
         };
 
         state.dailyMeals.push(newMeal);

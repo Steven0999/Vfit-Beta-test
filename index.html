@@ -1475,7 +1475,7 @@
     <div id="manual-food-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-6">
-                <div><h3 id="manual-food-modal-title" class="text-xl font-black">Add Food to Database</h3><p class="text-xs text-slate-400 mt-1">Enter calories and protein for an exact portion. Other nutrition details are optional.</p></div>
+                <div><h3 id="manual-food-modal-title" class="text-xl font-black">Add Food to Database</h3><p class="text-xs text-slate-400 mt-1">Enter calories and protein for an exact serving. Other nutrition details are optional.</p></div>
                 <button onclick="closeManualFoodEntry()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none">×</button>
             </div>
             <div class="mb-6">
@@ -1519,7 +1519,7 @@
             </div>
             <div class="mb-4">
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Nutrition values entered</label>
-                <select id="manual-food-basis" onchange="updateManualFoodNutritionPreview()" class="w-full p-4 bg-indigo-50 border border-indigo-100 rounded-2xl font-bold"><option value="portion">Per portion shown below</option><option value="100g">Per 100g</option></select>
+                <select id="manual-food-basis" onchange="updateManualFoodNutritionPreview()" class="w-full p-4 bg-indigo-50 border border-indigo-100 rounded-2xl font-bold"><option value="portion">Per serving shown below</option><option value="100g">Per 100g</option></select>
             </div>
             <div class="grid grid-cols-2 gap-4 mb-6">
                 <div>
@@ -1558,8 +1558,8 @@
                 </div>
             </div>
             <div class="grid grid-cols-2 gap-3 mb-4">
-                <div><label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Portion Name</label><input type="text" id="manual-food-serving" placeholder="e.g., 1 slice" oninput="updateManualFoodNutritionPreview()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
-                <div><label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Portion Weight <span class="text-orange-600">Required</span></label><div class="relative"><input type="number" id="manual-food-serving-grams" required aria-required="true" min="0.1" step="0.1" value="100" oninput="updateManualFoodNutritionPreview()" class="w-full p-4 pr-10 bg-slate-50 rounded-2xl font-bold outline-none"><span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span></div></div>
+                <div><label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Serving Name</label><input type="text" id="manual-food-serving" placeholder="e.g., 1 slice" oninput="updateManualFoodNutritionPreview()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
+                <div><label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Serving Weight <span class="text-orange-600">Required</span></label><div class="relative"><input type="number" id="manual-food-serving-grams" required aria-required="true" min="0.1" step="0.1" value="100" oninput="updateManualFoodNutritionPreview()" class="w-full p-4 pr-10 bg-slate-50 rounded-2xl font-bold outline-none"><span class="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">g</span></div></div>
             </div>
             <div id="manual-food-conversion-preview" class="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 text-xs text-indigo-800 mb-5"></div>
             <button id="manual-food-save-button" onclick="saveManualFood()" class="w-full bg-emerald-600 text-white py-5 rounded-[24px] font-black text-lg shadow-lg hover:bg-emerald-700 mb-3">
@@ -1575,12 +1575,12 @@
     <div id="food-database-modal" class="modal-overlay" style="z-index:220;" role="dialog" aria-modal="true" aria-labelledby="food-database-title">
         <div class="bg-white w-full max-w-2xl rounded-[40px] p-6 sm:p-8 max-h-[92vh] flex flex-col overflow-hidden">
             <div class="flex items-start justify-between gap-4 mb-5 flex-shrink-0">
-                <div><p id="food-database-access-label" class="text-[10px] font-black uppercase text-slate-400">Read only</p><h3 id="food-database-title" class="text-xl font-black">VFIT Food Database</h3><p class="text-xs text-slate-400 mt-1">Exact portions, gram weights and complete nutrition values</p></div>
+                <div><p id="food-database-access-label" class="text-[10px] font-black uppercase text-slate-400">Read only</p><h3 id="food-database-title" class="text-xl font-black">VFIT Food Database</h3><p class="text-xs text-slate-400 mt-1">Exact serving sizes, custom weights and complete nutrition values</p></div>
                 <button onclick="closeFoodDatabase()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close food database">×</button>
             </div>
             <div class="relative mb-3 flex-shrink-0"><i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="food-database-search" oninput="renderFoodDatabase()" placeholder="Search your database..." class="w-full pl-11 pr-4 py-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-orange-400"></div>
             <button id="food-database-add-button" onclick="openManualFoodEntry()" class="hidden w-full mb-4 p-4 bg-orange-600 text-white rounded-2xl font-black text-left flex items-center justify-between gap-3 shadow-lg shadow-orange-100 hover:bg-orange-700 transition-colors flex-shrink-0">
-                <span class="flex items-center gap-3"><span class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0"><i data-lucide="plus" class="w-5 h-5"></i></span><span><span class="block text-sm">Manually Add Food</span><span class="block text-[11px] font-bold text-orange-100 mt-0.5">Enter portion weight, calories and protein</span></span></span>
+                <span class="flex items-center gap-3"><span class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0"><i data-lucide="plus" class="w-5 h-5"></i></span><span><span class="block text-sm">Manually Add Food</span><span class="block text-[11px] font-bold text-orange-100 mt-0.5">Enter serving weight, calories and protein</span></span></span>
                 <i data-lucide="chevron-right" class="w-5 h-5 flex-shrink-0"></i>
             </button>
             <div id="food-database-count" class="text-[10px] font-black uppercase text-slate-400 mb-2 flex-shrink-0"></div>
@@ -2137,12 +2137,27 @@
                 </select>
             </div>
             <div class="mb-4">
-                <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Amount</label>
+                <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Choose Amount</label>
                 <div class="flex bg-slate-100 p-1.5 rounded-2xl mb-4">
-                    <button onclick="setAmountType('portion')" id="amount-type-portion" class="flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600">Portion</button>
-                    <button onclick="setAmountType('grams')" id="amount-type-grams" class="flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400">Grams</button>
+                    <button onclick="setAmountType('portion')" id="amount-type-portion" class="flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600">Serving Size</button>
+                    <button onclick="setAmountType('grams')" id="amount-type-grams" class="flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400">Custom Weight</button>
                 </div>
-                <input id="popup-amount" type="number" inputmode="decimal" value="1" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 text-4xl font-black text-center outline-none focus:border-emerald-500 transition-colors">
+                <div id="popup-serving-amount-field">
+                    <label for="popup-amount" class="text-xs font-bold text-slate-500 block mb-2">Number of servings</label>
+                    <div class="relative">
+                        <input id="popup-amount" type="number" inputmode="decimal" value="1" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-28 text-4xl font-black text-center outline-none focus:border-emerald-500 transition-colors">
+                        <span class="absolute right-5 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">servings</span>
+                    </div>
+                    <p id="popup-serving-amount-help" class="text-xs text-slate-400 mt-2"></p>
+                </div>
+                <div id="popup-custom-weight-field" class="hidden">
+                    <label for="popup-custom-weight" class="text-xs font-bold text-slate-500 block mb-2">Custom weight</label>
+                    <div class="relative">
+                        <input id="popup-custom-weight" type="number" inputmode="decimal" value="100" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-16 text-4xl font-black text-center outline-none focus:border-emerald-500 transition-colors">
+                        <span class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
+                </div>
             </div>
             <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6 shadow-xl">
                 <p class="text-[10px] font-black uppercase text-slate-400 text-center mb-3">Total You're Adding</p>
@@ -2284,7 +2299,7 @@
     <div id="edit-copied-meal-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8">
             <div class="flex justify-between items-center mb-6">
-                <h3 class="text-xl font-black">Edit Portion</h3>
+                <h3 class="text-xl font-black">Edit Serving</h3>
                 <button onclick="closeEditCopiedMeal()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
             </div>
 
@@ -2295,16 +2310,29 @@
             </div>
 
             <div class="mb-4">
-                <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Amount Type</label>
+                <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Choose Amount</label>
                 <div class="flex bg-slate-100 p-1.5 rounded-2xl mb-4">
-                    <button onclick="setEditAmountType('portion')" id="edit-amount-type-portion" class="flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600">Portion</button>
-                    <button onclick="setEditAmountType('grams')" id="edit-amount-type-grams" class="flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400">Grams</button>
+                    <button onclick="setEditAmountType('portion')" id="edit-amount-type-portion" class="flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600">Serving Size</button>
+                    <button onclick="setEditAmountType('grams')" id="edit-amount-type-grams" class="flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400">Custom Weight</button>
                 </div>
             </div>
 
-            <div class="mb-4">
-                <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Amount</label>
-                <input id="edit-meal-amount" type="number" value="1" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 text-4xl font-black text-center outline-none focus:border-emerald-500" oninput="updateEditPreview()">
+            <div id="edit-meal-serving-field" class="mb-4">
+                <label for="edit-meal-amount" class="text-xs font-bold text-slate-500 mb-2 block">Number of servings</label>
+                <div class="relative">
+                    <input id="edit-meal-amount" type="number" value="1" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-28 text-4xl font-black text-center outline-none focus:border-emerald-500" oninput="updateEditPreview()">
+                    <span class="absolute right-5 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">servings</span>
+                </div>
+                <p id="edit-meal-serving-help" class="text-xs text-slate-400 mt-2"></p>
+            </div>
+
+            <div id="edit-meal-custom-weight-field" class="hidden mb-4">
+                <label for="edit-meal-custom-weight" class="text-xs font-bold text-slate-500 mb-2 block">Custom weight</label>
+                <div class="relative">
+                    <input id="edit-meal-custom-weight" type="number" value="100" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-16 text-4xl font-black text-center outline-none focus:border-emerald-500" oninput="updateEditPreview()">
+                    <span class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
+                </div>
+                <p class="text-xs text-slate-400 mt-2">Enter the exact weight for this diary copy.</p>
             </div>
 
             <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6">

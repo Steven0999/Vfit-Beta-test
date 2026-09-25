@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.16';
+    const VFIT_APP_VERSION = '2.1.0-beta.17';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -371,7 +371,7 @@
             sodiumMg,
             sodium: sodiumMg / 1000,
             cholesterol: sharedFoodNumber(food.cholesterol),
-            serving: String(food.serving || '1 portion').trim().slice(0, 80) || '1 portion',
+            serving: String(food.serving || '1 serving').trim().slice(0, 80) || '1 serving',
             servingGrams: servingGrams || 100,
             per100g,
             source: 'personal-database',

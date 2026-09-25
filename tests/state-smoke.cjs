@@ -169,6 +169,10 @@ const expose = `
   offsetLocalDateKey,
   resetActiveDatesToToday,
   normaliseBarcode,
+  foodNutrientsPer100g,
+  foodNutrientsPerServing,
+  copiedMealNutritionBases,
+  copiedMealNutritionForAmount,
   isPlausibleFoodBarcode,
   hasValidGtinCheckDigit,
   barcodeLookupCandidates,
@@ -231,6 +235,52 @@ const expose = `
 vm.createContext(sandbox);
 vm.runInContext(appSource + expose, sandbox, { filename: 'VFIT modules' });
 const app = sandbox.__vfitTest;
+
+// Saved serving sizes and custom gram weights must use the same nutrition basis.
+const savedServingFood = {
+  isCustom: true,
+  serving: '1 bar',
+  servingGrams: 40,
+  calories: 200,
+  protein: 10,
+  per100g: { calories: 500, protein: 25 }
+};
+assert.equal(app.foodNutrientsPerServing(savedServingFood).calories, 200);
+assert.equal(app.foodNutrientsPer100g(savedServingFood).calories, 500);
+
+const scannedServingFood = {
+  isCustom: false,
+  serving: '1 scoop',
+  servingGrams: 30,
+  calories: 400,
+  protein: 20
+};
+assert.equal(app.foodNutrientsPerServing(scannedServingFood).calories, 120);
+assert.equal(app.foodNutrientsPerServing(scannedServingFood).protein, 6);
+
+const loggedServingMeal = {
+  amount: 2,
+  amountType: 'portion',
+  servingGrams: 40,
+  calories: 400,
+  protein: 20,
+  base: { calories: 200, protein: 10, isCustom: true, serving: '1 bar' }
+};
+const servingAsSixtyGrams = app.copiedMealNutritionForAmount(loggedServingMeal, 'grams', 60);
+assert.equal(servingAsSixtyGrams.totals.calories, 300);
+assert.equal(servingAsSixtyGrams.totals.protein, 15);
+
+const loggedWeightMeal = {
+  amount: 80,
+  amountType: 'grams',
+  servingGrams: 40,
+  calories: 400,
+  protein: 20,
+  base: { calories: 500, protein: 25, isCustom: false, serving: '100g' }
+};
+const weightAsOneAndHalfServings = app.copiedMealNutritionForAmount(loggedWeightMeal, 'portion', 1.5);
+assert.equal(weightAsOneAndHalfServings.totals.calories, 300);
+assert.equal(weightAsOneAndHalfServings.totals.protein, 15);
 
 // User/imported strings are safe in HTML and inline-event contexts.
 assert.equal(app.escapeHtml('<img src=x onerror=1>\'"&'), '&lt;img src=x onerror=1&gt;&#039;&quot;&amp;');

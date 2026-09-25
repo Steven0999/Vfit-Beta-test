@@ -223,7 +223,17 @@ const foodDatabaseStart = html.indexOf('<div id="food-database-modal"');
 const foodDatabaseEnd = html.indexOf('<!-- GOAL SETTING MODAL -->', foodDatabaseStart);
 const foodDatabaseMarkup = html.slice(foodDatabaseStart, foodDatabaseEnd);
 assert.ok(foodDatabaseMarkup.includes('id="food-database-add-button"') && foodDatabaseMarkup.includes('Manually Add Food'), 'authorized database editors need a clear manual food action');
-assert.ok(foodDatabaseMarkup.includes('Enter portion weight, calories and protein'), 'manual food action must explain its core nutrition fields');
+assert.ok(foodDatabaseMarkup.includes('Enter serving weight, calories and protein'), 'manual food action must explain its core nutrition fields');
+assert.ok(html.includes('id="amount-type-portion"') && html.includes('>Serving Size</button>'), 'food entry must offer saved serving sizes');
+assert.ok(html.includes('id="amount-type-grams"') && html.includes('>Custom Weight</button>'), 'food entry must offer a separate custom-weight mode');
+for (const amountField of ['popup-serving-amount-field', 'popup-custom-weight-field', 'popup-amount', 'popup-custom-weight']) {
+  assert.ok(html.includes(`id="${amountField}"`), `food entry is missing ${amountField}`);
+}
+assert.ok(html.includes('id="edit-meal-serving-field"') && html.includes('id="edit-meal-custom-weight-field"'), 'copied-meal editing must keep servings and custom weight separate');
+const mealPlannerSource = moduleSources.get('nutrition/meal-planner.js');
+const scannerSource = moduleSources.get('nutrition/scanner.js');
+assert.ok(mealPlannerSource.includes('function foodNutrientsPerServing(') && mealPlannerSource.includes('function selectedFoodAmount('), 'serving entry must calculate from the saved serving size');
+assert.ok(scannerSource.includes('function copiedMealNutritionBases(') && scannerSource.includes('function copiedMealNutritionForAmount('), 'copied meals must convert correctly between servings and grams');
 for (const requiredFoodField of ['manual-food-name', 'manual-food-calories', 'manual-food-protein', 'manual-food-serving-grams']) {
   assert.match(html, new RegExp(`id="${requiredFoodField}"[^>]*required[^>]*aria-required="true"`), `${requiredFoodField} must be required`);
 }

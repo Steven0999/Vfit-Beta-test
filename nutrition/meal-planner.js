@@ -110,7 +110,7 @@
     }
 
     // Reopen a already-logged diary food in the food popup, pre-filled with its
-    // base values and the amount you logged — so you can change the portion/grams
+    // base values and the amount you logged — so you can change servings/custom weight
     // OR correct the calories/macros, then save it back over the same entry.
     let editingLoggedMealId = null;
     function editLoggedFood(id) {
@@ -169,7 +169,7 @@
             sodiumMg: base.sodiumMg || 0,
             cholesterol: base.cholesterol || 0,
             isCustom: !!base.isCustom,
-            serving: m.servingLabel || (databaseFood && databaseFood.serving) || base.serving || (base.isCustom ? '1 portion' : '100g'),
+            serving: foodServingLabel(m.servingLabel || (databaseFood && databaseFood.serving) || base.serving || (base.isCustom ? '1 serving' : '100g')),
             servingGrams,
             per100g: restoredPer100g,
             category: databaseFood ? (databaseFood.category || 'general') : 'general',
@@ -180,10 +180,8 @@
         renderFoodPopup();
 
         // Restore the amount + type + meal type they originally logged.
-        // Order matters: set the type FIRST (it resets the amount), then the amount.
-        currentAmountType = m.amountType || 'portion';
-        setAmountType(currentAmountType);
-        const amtInput = document.getElementById('popup-amount');
+        setAmountType(m.amountType || 'portion');
+        const amtInput = document.getElementById(currentAmountType === 'grams' ? 'popup-custom-weight' : 'popup-amount');
         if (amtInput) amtInput.value = m.amount || (currentAmountType === 'grams' ? 100 : 1);
         const mtSel = document.getElementById('popup-meal-type');
         if (mtSel) mtSel.value = m.mealType || m.type || 'lunch';
@@ -423,7 +421,7 @@
             if (customs.length === 0) {
                 const canEditDatabase = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
                 resultsList.innerHTML = emptyState('database', 'The VFIT food database is empty', canEditDatabase
-                    ? 'Add a food with its portion weight and nutrition values to make it available.'
+                    ? 'Add a food with its serving weight and nutrition values to make it available.'
                     : 'The owner or an approved editor can add the first food.');
             } else {
                 renderResultCards(customs.map(c => ({ ...c, _source: 'custom', isCustom: true })));
@@ -561,7 +559,7 @@
                     name, brand, image, calories: cals, protein, carbs, fat,
                     fiber: item.fiber || 0, sugar: item.sugar || 0, satFat: item.satFat || 0,
                     sodium: item.sodium || 0, sodiumMg: item.sodiumMg || 0, cholesterol: item.cholesterol || 0,
-                    serving: item.serving || '1 portion', servingGrams: item.servingGrams || 0,
+                    serving: foodServingLabel(item.serving), servingGrams: item.servingGrams || 0,
                     per100g: item.per100g || null, store: item.store || '', category: item.category || 'general',
                     barcode: item.barcode || ''
                 });
@@ -1136,7 +1134,7 @@
             sodium: nutritionNumber(food.sodium),
             sodiumMg: nutritionNumber(food.sodiumMg || (Number(food.sodium) || 0) * 1000),
             cholesterol: nutritionNumber(food.cholesterol),
-            serving: String(food.serving || '1 portion').slice(0, 80),
+            serving: foodServingLabel(food.serving).slice(0, 80),
             servingGrams: nutritionNumber(food.servingGrams),
             per100g: isPlainRecord(food.per100g) ? Object.assign({}, food.per100g) : null,
             category: String(food.category || 'general'),
@@ -1160,10 +1158,31 @@
         return values;
     }
 
-    function foodNutrientsPerPortion(food) {
+    function foodNutrientsPerServing(food) {
         if (food && food.isCustom) return food;
         const grams = nutritionNumber(food && food.servingGrams) || 100;
         return scaleFoodNutrients(foodNutrientsPer100g(food), grams / 100);
+    }
+
+    // Keep the old helper name available while existing saved entries still use
+    // amountType: "portion" internally for backwards compatibility.
+    function foodNutrientsPerPortion(food) {
+        return foodNutrientsPerServing(food);
+    }
+
+    function foodServingLabel(value) {
+        const label = String(value || '').trim();
+        return !label || /^(?:1\s*)?portion$/i.test(label) ? '1 serving' : label;
+    }
+
+    function selectedFoodAmount() {
+        const inputId = currentAmountType === 'grams' ? 'popup-custom-weight' : 'popup-amount';
+        const input = document.getElementById(inputId);
+        const parsed = Number(input && input.value);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        return currentAmountType === 'grams'
+            ? (nutritionNumber(currentFoodItem && currentFoodItem.servingGrams) || 100)
+            : 1;
     }
 
     function renderFoodPopup() {
@@ -1194,12 +1213,15 @@
         const sodiumMg = nutritionNumber(currentFoodItem.sodiumMg || (Number(currentFoodItem.sodium) || 0) * 1000);
         document.getElementById('popup-nutrition-sodium').textContent = Math.round(sodiumMg) + 'mg';
         document.getElementById('popup-nutrition-cholesterol').textContent = nutritionNumber(currentFoodItem.cholesterol) + 'mg';
-        document.getElementById('popup-nutrition').textContent = `Per ${currentFoodItem.isCustom ? currentFoodItem.serving : '100g'}`;
+        currentFoodItem.serving = foodServingLabel(currentFoodItem.serving || (currentFoodItem.isCustom ? '1 serving' : '100g'));
+        document.getElementById('popup-nutrition').textContent = currentFoodItem.isCustom
+            ? `Per serving · ${currentFoodItem.serving}`
+            : 'Per 100g';
         const servingDetail = document.getElementById('popup-serving-detail');
         if (servingDetail) {
             const grams = nutritionNumber(currentFoodItem.servingGrams);
             servingDetail.textContent = grams > 0
-                ? `${currentFoodItem.serving} weighs ${grams}g · gram entries use the saved per-100g conversion`
+                ? `1 serving is ${currentFoodItem.serving} (${Math.round(grams * 10) / 10}g) · custom weights use the saved per-100g values`
                 : 'No serving weight saved · add or edit this food to set an exact gram conversion';
             servingDetail.classList.remove('hidden');
         }
@@ -1209,8 +1231,10 @@
         if (databaseAction) databaseAction.classList.toggle('hidden', typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase());
 
         document.getElementById('popup-amount').value = 1;
-        currentAmountType = currentFoodItem.isCustom ? 'portion' : 'portion';
-        setAmountType(currentAmountType);
+        const customWeight = document.getElementById('popup-custom-weight');
+        if (customWeight) customWeight.value = nutritionNumber(currentFoodItem.servingGrams) || 100;
+        currentAmountType = 'portion';
+        setAmountType('portion');
         updatePopupTotals();
 
         // Always start with the edit form collapsed
@@ -1258,14 +1282,16 @@
         currentFoodItem.edited = true; // mark as user-corrected
 
         // Re-render the display numbers, keep the current amount, recalc totals
-        const amt = document.getElementById('popup-amount').value;
+        const servingAmount = document.getElementById('popup-amount') && document.getElementById('popup-amount').value;
+        const customWeight = document.getElementById('popup-custom-weight') && document.getElementById('popup-custom-weight').value;
         document.getElementById('popup-nutrition-cals').textContent = Math.round(currentFoodItem.calories);
         document.getElementById('popup-nutrition-protein').textContent = (currentFoodItem.protein).toFixed(1);
         document.getElementById('popup-nutrition-carbs').textContent = (currentFoodItem.carbs).toFixed(1) + 'g';
         document.getElementById('popup-nutrition-fat').textContent = (currentFoodItem.fat).toFixed(1) + 'g';
         document.getElementById('popup-nutrition-fiber').textContent = (currentFoodItem.fiber).toFixed(1) + 'g';
         document.getElementById('popup-nutrition-sugar').textContent = (currentFoodItem.sugar).toFixed(1) + 'g';
-        if (document.getElementById('popup-amount')) document.getElementById('popup-amount').value = amt;
+        if (document.getElementById('popup-amount')) document.getElementById('popup-amount').value = servingAmount;
+        if (document.getElementById('popup-custom-weight')) document.getElementById('popup-custom-weight').value = customWeight;
         updatePopupTotals();
 
         document.getElementById('edit-food-values').classList.add('hidden');
@@ -1273,25 +1299,49 @@
     }
 
     function setAmountType(type) {
-        currentAmountType = type;
+        const nextType = type === 'grams' ? 'grams' : 'portion';
+        const previousType = currentAmountType;
         const portionBtn = document.getElementById('amount-type-portion');
         const gramsBtn = document.getElementById('amount-type-grams');
-        if (type === 'portion') {
+        const servingField = document.getElementById('popup-serving-amount-field');
+        const customWeightField = document.getElementById('popup-custom-weight-field');
+        const servingInput = document.getElementById('popup-amount');
+        const weightInput = document.getElementById('popup-custom-weight');
+        const servingGrams = nutritionNumber(currentFoodItem && currentFoodItem.servingGrams) || 100;
+
+        if (previousType !== nextType) {
+            if (nextType === 'grams' && weightInput && servingInput) {
+                const servings = Number(servingInput.value);
+                if (Number.isFinite(servings) && servings > 0) weightInput.value = Math.round(servings * servingGrams * 10) / 10;
+            } else if (nextType === 'portion' && weightInput && servingInput) {
+                const grams = Number(weightInput.value);
+                if (Number.isFinite(grams) && grams > 0) servingInput.value = Math.round((grams / servingGrams) * 100) / 100;
+            }
+        }
+
+        currentAmountType = nextType;
+        if (nextType === 'portion') {
             portionBtn.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600';
             gramsBtn.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400';
-            document.getElementById('popup-amount').value = 1;
+            if (servingField) servingField.classList.remove('hidden');
+            if (customWeightField) customWeightField.classList.add('hidden');
+            if (servingInput && (!(Number(servingInput.value) > 0))) servingInput.value = 1;
         } else {
             gramsBtn.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase bg-white shadow text-emerald-600';
             portionBtn.className = 'flex-1 py-3 rounded-xl text-xs font-black uppercase text-slate-400';
-            document.getElementById('popup-amount').value = 100;
+            if (customWeightField) customWeightField.classList.remove('hidden');
+            if (servingField) servingField.classList.add('hidden');
+            if (weightInput && (!(Number(weightInput.value) > 0))) weightInput.value = servingGrams;
         }
+        const servingHelp = document.getElementById('popup-serving-amount-help');
+        if (servingHelp) servingHelp.textContent = `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}g).`;
         updatePopupTotals();
     }
 
     function updatePopupTotals() {
         if (!currentFoodItem) return;
-        const amount = parseFloat(document.getElementById('popup-amount').value) || 1;
-        const nutrients = currentAmountType === 'grams' ? foodNutrientsPer100g(currentFoodItem) : foodNutrientsPerPortion(currentFoodItem);
+        const amount = selectedFoodAmount();
+        const nutrients = currentAmountType === 'grams' ? foodNutrientsPer100g(currentFoodItem) : foodNutrientsPerServing(currentFoodItem);
         const mult = currentAmountType === 'grams' ? amount / 100 : amount;
         document.getElementById('popup-total-kcal').textContent = Math.round((nutrients.calories || 0) * mult);
         document.getElementById('popup-total-protein').textContent = ((nutrients.protein || 0) * mult).toFixed(1) + 'g';
@@ -1311,9 +1361,9 @@
 
     function addFoodItem() {
         if (!currentFoodItem) return;
-        const amount = parseFloat(document.getElementById('popup-amount').value) || 1;
+        const amount = selectedFoodAmount();
         const mealType = document.getElementById('popup-meal-type').value;
-        const sourceNutrients = currentAmountType === 'grams' ? foodNutrientsPer100g(currentFoodItem) : foodNutrientsPerPortion(currentFoodItem);
+        const sourceNutrients = currentAmountType === 'grams' ? foodNutrientsPer100g(currentFoodItem) : foodNutrientsPerServing(currentFoodItem);
         const mult = currentAmountType === 'grams' ? amount / 100 : amount;
 
         const base = {
@@ -1327,7 +1377,7 @@
             sodiumMg: sourceNutrients.sodiumMg || 0,
             cholesterol: sourceNutrients.cholesterol || 0,
             isCustom: currentAmountType !== 'grams',
-            serving: currentAmountType === 'grams' ? '100g' : (currentFoodItem.serving || null)
+            serving: currentAmountType === 'grams' ? '100g' : foodServingLabel(currentFoodItem.serving)
         };
 
         const computed = {
@@ -1350,7 +1400,7 @@
             base,
             databaseFoodId: currentFoodItem.databaseId || '',
             servingGrams: currentFoodItem.servingGrams || 0,
-            servingLabel: currentFoodItem.serving || ''
+            servingLabel: foodServingLabel(currentFoodItem.serving)
         };
 
         const wasEditing = editingLoggedMealId != null;
@@ -1382,10 +1432,12 @@
         if (addBtn) addBtn.textContent = 'Add to Diary';
     }
 
-    // Bind amount input listener
+    // Bind both amount inputs; only the visible mode is used for totals.
     document.addEventListener('DOMContentLoaded', () => {
-        const amt = document.getElementById('popup-amount');
-        if (amt) amt.addEventListener('input', updatePopupTotals);
+        ['popup-amount', 'popup-custom-weight'].forEach(id => {
+            const input = document.getElementById(id);
+            if (input) input.addEventListener('input', updatePopupTotals);
+        });
     });
 
     // ==========================================================================
@@ -1464,7 +1516,7 @@
             setManualFoodValue('manual-food-satfat', nutritionNumber(nutrition.satFat));
             setManualFoodValue('manual-food-sodium', nutritionNumber(nutrition.sodiumMg !== undefined ? nutrition.sodiumMg : (Number(nutrition.sodium) || 0) * 1000));
             setManualFoodValue('manual-food-cholesterol', nutritionNumber(nutrition.cholesterol));
-            setManualFoodValue('manual-food-serving', draft.serving || '1 portion');
+            setManualFoodValue('manual-food-serving', foodServingLabel(draft.serving));
             setManualFoodValue('manual-food-serving-grams', nutritionNumber(draft.servingGrams) || 100);
             const hasDetails = ['carbs', 'fat', 'fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol']
                 .some(key => nutritionNumber(nutrition[key]) > 0);
@@ -1544,16 +1596,16 @@
         const preview = document.getElementById('manual-food-conversion-preview');
         if (!preview) return;
         const grams = nutritionNumber(document.getElementById('manual-food-serving-grams') && document.getElementById('manual-food-serving-grams').value);
-        const serving = String((document.getElementById('manual-food-serving') && document.getElementById('manual-food-serving').value) || '1 portion').trim() || '1 portion';
+        const serving = foodServingLabel(document.getElementById('manual-food-serving') && document.getElementById('manual-food-serving').value);
         const basis = (document.getElementById('manual-food-basis') && document.getElementById('manual-food-basis').value) || 'portion';
         if (grams <= 0) {
-            preview.textContent = 'Enter the exact portion weight to calculate portion and per-100g values.';
+            preview.textContent = 'Enter the exact serving weight to calculate per-serving and per-100g values.';
             return;
         }
         const entered = manualFoodNutrients();
         const per100g = basis === '100g' ? entered : scaleFoodNutrients(entered, 100 / grams);
-        const perPortion = basis === '100g' ? scaleFoodNutrients(entered, grams / 100) : entered;
-        preview.textContent = `${serving} = ${Math.round(grams * 10) / 10}g · ${Math.round(perPortion.calories)} kcal, ${perPortion.protein.toFixed(1)}g protein · Per 100g: ${Math.round(per100g.calories)} kcal, ${per100g.protein.toFixed(1)}g protein`;
+        const perServing = basis === '100g' ? scaleFoodNutrients(entered, grams / 100) : entered;
+        preview.textContent = `${serving} = ${Math.round(grams * 10) / 10}g · ${Math.round(perServing.calories)} kcal, ${perServing.protein.toFixed(1)}g protein · Per 100g: ${Math.round(per100g.calories)} kcal, ${per100g.protein.toFixed(1)}g protein`;
     }
 
     async function saveManualFood() {
@@ -1564,7 +1616,7 @@
         const name = document.getElementById('manual-food-name').value.trim();
         if (!name) { showToast('Please enter a food name'); return; }
         const servingGrams = nutritionNumber(document.getElementById('manual-food-serving-grams').value);
-        if (servingGrams <= 0) { showToast('Please enter the exact portion weight'); return; }
+        if (servingGrams <= 0) { showToast('Please enter the exact serving weight'); return; }
 
         const requiredNutritionInputs = [
             document.getElementById('manual-food-calories'),
@@ -1584,7 +1636,7 @@
         const basis = document.getElementById('manual-food-basis').value || 'portion';
         const entered = manualFoodNutrients();
         const per100g = basis === '100g' ? entered : scaleFoodNutrients(entered, 100 / servingGrams);
-        const perPortion = basis === '100g' ? scaleFoodNutrients(entered, servingGrams / 100) : entered;
+        const perServing = basis === '100g' ? scaleFoodNutrients(entered, servingGrams / 100) : entered;
         const rawBarcode = document.getElementById('manual-food-barcode').value;
         const barcode = typeof normaliseBarcode === 'function'
             ? normaliseBarcode(rawBarcode)
@@ -1605,17 +1657,17 @@
             category: document.getElementById('manual-food-category').value || 'general',
             barcode,
             image: manualFoodImageData || '',
-            calories: perPortion.calories,
-            protein: perPortion.protein,
-            carbs: perPortion.carbs,
-            fat: perPortion.fat,
-            fiber: perPortion.fiber,
-            sugar: perPortion.sugar,
-            satFat: perPortion.satFat,
-            sodiumMg: perPortion.sodiumMg,
-            sodium: perPortion.sodiumMg / 1000,
-            cholesterol: perPortion.cholesterol,
-            serving: document.getElementById('manual-food-serving').value.trim() || '1 portion',
+            calories: perServing.calories,
+            protein: perServing.protein,
+            carbs: perServing.carbs,
+            fat: perServing.fat,
+            fiber: perServing.fiber,
+            sugar: perServing.sugar,
+            satFat: perServing.satFat,
+            sodiumMg: perServing.sodiumMg,
+            sodium: perServing.sodiumMg / 1000,
+            cholesterol: perServing.cholesterol,
+            serving: foodServingLabel(document.getElementById('manual-food-serving').value),
             servingGrams,
             per100g,
             source: 'personal-database',
@@ -1665,7 +1717,7 @@
             image: currentFoodItem.image || '',
             category: currentFoodItem.category || 'general',
             barcode: currentFoodItem.scannedBarcode || currentFoodItem.barcode || '',
-            serving: currentFoodItem.serving || '1 portion',
+            serving: foodServingLabel(currentFoodItem.serving),
             servingGrams: nutritionNumber(currentFoodItem.servingGrams) || 100,
             per100g,
             inputBasis: '100g'
@@ -1722,7 +1774,7 @@
                 : `<div class="text-center py-12">
                     <div class="w-16 h-16 mx-auto mb-4 bg-orange-50 rounded-2xl flex items-center justify-center"><i data-lucide="database" class="w-8 h-8 text-orange-500"></i></div>
                     <p class="font-black text-slate-700 mb-1">${canManage ? 'Build the VFIT food database' : 'No database foods yet'}</p>
-                    <p class="text-xs text-slate-400 mb-4">${canManage ? 'Save exact portion weights and full nutrition, then everyone can find them instantly.' : 'The owner or an approved editor can add the first food.'}</p>
+                    <p class="text-xs text-slate-400 mb-4">${canManage ? 'Save exact serving weights and full nutrition, then everyone can find them instantly.' : 'The owner or an approved editor can add the first food.'}</p>
                     ${canManage ? '<button onclick="openManualFoodEntry()" class="bg-orange-600 text-white px-5 py-3 rounded-xl font-black text-sm">Add Your First Food</button>' : ''}
                 </div>`;
             refreshIcons();
@@ -1734,7 +1786,7 @@
             const image = safeImageUrl(food.image || '');
             const servingGrams = nutritionNumber(food.servingGrams);
             const brand = food.brand || food.store || 'Personal food';
-            const portion = food.serving || '1 portion';
+            const serving = foodServingLabel(food.serving);
             return `<div class="border border-slate-200 rounded-2xl p-3 bg-white hover:border-orange-300">
                 <div class="flex items-center gap-3">
                     <div class="w-14 h-14 rounded-xl bg-slate-50 overflow-hidden flex items-center justify-center flex-shrink-0">
@@ -1742,7 +1794,7 @@
                     </div>
                     <button onclick="openDatabaseFood('${safeId}')" class="flex-1 min-w-0 text-left">
                         <div class="font-black text-sm text-slate-800 truncate">${escapeHtml(food.name || 'Food')}</div>
-                        <div class="text-[11px] text-slate-400 truncate">${escapeHtml(brand)} · ${escapeHtml(portion)}${servingGrams > 0 ? ` · ${Math.round(servingGrams * 10) / 10}g` : ''}</div>
+                        <div class="text-[11px] text-slate-400 truncate">${escapeHtml(brand)} · ${escapeHtml(serving)}${servingGrams > 0 ? ` · ${Math.round(servingGrams * 10) / 10}g` : ''}</div>
                         <div class="text-xs mt-1"><span class="font-black text-indigo-600">${Math.round(nutritionNumber(food.calories))} kcal</span><span class="font-bold text-emerald-600 ml-3">${nutritionNumber(food.protein).toFixed(1)}g protein</span></div>
                     </button>
                     ${canManage ? `<div class="flex gap-1 flex-shrink-0">
