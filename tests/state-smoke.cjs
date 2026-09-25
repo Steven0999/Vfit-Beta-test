@@ -240,6 +240,7 @@ const app = sandbox.__vfitTest;
 // Saved serving sizes and custom gram weights must use the same nutrition basis.
 const savedServingFood = {
   isCustom: true,
+  databaseItem: true,
   serving: '1 bar',
   servingGrams: 40,
   calories: 200,
