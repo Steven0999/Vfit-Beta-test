@@ -1185,6 +1185,48 @@
             : 1;
     }
 
+    function foodPopupNutritionReference(food, amountType, canEditServingWeight) {
+        const customWeight = amountType === 'grams';
+        const servingGrams = nutritionNumber(food && food.servingGrams) || 100;
+        const servingLabel = foodServingLabel(food && food.serving);
+        const servingEditHint = canEditServingWeight
+            ? (food && food.databaseItem
+                ? ' · use Edit Serving Weight to change and save this database reference.'
+                : ' · use Save Serving Size to add this reference to the database.')
+            : '.';
+        return {
+            nutrients: customWeight ? foodNutrientsPer100g(food) : foodNutrientsPerServing(food),
+            title: customWeight
+                ? 'Custom weight reference · nutrition shown per 100g'
+                : `Serving size reference · ${servingLabel}`,
+            detail: customWeight
+                ? 'Enter the exact weight in grams below. The nutrition total is calculated from these per-100g values.'
+                : `Saved serving weight: ${Math.round(servingGrams * 10) / 10}g${servingEditHint}`
+        };
+    }
+
+    function updateFoodPopupNutritionReference() {
+        if (!currentFoodItem) return;
+        const canEditServingWeight = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
+        const reference = foodPopupNutritionReference(currentFoodItem, currentAmountType, canEditServingWeight);
+        const nutrients = reference.nutrients;
+        document.getElementById('popup-nutrition-cals').textContent = Math.round(nutritionNumber(nutrients.calories));
+        document.getElementById('popup-nutrition-protein').textContent = nutritionNumber(nutrients.protein).toFixed(1);
+        document.getElementById('popup-nutrition-carbs').textContent = nutritionNumber(nutrients.carbs).toFixed(1) + 'g';
+        document.getElementById('popup-nutrition-fat').textContent = nutritionNumber(nutrients.fat).toFixed(1) + 'g';
+        document.getElementById('popup-nutrition-fiber').textContent = nutritionNumber(nutrients.fiber).toFixed(1) + 'g';
+        document.getElementById('popup-nutrition-sugar').textContent = nutritionNumber(nutrients.sugar).toFixed(1) + 'g';
+        document.getElementById('popup-nutrition-satfat').textContent = nutritionNumber(nutrients.satFat).toFixed(1) + 'g';
+        document.getElementById('popup-nutrition-sodium').textContent = Math.round(nutritionNumber(nutrients.sodiumMg)) + 'mg';
+        document.getElementById('popup-nutrition-cholesterol').textContent = nutritionNumber(nutrients.cholesterol) + 'mg';
+        document.getElementById('popup-nutrition').textContent = reference.title;
+        const detail = document.getElementById('popup-serving-detail');
+        if (detail) {
+            detail.textContent = reference.detail;
+            detail.classList.remove('hidden');
+        }
+    }
+
     function renderFoodPopup() {
         if (!currentFoodItem) return;
         // Default the action button to "Add to Diary"; editLoggedFood overrides
@@ -1203,30 +1245,11 @@
             img.src = safeImageUrl(currentFoodItem.image) || './icon.svg';
             img.onerror = function() { this.onerror = null; this.src = './icon.svg'; };
         }
-        document.getElementById('popup-nutrition-cals').textContent = Math.round(nutritionNumber(currentFoodItem.calories));
-        document.getElementById('popup-nutrition-protein').textContent = nutritionNumber(currentFoodItem.protein).toFixed(1);
-        document.getElementById('popup-nutrition-carbs').textContent = nutritionNumber(currentFoodItem.carbs).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-fat').textContent = nutritionNumber(currentFoodItem.fat).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-fiber').textContent = nutritionNumber(currentFoodItem.fiber).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-sugar').textContent = nutritionNumber(currentFoodItem.sugar).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-satfat').textContent = nutritionNumber(currentFoodItem.satFat).toFixed(1) + 'g';
-        const sodiumMg = nutritionNumber(currentFoodItem.sodiumMg || (Number(currentFoodItem.sodium) || 0) * 1000);
-        document.getElementById('popup-nutrition-sodium').textContent = Math.round(sodiumMg) + 'mg';
-        document.getElementById('popup-nutrition-cholesterol').textContent = nutritionNumber(currentFoodItem.cholesterol) + 'mg';
         currentFoodItem.serving = foodServingLabel(currentFoodItem.serving || (currentFoodItem.isCustom ? '1 serving' : '100g'));
-        document.getElementById('popup-nutrition').textContent = currentFoodItem.isCustom
-            ? `Per serving · ${currentFoodItem.serving}`
-            : 'Per 100g';
-        const servingDetail = document.getElementById('popup-serving-detail');
-        if (servingDetail) {
-            const grams = nutritionNumber(currentFoodItem.servingGrams);
-            servingDetail.textContent = grams > 0
-                ? `1 serving is ${currentFoodItem.serving} (${Math.round(grams * 10) / 10}g) · custom weights use the saved per-100g values`
-                : 'No serving weight saved · add or edit this food to set an exact gram conversion';
-            servingDetail.classList.remove('hidden');
-        }
         const databaseLabel = document.getElementById('popup-database-action-label');
-        if (databaseLabel) databaseLabel.textContent = currentFoodItem.databaseItem ? 'Edit Database Food' : 'Save to Food Database';
+        if (databaseLabel) databaseLabel.textContent = currentFoodItem.databaseItem
+            ? 'Edit Serving Weight in Database'
+            : 'Save Serving Size to Database';
         const databaseAction = document.getElementById('popup-database-action');
         if (databaseAction) databaseAction.classList.toggle('hidden', typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase());
 
@@ -1281,17 +1304,12 @@
         if (currentFoodItem.isCustom) currentFoodItem.per100g = null;
         currentFoodItem.edited = true; // mark as user-corrected
 
-        // Re-render the display numbers, keep the current amount, recalc totals
+        // Re-render the active reference, keep both amounts, then recalc totals.
         const servingAmount = document.getElementById('popup-amount') && document.getElementById('popup-amount').value;
         const customWeight = document.getElementById('popup-custom-weight') && document.getElementById('popup-custom-weight').value;
-        document.getElementById('popup-nutrition-cals').textContent = Math.round(currentFoodItem.calories);
-        document.getElementById('popup-nutrition-protein').textContent = (currentFoodItem.protein).toFixed(1);
-        document.getElementById('popup-nutrition-carbs').textContent = (currentFoodItem.carbs).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-fat').textContent = (currentFoodItem.fat).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-fiber').textContent = (currentFoodItem.fiber).toFixed(1) + 'g';
-        document.getElementById('popup-nutrition-sugar').textContent = (currentFoodItem.sugar).toFixed(1) + 'g';
         if (document.getElementById('popup-amount')) document.getElementById('popup-amount').value = servingAmount;
         if (document.getElementById('popup-custom-weight')) document.getElementById('popup-custom-weight').value = customWeight;
+        updateFoodPopupNutritionReference();
         updatePopupTotals();
 
         document.getElementById('edit-food-values').classList.add('hidden');
@@ -1335,6 +1353,7 @@
         }
         const servingHelp = document.getElementById('popup-serving-amount-help');
         if (servingHelp) servingHelp.textContent = `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}g).`;
+        updateFoodPopupNutritionReference();
         updatePopupTotals();
     }
 
@@ -1460,7 +1479,7 @@
         if (toggle) toggle.textContent = expanded ? '− Hide Details' : '+ Add More Details (Optional)';
     }
 
-    function openManualFoodEntry(foodId) {
+    function openManualFoodEntry(foodId, focusServingWeight) {
         if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
             showToast('The food database is read only. Only the owner and approved editors can make changes.', 5500);
             return;
@@ -1496,7 +1515,9 @@
 
         const title = document.getElementById('manual-food-modal-title');
         const saveButton = document.getElementById('manual-food-save-button');
-        if (title) title.textContent = existing ? 'Edit Database Food' : 'Add Food to Database';
+        if (title) title.textContent = focusServingWeight
+            ? (existing ? 'Edit Serving Weight' : 'Save Serving Size to Database')
+            : (existing ? 'Edit Database Food' : 'Add Food to Database');
         if (saveButton) saveButton.textContent = existing ? 'Save Changes' : 'Save to Food Database';
 
         if (draft) {
@@ -1528,6 +1549,14 @@
         document.getElementById('manual-food-modal').style.display = 'flex';
         updateManualFoodNutritionPreview();
         refreshIcons();
+        if (focusServingWeight) {
+            setTimeout(() => {
+                const input = document.getElementById('manual-food-serving-grams');
+                if (!input) return;
+                input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                input.focus();
+            }, 0);
+        }
     }
 
     function closeManualFoodEntry() {
@@ -1697,7 +1726,7 @@
         }
     }
 
-    function saveCurrentFoodToDatabase() {
+    function saveCurrentFoodToDatabase(focusServingWeight) {
         if (!currentFoodItem) return;
         if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
             showToast('The food database is read only for this account');
@@ -1706,7 +1735,7 @@
         const databaseId = currentFoodItem.databaseId || (currentFoodItem.databaseItem ? currentFoodItem.id : '');
         if (databaseId) {
             closeFoodPopup();
-            openManualFoodEntry(databaseId);
+            openManualFoodEntry(databaseId, Boolean(focusServingWeight));
             return;
         }
 
@@ -1723,7 +1752,7 @@
             inputBasis: '100g'
         };
         closeFoodPopup();
-        openManualFoodEntry();
+        openManualFoodEntry(null, Boolean(focusServingWeight));
     }
 
     function foodDatabaseMatchesQuery(food, query) {

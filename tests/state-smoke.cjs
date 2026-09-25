@@ -171,6 +171,7 @@ const expose = `
   normaliseBarcode,
   foodNutrientsPer100g,
   foodNutrientsPerServing,
+  foodPopupNutritionReference,
   copiedMealNutritionBases,
   copiedMealNutritionForAmount,
   isPlausibleFoodBarcode,
@@ -247,6 +248,15 @@ const savedServingFood = {
 };
 assert.equal(app.foodNutrientsPerServing(savedServingFood).calories, 200);
 assert.equal(app.foodNutrientsPer100g(savedServingFood).calories, 500);
+
+const servingReference = app.foodPopupNutritionReference(savedServingFood, 'portion', true);
+assert.match(servingReference.title, /Serving size reference/);
+assert.equal(servingReference.nutrients.calories, 200);
+assert.match(servingReference.detail, /Edit Serving Weight/);
+const customWeightReference = app.foodPopupNutritionReference(savedServingFood, 'grams', true);
+assert.match(customWeightReference.title, /Custom weight reference.*per 100g/);
+assert.equal(customWeightReference.nutrients.calories, 500);
+assert.doesNotMatch(customWeightReference.title + customWeightReference.detail, /serving size/i);
 
 const scannedServingFood = {
   isCustom: false,

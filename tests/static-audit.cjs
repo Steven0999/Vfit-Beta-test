@@ -233,6 +233,11 @@ assert.ok(html.includes('id="edit-meal-serving-field"') && html.includes('id="ed
 const mealPlannerSource = moduleSources.get('nutrition/meal-planner.js');
 const scannerSource = moduleSources.get('nutrition/scanner.js');
 assert.ok(mealPlannerSource.includes('function foodNutrientsPerServing(') && mealPlannerSource.includes('function selectedFoodAmount('), 'serving entry must calculate from the saved serving size');
+assert.ok(html.includes('onclick="saveCurrentFoodToDatabase(true)"') && source.includes('Edit Serving Weight in Database'), 'authorized editors need a direct serving-weight database action');
+assert.ok(mealPlannerSource.includes('function openManualFoodEntry(foodId, focusServingWeight)') && mealPlannerSource.includes("input.scrollIntoView({ block: 'center', behavior: 'smooth' })"), 'serving-weight editing must open and focus the saved database field');
+assert.ok(html.includes('id="popup-custom-weight-label"') && html.includes('id="popup-custom-weight-unit"'), 'custom-weight labels and units must stay specific to grams');
+assert.ok(mealPlannerSource.includes('function foodPopupNutritionReference(') && mealPlannerSource.includes('function updateFoodPopupNutritionReference('), 'the nutrition reference must switch with the amount mode');
+assert.ok(mealPlannerSource.includes('Custom weight reference · nutrition shown per 100g'), 'custom-weight mode must not retain the serving-size heading');
 assert.ok(scannerSource.includes('function copiedMealNutritionBases(') && scannerSource.includes('function copiedMealNutritionForAmount('), 'copied meals must convert correctly between servings and grams');
 for (const requiredFoodField of ['manual-food-name', 'manual-food-calories', 'manual-food-protein', 'manual-food-serving-grams']) {
   assert.match(html, new RegExp(`id="${requiredFoodField}"[^>]*required[^>]*aria-required="true"`), `${requiredFoodField} must be required`);

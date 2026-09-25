@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.17';
+    const VFIT_APP_VERSION = '2.1.0-beta.18';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
