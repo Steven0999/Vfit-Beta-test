@@ -3374,6 +3374,9 @@
         // that day's calorie target and training prescription without changing
         // the user's normal goals.
         dailyReadiness: {},
+        // Optional daily "How are you feeling?" check-in. Existing users keep
+        // the current behaviour unless they turn it off in Profile Settings.
+        dailyReadinessEnabled: true,
         aiCoachEnabled: true,
         proteinGoal: 150,
         weightUnit: 'kg', // user's preferred display unit: 'kg' | 'lbs' | 'st'
@@ -4863,6 +4866,10 @@
     let dailyReadinessRetryTimer = null;
     let dailyReadinessListenersReady = false;
 
+    function isDailyReadinessEnabled() {
+        return state.dailyReadinessEnabled !== false;
+    }
+
     function readinessDateKey(value) {
         if (value instanceof Date) return localDateKey(value);
         if (!value) return localDateKey();
@@ -5044,6 +5051,10 @@
     }
 
     function openDailyReadinessCheck() {
+        if (!isDailyReadinessEnabled()) {
+            showToast('Enable Daily Readiness Questions in Profile Settings first');
+            return;
+        }
         const modal = document.getElementById('daily-readiness-modal');
         if (!modal) return;
         const dateKey = localDateKey();
@@ -5122,6 +5133,7 @@
     }
 
     function maybeShowDailyReadiness() {
+        if (!isDailyReadinessEnabled()) return;
         if (!currentUser) return;
         const now = new Date();
         if (now.getHours() < READINESS_PROMPT_HOUR) return;
@@ -5144,6 +5156,10 @@
 
     function scheduleNextReadinessPrompt() {
         clearTimeout(dailyReadinessTimer);
+        if (!isDailyReadinessEnabled()) {
+            dailyReadinessTimer = null;
+            return;
+        }
         const now = new Date();
         const tenToday = new Date(now);
         tenToday.setHours(READINESS_PROMPT_HOUR, 0, 0, 0);
@@ -5161,6 +5177,11 @@
     }
 
     function setupDailyReadinessPrompt() {
+        if (!isDailyReadinessEnabled()) {
+            teardownDailyReadinessPrompt();
+            renderDailyReadinessCards();
+            return;
+        }
         scheduleNextReadinessPrompt();
         if (!dailyReadinessListenersReady) {
             document.addEventListener('visibilitychange', handleReadinessVisibility);
@@ -5190,8 +5211,12 @@
         const dashCard = document.getElementById('daily-readiness-card');
 
         if (dashCard) {
+            const enabled = isDailyReadinessEnabled();
             const afterTen = new Date().getHours() >= READINESS_PROMPT_HOUR;
-            if (todayRecord && todayRecord.status === 'completed') {
+            if (!enabled) {
+                dashCard.classList.add('hidden');
+                dashCard.innerHTML = '';
+            } else if (todayRecord && todayRecord.status === 'completed') {
                 const recovery = !!todayRecord.recovery;
                 dashCard.className = `glass-card rounded-[2.5rem] p-6 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
                 dashCard.innerHTML = `
@@ -12879,6 +12904,25 @@
         showToast(state.aiCoachEnabled ? 'AI Coach enabled' : 'AI Coach disabled');
     }
 
+    function toggleDailyReadiness() {
+        const checkbox = document.getElementById('daily-readiness-enabled');
+        if (!checkbox) return;
+
+        state.dailyReadinessEnabled = checkbox.checked;
+        saveState();
+
+        if (state.dailyReadinessEnabled) {
+            setupDailyReadinessPrompt();
+        } else {
+            teardownDailyReadinessPrompt();
+            renderDailyReadinessCards();
+        }
+
+        showToast(state.dailyReadinessEnabled
+            ? 'Daily readiness questions enabled'
+            : 'Daily readiness questions disabled');
+    }
+
     function toggleEquipment(env, item) {
         if (!state.equipment[env]) state.equipment[env] = {};
         state.equipment[env][item] = !state.equipment[env][item];
@@ -12978,6 +13022,10 @@
         // AI coach enabled
         const aiCheck = document.getElementById('ai-coach-enabled');
         if (aiCheck) aiCheck.checked = state.aiCoachEnabled !== false;
+
+        // Optional daily "How are you feeling?" questions
+        const readinessCheck = document.getElementById('daily-readiness-enabled');
+        if (readinessCheck) readinessCheck.checked = isDailyReadinessEnabled();
 
         // Habits
         const habitsCheck = document.getElementById('habits-enabled');
