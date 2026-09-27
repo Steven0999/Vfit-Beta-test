@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.19';
+    const VFIT_APP_VERSION = '2.1.0-beta.20';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -3360,6 +3360,10 @@
     let dailyReadinessRetryTimer = null;
     let dailyReadinessListenersReady = false;
 
+    function isDailyReadinessEnabled() {
+        return state.dailyReadinessEnabled !== false;
+    }
+
     function readinessDateKey(value) {
         if (value instanceof Date) return localDateKey(value);
         if (!value) return localDateKey();
@@ -3541,6 +3545,10 @@
     }
 
     function openDailyReadinessCheck() {
+        if (!isDailyReadinessEnabled()) {
+            showToast('Enable Daily Readiness Questions in Profile Settings first');
+            return;
+        }
         const modal = document.getElementById('daily-readiness-modal');
         if (!modal) return;
         const dateKey = localDateKey();
@@ -3548,7 +3556,7 @@
         window._dailyReadinessDate = dateKey;
 
         ['energy', 'mood', 'feeling', 'hunger', 'fatigue'].forEach(key => {
-            const el = document.getElementById('readiness-' + key);
+            const el = document.getElementById('daily-readiness-' + key);
             if (el) el.value = record && record.status === 'completed' ? String(record[key] || '') : '';
         });
         const note = document.getElementById('daily-readiness-note');
@@ -3619,6 +3627,7 @@
     }
 
     function maybeShowDailyReadiness() {
+        if (!isDailyReadinessEnabled()) return;
         if (!currentUser) return;
         const now = new Date();
         if (now.getHours() < READINESS_PROMPT_HOUR) return;
@@ -3641,6 +3650,10 @@
 
     function scheduleNextReadinessPrompt() {
         clearTimeout(dailyReadinessTimer);
+        if (!isDailyReadinessEnabled()) {
+            dailyReadinessTimer = null;
+            return;
+        }
         const now = new Date();
         const tenToday = new Date(now);
         tenToday.setHours(READINESS_PROMPT_HOUR, 0, 0, 0);
@@ -3658,6 +3671,11 @@
     }
 
     function setupDailyReadinessPrompt() {
+        if (!isDailyReadinessEnabled()) {
+            teardownDailyReadinessPrompt();
+            renderDailyReadinessCards();
+            return;
+        }
         scheduleNextReadinessPrompt();
         if (!dailyReadinessListenersReady) {
             document.addEventListener('visibilitychange', handleReadinessVisibility);
@@ -3687,8 +3705,12 @@
         const dashCard = document.getElementById('daily-readiness-card');
 
         if (dashCard) {
+            const enabled = isDailyReadinessEnabled();
             const afterTen = new Date().getHours() >= READINESS_PROMPT_HOUR;
-            if (todayRecord && todayRecord.status === 'completed') {
+            if (!enabled) {
+                dashCard.classList.add('hidden');
+                dashCard.innerHTML = '';
+            } else if (todayRecord && todayRecord.status === 'completed') {
                 const recovery = !!todayRecord.recovery;
                 dashCard.className = `glass-card rounded-[2.5rem] p-6 border-2 ${recovery ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`;
                 dashCard.innerHTML = `
@@ -5203,6 +5225,9 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         // This is separate from the Coaching Hub's longer readiness score so
         // the 10am check-in can tailor today's calories and training safely.
         dailyReadiness: {},
+        // The short daily "How are you feeling?" questions are optional.
+        // Existing members retain the current enabled behaviour by default.
+        dailyReadinessEnabled: true,
         coachingTargets: {
             workoutsPerWeek: 3,
             calorieTolerancePercent: 10,
@@ -5375,6 +5400,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         normalized.deloadPlan = Object.assign({}, DEFAULT_STATE.deloadPlan, isPlainRecord(raw.deloadPlan) ? raw.deloadPlan : {});
         normalized.notificationSettings = Object.assign({}, DEFAULT_STATE.notificationSettings, isPlainRecord(raw.notificationSettings) ? raw.notificationSettings : {});
         normalized.privacySettings = Object.assign({}, DEFAULT_STATE.privacySettings, isPlainRecord(raw.privacySettings) ? raw.privacySettings : {});
+        normalized.dailyReadinessEnabled = raw.dailyReadinessEnabled !== false;
         normalized.currentPhotos = Object.assign({}, DEFAULT_STATE.currentPhotos, isPlainRecord(raw.currentPhotos) ? raw.currentPhotos : {});
         normalized.equipment = {
             gym: Object.assign({}, DEFAULT_STATE.equipment.gym, isPlainRecord(raw.equipment && raw.equipment.gym) ? raw.equipment.gym : {}),

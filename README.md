@@ -1,10 +1,12 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.9` expands progress-photo capacity, adds seven-day meal and coach planning, strengthens recipe safety, and splits the application into focused JavaScript files that still run as one connected app.
+VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.20` adds an optional daily-readiness prompt and the revised V/FIT wordmark while retaining the hardened modular structure and existing beta features.
 
 ## What is included
 
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
+- Optional daily “How are you feeling?” questions controlled from Profile → Preferences & Goals → Tracking Options.
+- A consistent VFIT wordmark with a full-size V and smaller baseline-aligned FIT in the existing orange branding.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.
 - Personalised shift-meal focus and compatible recipe filtering, with five choices for every breakfast, lunch, dinner and snack under each specific diet.

@@ -2408,6 +2408,25 @@
         showToast(state.aiCoachEnabled ? 'AI Coach enabled' : 'AI Coach disabled');
     }
 
+    function toggleDailyReadiness() {
+        const checkbox = document.getElementById('daily-readiness-enabled');
+        if (!checkbox) return;
+
+        state.dailyReadinessEnabled = checkbox.checked;
+        saveState();
+
+        if (state.dailyReadinessEnabled) {
+            setupDailyReadinessPrompt();
+        } else {
+            teardownDailyReadinessPrompt();
+            renderDailyReadinessCards();
+        }
+
+        showToast(state.dailyReadinessEnabled
+            ? 'Daily readiness questions enabled'
+            : 'Daily readiness questions disabled');
+    }
+
     function toggleEquipment(env, item) {
         if (!state.equipment[env]) state.equipment[env] = {};
         state.equipment[env][item] = !state.equipment[env][item];
@@ -2508,6 +2527,10 @@
         // AI coach enabled
         const aiCheck = document.getElementById('ai-coach-enabled');
         if (aiCheck) aiCheck.checked = state.aiCoachEnabled !== false;
+
+        // Optional short daily "How are you feeling?" questions
+        const readinessCheck = document.getElementById('daily-readiness-enabled');
+        if (readinessCheck) readinessCheck.checked = isDailyReadinessEnabled();
 
         // Habits
         const habitsCheck = document.getElementById('habits-enabled');

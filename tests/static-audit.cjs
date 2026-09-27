@@ -47,6 +47,11 @@ function duplicates(values) {
 
 const ids = [...source.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.deepEqual(duplicates(ids), [], 'HTML ids must be unique');
+assert.equal((html.match(/class="vfit-wordmark /g) || []).length, 2, 'both visible VFIT wordmarks must use the shared treatment');
+assert.equal((html.match(/class="vfit-wordmark-fit"/g) || []).length, 2, 'both wordmarks must contain the smaller FIT text');
+assert.ok(styles.includes('align-items: baseline;') && styles.includes('font-size: 0.34em;'), 'the V and FIT wordmark parts must share a baseline at the requested scale');
+assert.ok(styles.includes('color: var(--vfit-orange-bright) !important;'), 'the wordmark must retain the existing orange colour');
+assert.ok(html.includes('id="daily-readiness-enabled"'), 'Tracking Options must include the daily readiness toggle');
 
 const functions = [...source.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]);
 assert.deepEqual(duplicates(functions), [], 'named functions must be unique');
@@ -141,6 +146,8 @@ assert.ok(!/allow\s+(?:read|write|read,\s*write)\s*:\s*if\s+true/.test(firestore
 
 for (const feature of [
   'function calculateReadinessScore(',
+  'function isDailyReadinessEnabled(',
+  'function toggleDailyReadiness(',
   'function aiCoachQuestionnaireSteps(',
   'function dietaryProfile(',
   'function saveDietaryProfile(',

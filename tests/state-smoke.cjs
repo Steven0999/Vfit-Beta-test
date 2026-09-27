@@ -237,6 +237,10 @@ vm.createContext(sandbox);
 vm.runInContext(appSource + expose, sandbox, { filename: 'VFIT modules' });
 const app = sandbox.__vfitTest;
 
+assert.equal(app.defaultState().dailyReadinessEnabled, true);
+assert.equal(app.normalizeState({ dailyReadinessEnabled: false }).dailyReadinessEnabled, false);
+assert.equal(app.normalizeState({ dailyReadinessEnabled: 'false' }).dailyReadinessEnabled, true);
+
 // Saved serving sizes and custom gram weights must use the same nutrition basis.
 const savedServingFood = {
   isCustom: true,
