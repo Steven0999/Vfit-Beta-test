@@ -101,6 +101,10 @@ function pngDimensions(filename) {
 }
 assert.deepEqual(pngDimensions('icon-192.png'), [192, 192]);
 assert.deepEqual(pngDimensions('icon-512.png'), [512, 512]);
+const iconSvg = fs.readFileSync(path.join(root, 'icon.svg'), 'utf8');
+assert.ok(iconSvg.includes('<text x="70" y="355" font-size="300">V</text>'), 'home-screen icon must contain the full-size V');
+assert.ok(iconSvg.includes('<text x="267" y="355" font-size="102"'), 'home-screen icon must contain one-third-size FIT on the V baseline');
+assert.ok(iconSvg.includes('fill="#fb923c"'), 'home-screen icon must retain the existing orange wordmark colour');
 
 const serviceWorker = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
 new Function(serviceWorker);
