@@ -235,6 +235,25 @@
         /* Headings a touch brighter for hierarchy */
         h1, h2, h3, h4, h5, h6 { color: var(--vfit-orange-bright) !important; }
 
+        /* VFIT wordmark: full-size V with FIT at one-third size on one baseline. */
+        .vfit-wordmark {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.08em;
+            line-height: 1;
+            letter-spacing: 0;
+            color: var(--vfit-orange-bright) !important;
+        }
+        .vfit-wordmark-v {
+            font-size: 1em;
+            line-height: 1;
+        }
+        .vfit-wordmark-fit {
+            font-size: 0.34em;
+            line-height: 1;
+            letter-spacing: 0.08em;
+        }
+
         /* Coloured accent text → keep orange so nothing turns invisible on black */
         .text-indigo-600, .text-indigo-500, .text-indigo-700,
         .text-emerald-600, .text-emerald-500, .text-emerald-700,
@@ -522,4 +541,3 @@
             box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.10);
             pointer-events: none;
         }
-
