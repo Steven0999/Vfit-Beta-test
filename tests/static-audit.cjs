@@ -229,8 +229,10 @@ assert.ok(!source.includes('workoutAccumulatedSeconds += Math.floor'), 'backgrou
 const foodDatabaseStart = html.indexOf('<div id="food-database-modal"');
 const foodDatabaseEnd = html.indexOf('<!-- GOAL SETTING MODAL -->', foodDatabaseStart);
 const foodDatabaseMarkup = html.slice(foodDatabaseStart, foodDatabaseEnd);
-assert.ok(foodDatabaseMarkup.includes('id="food-database-add-button"') && foodDatabaseMarkup.includes('Manually Add Food'), 'authorized database editors need a clear manual food action');
-assert.ok(foodDatabaseMarkup.includes('Enter serving weight, calories and protein'), 'manual food action must explain its core nutrition fields');
+assert.ok(html.includes('id="food-manual-entry-section"') && html.includes('Add Your Own Food'), 'Nutrition must include a dedicated add-your-own-food section');
+assert.ok(html.includes('Enter the food name, calories and protein, then take or choose a photo.'), 'the add-food section must explain its required details and image option');
+assert.ok(foodDatabaseMarkup.includes('id="food-database-add-button"') && foodDatabaseMarkup.includes('Add Your Own Food'), 'authorized database editors need a clear custom-food action');
+assert.ok(foodDatabaseMarkup.includes('Food name, calories, protein and a photo'), 'database add action must explain its food and image fields');
 assert.ok(html.includes('id="amount-type-portion"') && html.includes('>Serving Size</button>'), 'food entry must offer saved serving sizes');
 assert.ok(html.includes('id="amount-type-grams"') && html.includes('>Custom Weight</button>'), 'food entry must offer a separate custom-weight mode');
 for (const amountField of ['popup-serving-amount-field', 'popup-custom-weight-field', 'popup-amount', 'popup-custom-weight']) {
@@ -248,7 +250,11 @@ assert.ok(scannerSource.includes('function copiedMealNutritionBases(') && scanne
 for (const requiredFoodField of ['manual-food-name', 'manual-food-calories', 'manual-food-protein', 'manual-food-serving-grams']) {
   assert.match(html, new RegExp(`id="${requiredFoodField}"[^>]*required[^>]*aria-required="true"`), `${requiredFoodField} must be required`);
 }
+assert.ok(html.includes('id="manual-food-image" accept="image/*"') && html.includes('onchange="previewManualFoodImage(event)"'), 'custom food entry must accept and preview an image');
+assert.ok(mealPlannerSource.includes("existing ? 'Edit Database Food' : 'Add Your Own Food'"), 'new custom-food forms must retain the add-your-own-food title');
+assert.ok(mealPlannerSource.includes('manualFoodImageData = await compressImage') && mealPlannerSource.includes("image: manualFoodImageData || ''"), 'custom food images must be compressed and saved with the database record');
 assert.ok(source.includes("addButton.classList.toggle('hidden', !canManage)"), 'manual database entry must stay restricted to the owner and approved editors');
+assert.ok(source.includes("manualSection.classList.toggle('hidden', !canManage)"), 'the custom-food section must stay restricted to the owner and approved editors');
 assert.ok(source.includes('const requiredNutritionInputs = [') && source.includes("showToast('Please enter calories and protein')"), 'manual database saves must require calories and protein');
 
 const runtimeConfig = fs.readFileSync(path.join(root, 'vfit-config.js'), 'utf8');

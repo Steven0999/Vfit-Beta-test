@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.20';
+    const VFIT_APP_VERSION = '2.1.0-beta.21';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -275,8 +275,10 @@
         const canManage = canManageFoodDatabase();
         const addButton = document.getElementById('food-database-add-button');
         if (addButton) addButton.classList.toggle('hidden', !canManage);
+        const manualSection = document.getElementById('food-manual-entry-section');
+        if (manualSection) manualSection.classList.toggle('hidden', !canManage);
         const manualButton = document.getElementById('food-manual-entry-button');
-        if (manualButton) manualButton.classList.toggle('hidden', !canManage);
+        if (manualButton && !manualSection) manualButton.classList.toggle('hidden', !canManage);
         const accessLabel = document.getElementById('food-database-access-label');
         if (accessLabel) {
             accessLabel.textContent = canManage ? 'Editor access' : 'Read only';

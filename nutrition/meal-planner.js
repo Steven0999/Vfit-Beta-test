@@ -1577,7 +1577,7 @@
 
         const title = document.getElementById('manual-food-modal-title');
         const saveButton = document.getElementById('manual-food-save-button');
-        if (title) title.textContent = existing ? 'Edit Database Food' : 'Add Food to Database';
+        if (title) title.textContent = existing ? 'Edit Database Food' : 'Add Your Own Food';
         if (saveButton) saveButton.textContent = existing ? 'Save Changes' : 'Save to Food Database';
 
         if (draft) {
