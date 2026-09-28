@@ -61,7 +61,7 @@ val syncVfitWebAssets by tasks.registering(Sync::class) {
     into(generatedWebAssets)
 }
 
-android.sourceSets.getByName("main").assets.srcDir(generatedWebAssets)
+android.sourceSets.getByName("main").assets.srcDir(generatedWebAssets.get().asFile)
 tasks.named("preBuild").configure { dependsOn(syncVfitWebAssets) }
 
 dependencies {
