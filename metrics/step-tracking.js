@@ -17,6 +17,7 @@
     let webStepHandler = null;
     let webStepSaveTimer = null;
     let webStepSessionCount = 0;
+    let webStepHistoryRenderAt = 0;
 
     function stepTrackingUserId() {
         return currentUser && currentUser.uid ? currentUser.uid : 'guest';
@@ -70,15 +71,91 @@
         return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
     }
 
+    function currentStepGoal() {
+        return Math.max(1, Math.round(Number(state && state.goals && state.goals.steps) || 10000));
+    }
+
+    function stepGoalForDate(dateKey) {
+        const saved = state && state.stepGoalHistory && Math.round(Number(state.stepGoalHistory[dateKey]));
+        return saved > 0 ? saved : currentStepGoal();
+    }
+
+    function rememberStepGoalForDate(dateKey, overwrite) {
+        if (!validStepDateKey(dateKey)) return currentStepGoal();
+        if (!state.stepGoalHistory || typeof state.stepGoalHistory !== 'object') state.stepGoalHistory = {};
+        const existing = Math.round(Number(state.stepGoalHistory[dateKey]));
+        if (overwrite === true || !(existing > 0)) state.stepGoalHistory[dateKey] = currentStepGoal();
+        return Math.max(1, Math.round(Number(state.stepGoalHistory[dateKey]) || currentStepGoal()));
+    }
+
+    function recordDailyStepTotal(dateKey, value, source, capturedAt) {
+        if (!validStepDateKey(dateKey)) return null;
+        const steps = Math.max(0, Math.round(Number(value) || 0));
+        if (!state.stepsLogs || typeof state.stepsLogs !== 'object') state.stepsLogs = {};
+        if (!state.stepsGoalCompletions || typeof state.stepsGoalCompletions !== 'object') state.stepsGoalCompletions = {};
+        state.stepsLogs[dateKey] = steps;
+        const goal = rememberStepGoalForDate(dateKey, false);
+        state.stepsGoalCompletions[dateKey] = steps >= goal;
+        if (source) setStepSource(dateKey, source, capturedAt);
+        return { date: dateKey, steps, goal };
+    }
+
+    function finaliseStepDay(dateKey, finalisedAt) {
+        if (!validStepDateKey(dateKey) || !state.stepsLogs || !Object.prototype.hasOwnProperty.call(state.stepsLogs, dateKey)) return false;
+        const total = recordDailyStepTotal(dateKey, state.stepsLogs[dateKey]);
+        if (!total) return false;
+        if (!state.stepSources || typeof state.stepSources !== 'object') state.stepSources = {};
+        state.stepSources[dateKey] = Object.assign({}, state.stepSources[dateKey] || {}, {
+            source: (state.stepSources[dateKey] && state.stepSources[dateKey].source) || 'saved-total',
+            capturedAt: (state.stepSources[dateKey] && state.stepSources[dateKey].capturedAt) || finalisedAt || new Date().toISOString(),
+            finalisedAt: finalisedAt || new Date().toISOString()
+        });
+        return true;
+    }
+
+    function stepHistoryEntries() {
+        const today = localDateKey();
+        const dateKeys = new Set(
+            Object.keys((state && state.stepsLogs) || {}).filter(validStepDateKey)
+        );
+        dateKeys.add(today);
+        return Array.from(dateKeys).sort().reverse().map(dateKey => {
+            const steps = Math.max(0, Math.round(Number(state.stepsLogs && state.stepsLogs[dateKey]) || 0));
+            const goal = stepGoalForDate(dateKey);
+            const percent = Math.max(0, Math.round((steps / goal) * 100));
+            return {
+                date: dateKey,
+                steps,
+                goal,
+                percent,
+                remaining: Math.max(0, goal - steps),
+                reached: steps >= goal,
+                isToday: dateKey === today,
+                source: state.stepSources && state.stepSources[dateKey] ? state.stepSources[dateKey].source || '' : ''
+            };
+        });
+    }
+
     function updateVisibleStepCount(dateKey) {
         if (!state || !state.stepsLogs || dateKey !== state.viewDate) return;
         const steps = Math.max(0, Math.round(Number(state.stepsLogs[dateKey]) || 0));
-        const goal = Math.max(1, Number(state.goals && state.goals.steps) || 10000);
+        const goal = stepGoalForDate(dateKey);
+        const percent = Math.max(0, Math.round((steps / goal) * 100));
         const count = document.getElementById('steps-count');
         const bar = document.getElementById('steps-progress-bar');
+        const progressLabel = document.getElementById('steps-progress-label');
         const input = document.getElementById('steps-number');
         if (count) count.textContent = `${steps.toLocaleString()} / ${goal.toLocaleString()}`;
-        if (bar) bar.style.width = Math.min(100, (steps / goal) * 100) + '%';
+        if (bar) {
+            bar.style.width = Math.min(100, percent) + '%';
+            bar.setAttribute('aria-valuenow', String(Math.min(100, percent)));
+            bar.setAttribute('aria-valuemax', '100');
+        }
+        if (progressLabel) {
+            progressLabel.textContent = steps >= goal
+                ? `${percent}% · Goal reached`
+                : `${percent}% · ${(goal - steps).toLocaleString()} steps remaining`;
+        }
         if (input && document.getElementById('steps-log-modal')?.style.display === 'flex') input.value = steps;
     }
 
@@ -90,19 +167,18 @@
         };
     }
 
-    function noteManualStepEntry(dateKey) {
+    function noteManualStepEntry(dateKey, steps) {
         if (!validStepDateKey(dateKey)) return;
-        setStepSource(dateKey, 'manual');
+        recordDailyStepTotal(dateKey, steps, 'manual');
         writeStepTrackingPreferences({ lastSyncAt: new Date().toISOString() });
         renderStepTrackingUI();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
     }
 
     function applyPhoneStepTotal(payload) {
         const dateKey = validStepDateKey(payload && payload.date) ? payload.date : localDateKey();
         const steps = Math.max(0, Math.round(Number(payload && payload.steps) || 0));
-        if (!state.stepsLogs || typeof state.stepsLogs !== 'object') state.stepsLogs = {};
-        state.stepsLogs[dateKey] = steps;
-        setStepSource(dateKey, 'health-connect', payload && payload.capturedAt);
+        recordDailyStepTotal(dateKey, steps, 'health-connect', payload && payload.capturedAt);
         nativeStepState.lastSyncAt = (payload && payload.capturedAt) || new Date().toISOString();
         nativeStepState.lastError = '';
         nativeStepSyncPending = false;
@@ -115,9 +191,39 @@
         saveState();
         updateVisibleStepCount(dateKey);
         renderStepTrackingUI();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
         if (stepPermissionRequestPending) {
             stepPermissionRequestPending = false;
             showToast(`Health Connect linked · ${steps.toLocaleString()} steps today`, 5000);
+        }
+    }
+
+    function applyPhoneStepHistory(payload) {
+        const entries = Array.isArray(payload && payload.entries) ? payload.entries : [];
+        let newest = null;
+        entries.forEach(entry => {
+            if (!entry || !validStepDateKey(entry.date)) return;
+            const recorded = recordDailyStepTotal(entry.date, entry.steps, 'health-connect', entry.capturedAt);
+            if (recorded && (!newest || recorded.date > newest.date)) newest = recorded;
+        });
+        nativeStepState.lastSyncAt = (payload && payload.capturedAt) || new Date().toISOString();
+        nativeStepState.lastError = '';
+        nativeStepSyncPending = false;
+        writeStepTrackingPreferences({
+            enabled: true,
+            mode: 'health-connect',
+            permission: 'granted',
+            lastSyncAt: nativeStepState.lastSyncAt
+        });
+        saveState();
+        updateVisibleStepCount(state.viewDate);
+        renderStepTrackingUI();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
+        if (stepPermissionRequestPending) {
+            stepPermissionRequestPending = false;
+            const today = entries.find(entry => entry && entry.date === localDateKey());
+            const total = today ? Math.max(0, Math.round(Number(today.steps) || 0)) : (newest ? newest.steps : 0);
+            showToast(`Health Connect linked · ${total.toLocaleString()} steps today`, 5000);
         }
     }
 
@@ -159,6 +265,11 @@
             return;
         }
 
+        if (payload.type === 'vfit-health-connect-history') {
+            applyPhoneStepHistory(payload);
+            return;
+        }
+
         if (payload.type === 'vfit-health-connect-error') {
             nativeStepSyncPending = false;
             nativeStepState.lastError = String(payload.message || 'Health Connect could not be read').slice(0, 180);
@@ -183,7 +294,7 @@
             if (nativeStepState.availability === 'provider_update_required') return 'Health Connect needs installing or updating';
             if (nativeStepState.availability === 'unavailable') return 'Health Connect is unavailable · manual entry still works';
             if (nativeStepState.permission === 'granted') {
-                if (nativeStepSyncPending) return 'Health Connect · updating today’s total…';
+                if (nativeStepSyncPending) return 'Health Connect · updating daily step history…';
                 if (nativeStepState.backgroundPermission) return 'Health Connect · all-day background sync enabled';
                 return 'Health Connect · includes steps taken while VFIT was closed';
             }
@@ -218,6 +329,14 @@
             button.classList.toggle('opacity-60', nativeStepSyncPending);
         });
 
+        const goal = currentStepGoal();
+        ['step-goal-settings-input', 'step-goal-modal-input'].forEach(id => {
+            const input = document.getElementById(id);
+            if (input && document.activeElement !== input) input.value = goal;
+        });
+        const currentGoal = document.getElementById('step-history-current-goal');
+        if (currentGoal) currentGoal.textContent = `${goal.toLocaleString()} steps`;
+
         const pedometerButton = document.getElementById('pedometer-toggle');
         if (pedometerButton) {
             pedometerButton.textContent = webStepTrackingActive ? 'Stop' : 'Start';
@@ -226,6 +345,27 @@
             pedometerButton.classList.toggle('bg-amber-100', !webStepTrackingActive);
             pedometerButton.classList.toggle('text-amber-700', !webStepTrackingActive);
         }
+    }
+
+    function updateStepGoal(value) {
+        const goal = Math.round(Number(value));
+        if (!Number.isFinite(goal) || goal < 100 || goal > 100000) {
+            renderStepTrackingUI();
+            showToast('Choose a daily step goal between 100 and 100,000', 5000);
+            return false;
+        }
+        if (!state.goals || typeof state.goals !== 'object') state.goals = {};
+        state.goals.steps = goal;
+        const today = localDateKey();
+        rememberStepGoalForDate(today, true);
+        if (!state.stepsGoalCompletions || typeof state.stepsGoalCompletions !== 'object') state.stepsGoalCompletions = {};
+        state.stepsGoalCompletions[today] = Math.max(0, Math.round(Number(state.stepsLogs && state.stepsLogs[today]) || 0)) >= goal;
+        saveState();
+        if (typeof renderDashboard === 'function') renderDashboard();
+        renderStepTrackingUI();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
+        showToast(`Daily step goal set to ${goal.toLocaleString()}`, 4000);
+        return true;
     }
 
     function flushWebStepSave() {
@@ -241,13 +381,17 @@
 
     function recordWebMotionStep() {
         const dateKey = localDateKey();
-        if (!state.stepsLogs || typeof state.stepsLogs !== 'object') state.stepsLogs = {};
-        state.stepsLogs[dateKey] = Math.max(0, Math.round(Number(state.stepsLogs[dateKey]) || 0)) + 1;
-        setStepSource(dateKey, 'web-motion');
+        const nextTotal = Math.max(0, Math.round(Number(state.stepsLogs && state.stepsLogs[dateKey]) || 0)) + 1;
+        recordDailyStepTotal(dateKey, nextTotal, 'web-motion');
         webStepSessionCount += 1;
         const live = document.getElementById('pedometer-live');
         if (live) live.innerHTML = `${webStepSessionCount.toLocaleString()} <span class="text-sm text-slate-400 font-bold">steps counted this session</span>`;
         updateVisibleStepCount(dateKey);
+        const now = Date.now();
+        if (typeof renderStepHistoryLogs === 'function' && now - webStepHistoryRenderAt >= 1500) {
+            webStepHistoryRenderAt = now;
+            renderStepHistoryLogs();
+        }
         scheduleWebStepSave();
     }
 
@@ -406,4 +550,3 @@
         if (event.origin && event.origin !== NATIVE_STEP_ORIGIN) return;
         handleNativeStepMessage(event.data);
     });
-

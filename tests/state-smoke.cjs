@@ -15,6 +15,7 @@ const moduleFiles = [
   'firebase/firebase-sync.js',
   'nutrition/meal-safety.js',
   'nutrition/weekly-planner.js',
+  'metrics/step-tracking.js',
   'metrics/photo-storage.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
@@ -223,6 +224,10 @@ const expose = `
   progressPhotoIdFromReference,
   buildDeloadPlan,
   isDeloadPlanActive,
+  recordDailyStepTotal,
+  finaliseStepDay,
+  stepGoalForDate,
+  stepHistoryEntries,
   saveState,
   loadState,
   getState: () => state,
@@ -240,6 +245,31 @@ const app = sandbox.__vfitTest;
 assert.equal(app.defaultState().dailyReadinessEnabled, true);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: false }).dailyReadinessEnabled, false);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: 'false' }).dailyReadinessEnabled, true);
+
+// Step history keeps the final daily total and the goal that applied that day.
+const migratedSteps = app.normalizeState({
+  goals: { calories: 2500, water: 2500, steps: 8000 },
+  stepsLogs: { '2026-09-26': 7200 }
+});
+assert.equal(migratedSteps.stepGoalHistory['2026-09-26'], 8000);
+assert.equal(migratedSteps.stepsGoalCompletions['2026-09-26'], false);
+
+const stepState = app.defaultState();
+stepState.goals.steps = 8000;
+app.setState(stepState);
+app.recordDailyStepTotal('2026-09-27', 8400, 'health-connect', '2026-09-27T21:00:00.000Z');
+assert.equal(app.finaliseStepDay('2026-09-27', '2026-09-28T00:00:00.000Z'), true);
+assert.equal(app.getState().stepGoalHistory['2026-09-27'], 8000);
+assert.equal(app.getState().stepsGoalCompletions['2026-09-27'], true);
+app.getState().goals.steps = 12000;
+app.recordDailyStepTotal('2026-09-28', 3000, 'health-connect', '2026-09-28T09:00:00.000Z');
+assert.equal(app.stepGoalForDate('2026-09-27'), 8000);
+assert.equal(app.stepGoalForDate('2026-09-28'), 12000);
+const savedStepDay = app.stepHistoryEntries().find(entry => entry.date === '2026-09-27');
+assert.equal(savedStepDay.steps, 8400);
+assert.equal(savedStepDay.percent, 105);
+assert.equal(savedStepDay.reached, true);
+app.setState(app.defaultState());
 
 // Saved serving sizes and custom gram weights must use the same nutrition basis.
 const savedServingFood = {

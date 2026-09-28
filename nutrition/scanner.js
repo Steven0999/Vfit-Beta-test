@@ -2269,6 +2269,7 @@
         // Save whichever nutrition date was being edited before moving every
         // active page to the new device-local day. Historical records and an
         // unfinished workout's original date remain intact.
+        if (typeof finaliseStepDay === 'function') finaliseStepDay(lastCheckDate);
         saveDailyNutrition();
         lastCheckDate = currentDate;
         resetActiveDatesToToday({ preserveActiveWorkout: true });
@@ -2276,6 +2277,7 @@
         renderDiary();
         renderShiftWorker();
         renderDashboard();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
         renderMetricsStatusLines();
         renderMetricsHistory();
         return true;

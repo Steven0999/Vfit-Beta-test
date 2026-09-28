@@ -32,7 +32,65 @@
         renderTrainingLogs();
     }
 
+    function renderStepHistoryLogs() {
+        const container = document.getElementById('step-history-logs-list');
+        if (!container) return;
+
+        const entries = typeof stepHistoryEntries === 'function'
+            ? stepHistoryEntries()
+            : Object.keys(state.stepsLogs || {}).sort().reverse().map(dateKey => {
+                const steps = Math.max(0, Math.round(Number(state.stepsLogs[dateKey]) || 0));
+                const goal = Math.max(1, Math.round(Number(state.goals && state.goals.steps) || 10000));
+                return {
+                    date: dateKey,
+                    steps,
+                    goal,
+                    percent: Math.round((steps / goal) * 100),
+                    remaining: Math.max(0, goal - steps),
+                    reached: steps >= goal,
+                    isToday: dateKey === localDateKey()
+                };
+            });
+
+        const goalLabel = document.getElementById('step-history-current-goal');
+        const currentGoal = Math.max(1, Math.round(Number(state.goals && state.goals.steps) || 10000));
+        if (goalLabel) goalLabel.textContent = `${currentGoal.toLocaleString()} steps`;
+
+        if (!entries.length) {
+            container.innerHTML = '<p class="py-5 text-center text-xs italic text-slate-400">No daily steps saved yet</p>';
+            return;
+        }
+
+        container.innerHTML = entries.map(entry => {
+            const date = new Date(entry.date + 'T12:00:00');
+            const dateLabel = entry.isToday
+                ? 'Today'
+                : date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+            const cappedProgress = Math.min(100, Math.max(0, entry.percent));
+            const progressText = entry.reached
+                ? `${entry.percent}% · Goal reached`
+                : `${entry.percent}% · ${entry.remaining.toLocaleString()} remaining`;
+            return `
+                <div class="rounded-2xl border ${entry.isToday ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'} p-4">
+                    <div class="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-sm font-black text-slate-900">${escapeHtml(dateLabel)}</p>
+                            <p class="mt-0.5 text-[11px] text-slate-400">Goal ${entry.goal.toLocaleString()} steps</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-base font-black text-amber-600">${entry.steps.toLocaleString()}</p>
+                            <p class="text-[10px] font-bold ${entry.reached ? 'text-emerald-600' : 'text-slate-400'}">${escapeHtml(progressText)}</p>
+                        </div>
+                    </div>
+                    <div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div role="progressbar" aria-label="${escapeHtml(dateLabel)} step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${cappedProgress}" class="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style="width:${cappedProgress}%"></div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
     function renderTrainingLogs() {
+        renderStepHistoryLogs();
         const container = document.getElementById('training-logs-list');
         if (!container) return;
 
@@ -2556,6 +2614,9 @@
         if (trackHyd) trackHyd.checked = state.trackHydration !== false;
         const trackSteps = document.getElementById('track-steps');
         if (trackSteps) trackSteps.checked = state.trackSteps !== false;
+        const stepGoalInput = document.getElementById('step-goal-settings-input');
+        if (stepGoalInput) stepGoalInput.value = Math.max(1, Math.round(Number(state.goals && state.goals.steps) || 10000));
+        if (typeof renderStepTrackingUI === 'function') renderStepTrackingUI();
 
         // Equipment lists
         const gymList = document.getElementById('gym-equipment-list');

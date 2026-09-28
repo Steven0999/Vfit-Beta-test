@@ -16,6 +16,7 @@ import androidx.work.WorkerParameters
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 data class CachedStepTotal(
@@ -29,6 +30,7 @@ object StepCache {
     private const val DATE = "date"
     private const val STEPS = "steps"
     private const val CAPTURED_AT = "captured_at"
+    private const val HISTORY_SYNC_DATE = "history_sync_date"
 
     fun write(context: Context, value: CachedStepTotal) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -44,6 +46,26 @@ object StepCache {
         val date = preferences.getString(DATE, null) ?: return null
         val capturedAt = preferences.getString(CAPTURED_AT, null) ?: return null
         return CachedStepTotal(date, preferences.getLong(STEPS, 0L), capturedAt)
+    }
+
+    fun historyDaysToSync(context: Context, today: LocalDate): Int {
+        val saved = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getString(HISTORY_SYNC_DATE, null)
+        val lastDate = try {
+            saved?.let { LocalDate.parse(it) }
+        } catch (error: Exception) {
+            null
+        }
+        if (lastDate == null) return 30
+        val elapsed = ChronoUnit.DAYS.between(lastDate, today).coerceAtLeast(0)
+        return (elapsed + 1L).coerceIn(1L, 30L).toInt()
+    }
+
+    fun markHistorySynced(context: Context, date: LocalDate) {
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putString(HISTORY_SYNC_DATE, date.toString())
+            .apply()
     }
 }
 
@@ -66,17 +88,42 @@ object HealthStepReader {
         val zone = ZoneId.systemDefault()
         val date = LocalDate.now(zone)
         val now = Instant.now()
+        return readDate(client, zone, date, now, includeZero = true)!!
+    }
+
+    suspend fun readRecentDays(context: Context, dayCount: Int): List<CachedStepTotal> {
+        val client = client(context)
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val now = Instant.now()
+        return (0 until dayCount.coerceIn(1, 30)).mapNotNull { offset ->
+            val date = today.minusDays(offset.toLong())
+            readDate(client, zone, date, now, includeZero = offset == 0)
+        }
+    }
+
+    private suspend fun readDate(
+        client: HealthConnectClient,
+        zone: ZoneId,
+        date: LocalDate,
+        capturedAt: Instant,
+        includeZero: Boolean
+    ): CachedStepTotal? {
+        val today = LocalDate.now(zone)
         val start = date.atStartOfDay(zone).toInstant()
+        val end = if (date == today) capturedAt else date.plusDays(1).atStartOfDay(zone).toInstant()
         val response = client.aggregate(
             AggregateRequest(
                 metrics = setOf(StepsRecord.COUNT_TOTAL),
-                timeRangeFilter = TimeRangeFilter.between(start, now)
+                timeRangeFilter = TimeRangeFilter.between(start, end)
             )
         )
+        val total = response[StepsRecord.COUNT_TOTAL]
+        if (total == null && !includeZero) return null
         return CachedStepTotal(
             date = date.toString(),
-            steps = response[StepsRecord.COUNT_TOTAL] ?: 0L,
-            capturedAt = now.toString()
+            steps = total ?: 0L,
+            capturedAt = capturedAt.toString()
         )
     }
 }

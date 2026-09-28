@@ -245,9 +245,10 @@
                         </button>
                     </div>
                     <!-- Progress bar -->
-                    <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-3">
-                        <div id="steps-progress-bar" class="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all" style="width:0%"></div>
+                    <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                        <div id="steps-progress-bar" role="progressbar" aria-label="Daily step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" class="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all" style="width:0%"></div>
                     </div>
+                    <p id="steps-progress-label" class="mt-2 mb-3 text-center text-[11px] font-bold text-amber-700">0% · 10,000 steps remaining</p>
                     <div class="flex items-center justify-between gap-3 rounded-2xl bg-amber-50 px-3 py-2">
                         <div class="min-w-0">
                             <p class="text-[10px] font-black uppercase text-amber-700">Phone step tracking</p>
@@ -870,6 +871,26 @@
                 </div>
 
                 <div id="logs-training-view" class="space-y-4">
+                    <div class="glass-card p-5 rounded-2xl">
+                        <div class="flex items-center justify-between gap-3 mb-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-11 h-11 bg-amber-50 rounded-2xl flex items-center justify-center flex-shrink-0">
+                                    <i data-lucide="footprints" class="w-5 h-5 text-amber-500"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-black text-sm">Daily Step History</h3>
+                                    <p class="text-xs text-slate-400">Every saved day before the midnight reset</p>
+                                </div>
+                            </div>
+                            <button onclick="openStepsLog()" class="rounded-xl bg-amber-500 px-3 py-2 text-[10px] font-black text-white">Update</button>
+                        </div>
+                        <div class="mb-3 flex items-center justify-between rounded-xl bg-amber-50 px-3 py-2 text-xs">
+                            <span class="font-bold text-amber-800">Current daily goal</span>
+                            <span id="step-history-current-goal" class="font-black text-amber-700">10,000 steps</span>
+                        </div>
+                        <div id="step-history-logs-list" class="max-h-[34rem] space-y-3 overflow-y-auto pr-1"></div>
+                    </div>
+
                     <div class="glass-card p-4 rounded-2xl">
                         <p class="text-xs font-black uppercase text-slate-400 mb-3">Filter Workouts</p>
                         <div class="grid grid-cols-2 gap-2">
@@ -1333,6 +1354,14 @@
                                     <p class="text-xs text-slate-500">Count daily steps</p>
                                 </div>
                                 <input type="checkbox" id="track-steps" onchange="toggleTracking('steps')" class="w-5 h-5 accent-indigo-600" checked>
+                            </label>
+                            <label class="block rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                <span class="block text-sm font-bold text-slate-900">Daily Step Goal</span>
+                                <span class="mb-3 block text-xs text-slate-500">Saved with each day so older progress stays accurate if you change your goal later</span>
+                                <div class="flex items-center gap-2">
+                                    <input id="step-goal-settings-input" type="number" inputmode="numeric" min="100" max="100000" step="500" value="10000" onchange="updateStepGoal(this.value)" class="min-w-0 flex-1 rounded-xl border-2 border-amber-200 bg-white p-3 text-lg font-black outline-none focus:border-amber-500">
+                                    <span class="text-xs font-black uppercase text-amber-700">steps</span>
+                                </div>
                             </label>
                             <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
                                 <div class="flex items-center justify-between gap-3">
@@ -3182,6 +3211,13 @@
 
             <p class="text-sm text-slate-500 mb-4">You can still enter the current total from Samsung Health, Fitbit or another health app if automatic access is unavailable.</p>
 
+            <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Daily step goal</label>
+            <div class="flex items-center gap-2 mb-4">
+                <input id="step-goal-modal-input" type="number" inputmode="numeric" min="100" max="100000" step="500" value="10000" onchange="updateStepGoal(this.value)"
+                    class="min-w-0 flex-1 p-3 bg-amber-50 rounded-2xl font-black text-lg outline-none border-2 border-amber-200 focus:border-amber-400 text-center">
+                <span class="text-xs font-black uppercase text-amber-700">steps</span>
+            </div>
+
             <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Step count for today</label>
             <input id="steps-number" type="number" inputmode="numeric" placeholder="e.g. 8500" min="0"
                 class="w-full p-4 bg-slate-50 rounded-2xl font-black text-2xl outline-none border-2 border-transparent focus:border-amber-400 text-center mb-4">
@@ -3546,7 +3582,7 @@
             <div class="space-y-3 text-sm text-slate-600 mb-5">
                 <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
                 <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos remain device-only.</p>
-                <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total. It does not write to or alter your phone's health records.</p>
+                <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total and keep your daily totals in Exercise Logs. It does not write to or alter your phone's health records.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
             </div>

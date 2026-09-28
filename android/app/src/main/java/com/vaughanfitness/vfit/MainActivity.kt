@@ -30,6 +30,7 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZoneId
@@ -46,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var assetLoader: WebViewAssetLoader
     private var pageLoaded = false
+    private var stepSyncInProgress = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
 
@@ -60,7 +62,7 @@ class MainActivity : AppCompatActivity() {
         val backgroundGranted = HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in grantedPermissions
         if (readGranted && backgroundGranted) StepSyncScheduler.schedule(this)
         publishHealthStatus()
-        if (readGranted) syncTodaySteps()
+        if (readGranted) syncStepHistory()
     }
 
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -139,7 +141,7 @@ class MainActivity : AppCompatActivity() {
                 pageLoaded = true
                 publishCachedSteps()
                 publishHealthStatus()
-                syncTodaySteps()
+                syncStepHistory()
             }
         }
 
@@ -191,7 +193,7 @@ class MainActivity : AppCompatActivity() {
             when (payload.optString("command")) {
                 "status" -> publishHealthStatus()
                 "request_permission" -> requestHealthPermissions()
-                "sync" -> syncTodaySteps()
+                "sync" -> syncStepHistory()
             }
         }
     }
@@ -256,12 +258,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun syncTodaySteps() {
+    private fun syncStepHistory() {
         publishCachedSteps()
+        if (stepSyncInProgress) return
         if (HealthStepReader.sdkStatus(this) != HealthConnectClient.SDK_AVAILABLE) {
             publishHealthStatus()
             return
         }
+        stepSyncInProgress = true
         lifecycleScope.launch {
             try {
                 val client = HealthStepReader.client(this@MainActivity)
@@ -270,18 +274,24 @@ class MainActivity : AppCompatActivity() {
                     publishHealthStatus()
                     return@launch
                 }
-                val total = HealthStepReader.readToday(this@MainActivity)
-                StepCache.write(this@MainActivity, total)
+                val today = LocalDate.now(ZoneId.systemDefault())
+                val dayCount = StepCache.historyDaysToSync(this@MainActivity, today)
+                val totals = HealthStepReader.readRecentDays(this@MainActivity, dayCount)
+                val todayTotal = totals.firstOrNull { it.date == today.toString() }
+                if (todayTotal != null) StepCache.write(this@MainActivity, todayTotal)
+                StepCache.markHistorySynced(this@MainActivity, today)
                 if (HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted) {
                     StepSyncScheduler.schedule(this@MainActivity)
                 }
-                publishStepTotal(total)
+                publishStepHistory(totals)
             } catch (error: Exception) {
                 sendWebPayload(
                     JSONObject()
                         .put("type", "vfit-health-connect-error")
-                        .put("message", "Health Connect could not update today’s steps")
+                        .put("message", "Health Connect could not update daily step history")
                 )
+            } finally {
+                stepSyncInProgress = false
             }
         }
     }
@@ -299,6 +309,25 @@ class MainActivity : AppCompatActivity() {
                 .put("date", total.date)
                 .put("steps", total.steps)
                 .put("capturedAt", total.capturedAt)
+                .put("timeZone", ZoneId.systemDefault().id)
+        )
+    }
+
+    private fun publishStepHistory(totals: List<CachedStepTotal>) {
+        val entries = JSONArray()
+        totals.forEach { total ->
+            entries.put(
+                JSONObject()
+                    .put("date", total.date)
+                    .put("steps", total.steps)
+                    .put("capturedAt", total.capturedAt)
+            )
+        }
+        sendWebPayload(
+            JSONObject()
+                .put("type", "vfit-health-connect-history")
+                .put("entries", entries)
+                .put("capturedAt", totals.firstOrNull()?.capturedAt ?: java.time.Instant.now().toString())
                 .put("timeZone", ZoneId.systemDefault().id)
         )
     }
@@ -343,7 +372,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (pageLoaded) {
             publishHealthStatus()
-            syncTodaySteps()
+            syncStepHistory()
         }
     }
 

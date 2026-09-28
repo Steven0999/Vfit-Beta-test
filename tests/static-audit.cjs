@@ -55,6 +55,8 @@ assert.ok(styles.includes('color: var(--vfit-orange-bright) !important;'), 'the 
 assert.ok(html.includes('id="daily-readiness-enabled"'), 'Tracking Options must include the daily readiness toggle');
 assert.ok((html.match(/data-step-tracking-status/g) || []).length >= 3, 'step permission status must appear on the dashboard, settings and step log');
 assert.ok(html.includes('onclick="requestStepTrackingPermission()"'), 'step tracking must expose a user-initiated permission action');
+assert.ok(html.includes('id="step-goal-settings-input"') && html.includes('onchange="updateStepGoal(this.value)"'), 'Tracking Options must let the member set a daily step goal');
+assert.ok(html.includes('id="steps-progress-label"') && html.includes('id="step-history-logs-list"'), 'daily and historical step progress must both be visible');
 
 const functions = [...source.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]);
 assert.deepEqual(duplicates(functions), [], 'named functions must be unique');
@@ -124,8 +126,10 @@ assert.ok(serviceWorker.includes('cloudfunctions.net'), 'service worker must kee
 
 const stepTrackingSource = moduleSources.get('metrics/step-tracking.js');
 assert.ok(stepTrackingSource.includes('window.vfitHealthConnect') && stepTrackingSource.includes("sendNativeStepCommand('request_permission')"), 'web steps must use the origin-restricted Android Health Connect bridge');
-assert.ok(stepTrackingSource.includes("const dateKey = localDateKey()") && stepTrackingSource.includes("setStepSource(dateKey, 'web-motion')"), 'web motion steps must be stored in a local-date bucket');
+assert.ok(stepTrackingSource.includes("const dateKey = localDateKey()") && stepTrackingSource.includes("recordDailyStepTotal(dateKey, nextTotal, 'web-motion')"), 'web motion steps must be stored in a local-date bucket');
 assert.ok(stepTrackingSource.includes("document.visibilityState === 'hidden'") && stepTrackingSource.includes('pauseStepTrackingWhenHidden'), 'the web fallback must stop claiming sensor access when hidden');
+assert.ok(stepTrackingSource.includes('function stepHistoryEntries(') && stepTrackingSource.includes('function finaliseStepDay('), 'step totals and their goals must remain available after midnight');
+assert.ok(stepTrackingSource.includes("payload.type === 'vfit-health-connect-history'"), 'the web app must accept recovered Health Connect daily history');
 
 const androidManifestPath = path.join(root, 'android/app/src/main/AndroidManifest.xml');
 const androidMainPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/MainActivity.kt');
@@ -143,6 +147,8 @@ assert.ok(androidMain.includes('setOf(APP_ORIGIN)') && androidMain.includes('isT
 assert.ok(androidMain.includes('PermissionController.createRequestPermissionResultContract()'), 'Android app must use the Health Connect permission screen');
 assert.ok(androidSync.includes('date.atStartOfDay(zone).toInstant()'), 'Android daily steps must start at phone-local midnight');
 assert.ok(androidSync.includes('StepsRecord.COUNT_TOTAL'), 'Android app must read Health Connect aggregated step totals');
+assert.ok(androidSync.includes('readRecentDays') && androidMain.includes('vfit-health-connect-history'), 'Android must recover completed days after a closed-app midnight rollover');
+assert.ok(androidSync.includes('HISTORY_SYNC_DATE'), 'Android must remember which completed days still need a final Health Connect read');
 assert.ok(androidSync.includes('PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)'), 'granted background step sync must use battery-aware periodic work');
 
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(root, 'firebase.json'), 'utf8'));

@@ -950,11 +950,24 @@
         if (waterBar) waterBar.style.width = Math.min(100, (water / waterGoal) * 100) + '%';
 
         const steps = (state.stepsLogs && state.stepsLogs[state.viewDate]) || 0;
-        const stepsGoal = (state.goals && state.goals.steps) ? state.goals.steps : 10000;
+        const stepsGoal = typeof stepGoalForDate === 'function'
+            ? stepGoalForDate(state.viewDate)
+            : ((state.goals && state.goals.steps) ? state.goals.steps : 10000);
+        const stepPercent = Math.max(0, Math.round((steps / Math.max(1, stepsGoal)) * 100));
         const stepsCountEl = document.getElementById('steps-count');
         if (stepsCountEl) stepsCountEl.innerText = `${steps.toLocaleString()} / ${stepsGoal.toLocaleString()}`;
         const stepsBar = document.getElementById('steps-progress-bar');
-        if (stepsBar) stepsBar.style.width = Math.min(100, (steps / stepsGoal) * 100) + '%';
+        if (stepsBar) {
+            stepsBar.style.width = Math.min(100, stepPercent) + '%';
+            stepsBar.setAttribute('aria-valuenow', String(Math.min(100, stepPercent)));
+            stepsBar.setAttribute('aria-valuemax', '100');
+        }
+        const stepsProgressLabel = document.getElementById('steps-progress-label');
+        if (stepsProgressLabel) {
+            stepsProgressLabel.textContent = steps >= stepsGoal
+                ? `${stepPercent}% · Goal reached`
+                : `${stepPercent}% · ${(stepsGoal - steps).toLocaleString()} steps remaining`;
+        }
         if (typeof renderStepTrackingUI === 'function') renderStepTrackingUI();
 
         // Weekly overview stats
@@ -1249,6 +1262,8 @@
         const date = state.viewDate;
         const current = (state.stepsLogs && state.stepsLogs[date]) || 0;
         document.getElementById('steps-number').value = current > 0 ? current : '';
+        const goalInput = document.getElementById('step-goal-modal-input');
+        if (goalInput) goalInput.value = (state.goals && state.goals.steps) || 10000;
         const fallbackActive = typeof isWebStepTrackingActive === 'function' && isWebStepTrackingActive();
         document.getElementById('pedometer-section').classList.toggle('hidden', !fallbackActive);
         const showBtn = document.getElementById('show-pedometer-btn');
@@ -1264,13 +1279,18 @@
         const steps = Math.round(parseFloat(document.getElementById('steps-number').value) || 0);
         if (steps < 0) { showToast('Enter a valid number'); return; }
         const date = state.viewDate;
-        if (!state.stepsLogs) state.stepsLogs = {};
-        state.stepsLogs[date] = steps;
         if (typeof noteManualStepEntry === 'function') noteManualStepEntry(date, steps);
+        else {
+            if (!state.stepsLogs) state.stepsLogs = {};
+            state.stepsLogs[date] = steps;
+        }
         saveState();
         renderDashboard();
+        if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
         closeStepsLog();
-        const goal = (state.goals && state.goals.steps) ? state.goals.steps : 10000;
+        const goal = typeof stepGoalForDate === 'function'
+            ? stepGoalForDate(date)
+            : ((state.goals && state.goals.steps) ? state.goals.steps : 10000);
         showToast(`${steps.toLocaleString()} steps saved` + (steps >= goal ? ' — goal reached! 👟' : ''));
     }
 

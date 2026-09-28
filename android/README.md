@@ -7,6 +7,7 @@ This Android wrapper packages the existing VFIT web application inside a locked-
 - VFIT requests read-only `READ_STEPS` access. It never writes to or deletes Health Connect records.
 - Today is aggregated from `00:00` in the phone's current time zone to the current instant, so the displayed total automatically starts a new local day at midnight.
 - Every launch and foreground resume requests a fresh total, including steps recorded while VFIT was closed.
+- When the date has changed, VFIT re-reads every completed day since its last foreground history sync (up to Health Connect's recent 30-day window) before showing the Exercise Logs. Those daily totals and their original goals then remain in VFIT history.
 - Where Health Connect supports it and the user grants it, `READ_HEALTH_DATA_IN_BACKGROUND` lets WorkManager refresh the cached total periodically while VFIT is closed.
 - The PWA keeps its visible-app motion counter and manual entry as fallbacks. It does not claim that a browser can count while closed.
 
@@ -16,7 +17,7 @@ Android 14 and newer can include mobile steps in Health Connect. On older suppor
 
 Open the `android` directory in a current Android Studio installation with Android SDK 36 and JDK 17, then build the `app` module. The Gradle build copies the current root VFIT web files into generated Android assets; do not edit a duplicate web bundle.
 
-The branch workflow also builds an unsigned debug APK and uploads it as the `vfit-beta-android-debug` workflow artifact. A Play release must use the owner's private signing key.
+The branch workflow also builds a debug-signed APK and uploads it as the `vfit-beta-android-debug` workflow artifact. A Play release must use the owner's private signing key.
 
 The current package ID is `com.vaughanfitness.vfit`. If a VFIT Play listing already exists under another package ID, change `applicationId` before the first signed release; a published package ID cannot later be changed.
 

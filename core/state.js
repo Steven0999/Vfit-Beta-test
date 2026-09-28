@@ -1,8 +1,8 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.23';
-    const VFIT_STATE_SCHEMA_VERSION = 8;
+    const VFIT_APP_VERSION = '2.1.0-beta.24';
+    const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
         functionsRegion: 'europe-west2',
@@ -923,7 +923,7 @@
             'customExercises', 'checkIns', 'coachConversations'
         ]);
         const recordFields = new Set([
-            'waterLogs', 'stepsLogs', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
+            'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ]);
@@ -5168,6 +5168,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         goals: { calories: 2500, water: 2500, steps: 10000 },
         waterLogs: {},
         stepsLogs: {},
+        stepGoalHistory: {},
         stepSources: {},
         dailyMeals: [],
         workoutHistory: [],
@@ -5428,12 +5429,24 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
         });
         const recordFields = [
-            'waterLogs', 'stepsLogs', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
+            'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ];
         recordFields.forEach(key => {
             if (!isPlainRecord(normalized[key])) normalized[key] = {};
+        });
+
+        // beta.24 migration: preserve the goal that existing daily step totals
+        // were measured against. Future goal changes then affect today onward
+        // without rewriting the progress shown for older days.
+        const fallbackStepGoal = Math.max(1, Math.round(Number(normalized.goals && normalized.goals.steps) || 10000));
+        Object.keys(normalized.stepsLogs).forEach(dateKey => {
+            const savedGoal = Math.round(Number(normalized.stepGoalHistory[dateKey]));
+            if (!(savedGoal > 0)) normalized.stepGoalHistory[dateKey] = fallbackStepGoal;
+            const steps = Math.max(0, Math.round(Number(normalized.stepsLogs[dateKey]) || 0));
+            normalized.stepsLogs[dateKey] = steps;
+            normalized.stepsGoalCompletions[dateKey] = steps >= normalized.stepGoalHistory[dateKey];
         });
 
         // Migration: older meals used `type`; all current views use `mealType`.
