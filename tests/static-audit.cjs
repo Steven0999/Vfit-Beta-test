@@ -17,6 +17,7 @@ const moduleFiles = [
   'firebase/firebase-sync.js',
   'nutrition/meal-safety.js',
   'nutrition/weekly-planner.js',
+  'metrics/step-tracking.js',
   'metrics/photo-storage.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
@@ -52,6 +53,8 @@ assert.equal((html.match(/class="vfit-wordmark-fit"/g) || []).length, 2, 'both w
 assert.ok(styles.includes('align-items: baseline;') && styles.includes('font-size: 0.34em;'), 'the V and FIT wordmark parts must share a baseline at the requested scale');
 assert.ok(styles.includes('color: var(--vfit-orange-bright) !important;'), 'the wordmark must retain the existing orange colour');
 assert.ok(html.includes('id="daily-readiness-enabled"'), 'Tracking Options must include the daily readiness toggle');
+assert.ok((html.match(/data-step-tracking-status/g) || []).length >= 3, 'step permission status must appear on the dashboard, settings and step log');
+assert.ok(html.includes('onclick="requestStepTrackingPermission()"'), 'step tracking must expose a user-initiated permission action');
 
 const functions = [...source.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]);
 assert.deepEqual(duplicates(functions), [], 'named functions must be unique');
@@ -118,6 +121,29 @@ for (const host of ['googleapis.com', 'firestore.googleapis.com', 'identitytoolk
   assert.ok(serviceWorker.includes(host), `service worker must keep ${host} network-only`);
 }
 assert.ok(serviceWorker.includes('cloudfunctions.net'), 'service worker must keep Cloud Functions network-only');
+
+const stepTrackingSource = moduleSources.get('metrics/step-tracking.js');
+assert.ok(stepTrackingSource.includes('window.vfitHealthConnect') && stepTrackingSource.includes("sendNativeStepCommand('request_permission')"), 'web steps must use the origin-restricted Android Health Connect bridge');
+assert.ok(stepTrackingSource.includes("const dateKey = localDateKey()") && stepTrackingSource.includes("setStepSource(dateKey, 'web-motion')"), 'web motion steps must be stored in a local-date bucket');
+assert.ok(stepTrackingSource.includes("document.visibilityState === 'hidden'") && stepTrackingSource.includes('pauseStepTrackingWhenHidden'), 'the web fallback must stop claiming sensor access when hidden');
+
+const androidManifestPath = path.join(root, 'android/app/src/main/AndroidManifest.xml');
+const androidMainPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/MainActivity.kt');
+const androidSyncPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/StepSync.kt');
+for (const androidPath of [androidManifestPath, androidMainPath, androidSyncPath]) {
+  assert.ok(fs.existsSync(androidPath), `Android Health Connect file is missing: ${path.relative(root, androidPath)}`);
+}
+const androidManifest = fs.readFileSync(androidManifestPath, 'utf8');
+const androidMain = fs.readFileSync(androidMainPath, 'utf8');
+const androidSync = fs.readFileSync(androidSyncPath, 'utf8');
+assert.ok(androidManifest.includes('android.permission.health.READ_STEPS'), 'Android app must request read-only step access');
+assert.ok(androidManifest.includes('android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND'), 'Android app must declare optional background health reads');
+assert.ok(!androidManifest.includes('WRITE_STEPS'), 'VFIT must not request permission to alter Health Connect steps');
+assert.ok(androidMain.includes('setOf(APP_ORIGIN)') && androidMain.includes('isTrustedOrigin(request.origin)'), 'native bridges and camera permissions must be restricted to the packaged VFIT origin');
+assert.ok(androidMain.includes('PermissionController.createRequestPermissionResultContract()'), 'Android app must use the Health Connect permission screen');
+assert.ok(androidSync.includes('date.atStartOfDay(zone).toInstant()'), 'Android daily steps must start at phone-local midnight');
+assert.ok(androidSync.includes('StepsRecord.COUNT_TOTAL'), 'Android app must read Health Connect aggregated step totals');
+assert.ok(androidSync.includes('PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)'), 'granted background step sync must use battery-aware periodic work');
 
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(root, 'firebase.json'), 'utf8'));
 assert.equal(firebaseConfig.firestore.rules, 'firestore.rules', 'firebase.json must publish the hardened rules file');

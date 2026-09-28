@@ -1,12 +1,13 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition PWA with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.22` brings the revised V/FIT wordmark to the installable home-screen icon while retaining the custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.23` adds Android Health Connect step totals with a visible-web motion fallback while retaining the revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
 
 ## What is included
 
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
 - Optional daily “How are you feeling?” questions controlled from Profile → Preferences & Goals → Tracking Options.
 - A consistent VFIT wordmark and home-screen icon with a full-size V and one-third-size, baseline-aligned FIT in the existing orange branding.
+- Android Health Connect read-only step access, local-midnight daily totals, resume/background refresh and a permission-based web motion fallback that clearly counts only while VFIT is open.
 - A dedicated “Add Your Own Food” section for saving a food name, calories, protein and compressed phone photo to the VFIT Food Database.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.
@@ -47,6 +48,7 @@ The conversational coach uses structured logic on the device and the member’s 
 - `nutrition/weekly-planner.js` — seven-day rota planner and embedded shopping scanner.
 - `ui/navigation.js` — logs, metrics, charts, comparisons and UI flows.
 - `metrics/photo-storage.js` — durable IndexedDB photo gallery, migration and backups.
+- `metrics/step-tracking.js` — Health Connect bridge handling, daily step totals and the visible-web motion fallback.
 - `coaching/coaching.js` — readiness, shift rota, check-ins and AI Coach flows.
 - `coaching/plan-builder.js` — shared human-coach seven-day plans.
 - `firebase/firebase-sync.js` — memberships, privacy, notifications and account actions.
@@ -54,6 +56,7 @@ The conversational coach uses structured logic on the device and the member’s 
 - `App.js` — the small startup entry point with the final auth observer and app wiring, loaded last.
 - `vfit-config.js` — public runtime feature configuration.
 - `sw.js` — offline shell and runtime caching.
+- `android/` — Android 16 wrapper, Health Connect permission flow, background step sync and secure WebView bridge.
 
 `index.html` loads the stylesheet in its head and the JavaScript files in dependency order at the end of its body. They are classic scripts, so existing inline controls and shared state continue to work while each responsibility remains easy to inspect.
 

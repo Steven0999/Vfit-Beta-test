@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.22';
+    const VFIT_APP_VERSION = '2.1.0-beta.23';
     const VFIT_STATE_SCHEMA_VERSION = 8;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -923,7 +923,7 @@
             'customExercises', 'checkIns', 'coachConversations'
         ]);
         const recordFields = new Set([
-            'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
+            'waterLogs', 'stepsLogs', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ]);
@@ -5168,6 +5168,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         goals: { calories: 2500, water: 2500, steps: 10000 },
         waterLogs: {},
         stepsLogs: {},
+        stepSources: {},
         dailyMeals: [],
         workoutHistory: [],
         nutritionHistory: [],
@@ -5427,7 +5428,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
         });
         const recordFields = [
-            'waterLogs', 'stepsLogs', 'habitCompletions', 'hydrationGoalCompletions',
+            'waterLogs', 'stepsLogs', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
             'weeklyMealPlan', 'shoppingChecks'
         ];

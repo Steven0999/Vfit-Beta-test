@@ -248,7 +248,14 @@
                     <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-3">
                         <div id="steps-progress-bar" class="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all" style="width:0%"></div>
                     </div>
-                    <div class="text-xs text-slate-400 text-center">Tap + to update today's step count from your phone</div>
+                    <div class="flex items-center justify-between gap-3 rounded-2xl bg-amber-50 px-3 py-2">
+                        <div class="min-w-0">
+                            <p class="text-[10px] font-black uppercase text-amber-700">Phone step tracking</p>
+                            <p data-step-tracking-status class="truncate text-[10px] font-medium text-slate-500">Checking availability…</p>
+                        </div>
+                        <button data-step-tracking-action onclick="requestStepTrackingPermission()" class="flex-shrink-0 rounded-xl bg-amber-500 px-3 py-2 text-[10px] font-black text-white">Connect</button>
+                    </div>
+                    <div class="mt-2 text-center text-[10px] text-slate-400">Today's total uses this phone's local midnight and starts a new day at 00:00.</div>
                 </div>
 
                 <!-- Habits Tracker (hidden if not enabled) -->
@@ -1327,6 +1334,16 @@
                                 </div>
                                 <input type="checkbox" id="track-steps" onchange="toggleTracking('steps')" class="w-5 h-5 accent-indigo-600" checked>
                             </label>
+                            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                <div class="flex items-center justify-between gap-3">
+                                    <div>
+                                        <p class="font-bold text-sm">Phone Pedometer</p>
+                                        <p data-step-tracking-status class="mt-1 text-xs text-slate-500">Checking availability…</p>
+                                    </div>
+                                    <button data-step-tracking-action onclick="requestStepTrackingPermission()" class="flex-shrink-0 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Connect</button>
+                                </div>
+                                <p class="mt-2 text-[10px] leading-relaxed text-slate-400">The Android app uses Health Connect for the complete daily total, including steps taken while VFIT is closed. The web fallback counts only while VFIT is open.</p>
+                            </div>
                         </div>
                     </div>
 
@@ -3152,7 +3169,18 @@
                 <button onclick="closeStepsLog()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none">×</button>
             </div>
 
-            <p class="text-sm text-slate-500 mb-4">Enter your current step count from your phone's health app (Apple Health, Google Fit, Samsung Health, Fitbit, etc.).</p>
+            <div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <p class="font-black text-sm">Automatic phone steps</p>
+                        <p data-step-tracking-status class="mt-1 text-[11px] text-slate-500">Checking availability…</p>
+                    </div>
+                    <button data-step-tracking-action onclick="requestStepTrackingPermission()" class="flex-shrink-0 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Connect</button>
+                </div>
+                <p class="mt-2 text-[10px] leading-relaxed text-slate-400">Health Connect includes steps taken while the Android app is closed. Totals are calculated from 00:00 in this phone's time zone.</p>
+            </div>
+
+            <p class="text-sm text-slate-500 mb-4">You can still enter the current total from Samsung Health, Fitbit or another health app if automatic access is unavailable.</p>
 
             <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Step count for today</label>
             <input id="steps-number" type="number" inputmode="numeric" placeholder="e.g. 8500" min="0"
@@ -3164,14 +3192,14 @@
                 <div class="flex items-center justify-between mb-2">
                     <div>
                         <p class="font-bold text-sm">Live step counter</p>
-                        <p class="text-[11px] text-slate-400">Counts while VFIT is open on screen</p>
+                        <p class="text-[11px] text-slate-400">Web fallback · counts while VFIT is open</p>
                     </div>
                     <button id="pedometer-toggle" onclick="togglePedometer()" class="px-4 py-2 bg-amber-100 text-amber-700 rounded-xl text-xs font-bold">Start</button>
                 </div>
                 <p id="pedometer-live" class="hidden text-center text-3xl font-black text-amber-600 my-2">0 <span class="text-sm text-slate-400 font-bold">steps counted</span></p>
-                <p class="text-[10px] text-slate-400">⚠️ Experimental. The screen must stay on and the app open — it stops when you lock the phone or switch apps. For all-day tracking, use your phone's health app and type the total above.</p>
+                <p class="text-[10px] text-slate-400">The browser cannot run motion sensors while closed. Install the Android Health Connect build for all-day totals; this fallback saves counted steps directly to today's VFIT total while the app is visible.</p>
             </div>
-            <button id="show-pedometer-btn" onclick="revealPedometer()" class="w-full mt-3 text-xs text-amber-600 font-bold">Try the live step counter instead ›</button>
+            <button id="show-pedometer-btn" onclick="revealPedometer()" class="w-full mt-3 text-xs text-amber-600 font-bold">Show the web motion fallback ›</button>
         </div>
     </div>
 
@@ -3518,6 +3546,7 @@
             <div class="space-y-3 text-sm text-slate-600 mb-5">
                 <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
                 <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos remain device-only.</p>
+                <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total. It does not write to or alter your phone's health records.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
             </div>
@@ -3546,6 +3575,7 @@
     <script src="./firebase/firebase-sync.js"></script>
     <script src="./nutrition/meal-safety.js"></script>
     <script src="./nutrition/weekly-planner.js"></script>
+    <script src="./metrics/step-tracking.js"></script>
     <script src="./metrics/photo-storage.js"></script>
     <script src="./feedback/beta-feedback.js"></script>
     <script src="./coaching/plan-builder.js"></script>

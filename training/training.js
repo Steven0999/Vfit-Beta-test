@@ -955,6 +955,7 @@
         if (stepsCountEl) stepsCountEl.innerText = `${steps.toLocaleString()} / ${stepsGoal.toLocaleString()}`;
         const stepsBar = document.getElementById('steps-progress-bar');
         if (stepsBar) stepsBar.style.width = Math.min(100, (steps / stepsGoal) * 100) + '%';
+        if (typeof renderStepTrackingUI === 'function') renderStepTrackingUI();
 
         // Weekly overview stats
         const weekAgo = new Date();
@@ -1248,16 +1249,15 @@
         const date = state.viewDate;
         const current = (state.stepsLogs && state.stepsLogs[date]) || 0;
         document.getElementById('steps-number').value = current > 0 ? current : '';
-        // Reset the pedometer section each open
-        stopPedometer();
-        document.getElementById('pedometer-section').classList.add('hidden');
+        const fallbackActive = typeof isWebStepTrackingActive === 'function' && isWebStepTrackingActive();
+        document.getElementById('pedometer-section').classList.toggle('hidden', !fallbackActive);
         const showBtn = document.getElementById('show-pedometer-btn');
-        if (showBtn) showBtn.style.display = '';
+        if (showBtn) showBtn.style.display = fallbackActive ? 'none' : '';
         document.getElementById('steps-log-modal').style.display = 'flex';
+        if (typeof renderStepTrackingUI === 'function') renderStepTrackingUI();
         refreshIcons();
     }
     function closeStepsLog() {
-        stopPedometer();
         document.getElementById('steps-log-modal').style.display = 'none';
     }
     function confirmSetSteps() {
@@ -1266,91 +1266,12 @@
         const date = state.viewDate;
         if (!state.stepsLogs) state.stepsLogs = {};
         state.stepsLogs[date] = steps;
+        if (typeof noteManualStepEntry === 'function') noteManualStepEntry(date, steps);
         saveState();
         renderDashboard();
         closeStepsLog();
         const goal = (state.goals && state.goals.steps) ? state.goals.steps : 10000;
         showToast(`${steps.toLocaleString()} steps saved` + (steps >= goal ? ' — goal reached! 👟' : ''));
-    }
-
-    // ---- Optional live pedometer (experimental, Android-friendly) ----
-    let pedometerActive = false;
-    let pedometerCount = 0;
-    let pedometerHandler = null;
-    let pedoLastPeak = 0;
-
-    function revealPedometer() {
-        document.getElementById('pedometer-section').classList.remove('hidden');
-        const showBtn = document.getElementById('show-pedometer-btn');
-        if (showBtn) showBtn.style.display = 'none';
-        refreshIcons();
-    }
-
-    function togglePedometer() {
-        if (pedometerActive) { stopPedometer(); return; }
-        // DeviceMotion needs a permission prompt on iOS 13+
-        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-            DeviceMotionEvent.requestPermission().then(res => {
-                if (res === 'granted') startPedometer();
-                else showToast('Motion access denied — type your steps instead', 5000);
-            }).catch(() => showToast('Motion sensor unavailable — type your steps instead', 5000));
-        } else if (typeof DeviceMotionEvent !== 'undefined') {
-            startPedometer();
-        } else {
-            showToast('This phone/browser has no accessible motion sensor — type your steps instead', 6000);
-        }
-    }
-
-    function startPedometer() {
-        pedometerActive = true;
-        pedometerCount = 0;
-        pedoLastPeak = 0;
-        document.getElementById('pedometer-live').classList.remove('hidden');
-        document.getElementById('pedometer-live').innerHTML = '0 <span class="text-sm text-slate-400 font-bold">steps counted</span>';
-        const btn = document.getElementById('pedometer-toggle');
-        btn.textContent = 'Stop';
-        btn.classList.add('bg-rose-100', 'text-rose-700');
-        btn.classList.remove('bg-amber-100', 'text-amber-700');
-
-        // Simple peak-detection step counter from total acceleration magnitude
-        let lastMag = 0, lastStepTime = 0;
-        pedometerHandler = (e) => {
-            const a = e.accelerationIncludingGravity;
-            if (!a) return;
-            const mag = Math.sqrt((a.x||0)**2 + (a.y||0)**2 + (a.z||0)**2);
-            const delta = mag - lastMag;
-            const now = Date.now();
-            // A step tends to produce a sharp upward spike; debounce to ~350ms
-            if (delta > 2.2 && (now - lastStepTime) > 350) {
-                pedometerCount++;
-                lastStepTime = now;
-                const live = document.getElementById('pedometer-live');
-                if (live) live.innerHTML = pedometerCount + ' <span class="text-sm text-slate-400 font-bold">steps counted</span>';
-            }
-            lastMag = mag;
-        };
-        window.addEventListener('devicemotion', pedometerHandler);
-        showToast('Counting steps while the app is open…', 4000);
-    }
-
-    function stopPedometer() {
-        if (!pedometerActive) return;
-        pedometerActive = false;
-        if (pedometerHandler) window.removeEventListener('devicemotion', pedometerHandler);
-        pedometerHandler = null;
-        const btn = document.getElementById('pedometer-toggle');
-        if (btn) {
-            btn.textContent = 'Start';
-            btn.classList.remove('bg-rose-100', 'text-rose-700');
-            btn.classList.add('bg-amber-100', 'text-amber-700');
-        }
-        // Offer to add what was counted to today's total
-        if (pedometerCount > 0) {
-            const numEl = document.getElementById('steps-number');
-            const existing = Math.round(parseFloat(numEl.value) || 0);
-            numEl.value = existing + pedometerCount;
-            showToast(`Added ${pedometerCount} counted steps to the box — press Save Steps`, 5000);
-        }
     }
 
     // ==========================================================================

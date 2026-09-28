@@ -9,6 +9,7 @@
 
         if (!user) {
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
+            if (typeof teardownStepTracking === 'function') teardownStepTracking();
             stopSharedFoodDatabaseSync();
             currentUser = null;
             firebaseUserData = {};
@@ -90,6 +91,7 @@
         safeInvoke('Coach menu', renderCoachMenuEntry);
         safeInvoke('Workout environment', renderWorkoutEnvTabs);
         safeInvoke('Reminder status', updateRemindersStatus);
+        safeInvoke('Phone step tracking', initialiseStepTracking);
 
         if (appScreen) appScreen.style.display = 'block';
         const restoredWorkout = safeInvoke('Workout restore', restoreActiveWorkout) === true;
@@ -193,6 +195,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 bankAndPersist();
+                if (typeof pauseStepTrackingWhenHidden === 'function') pauseStepTrackingWhenHidden();
                 clearInterval(workoutTimer);
                 workoutTimer = null;
                 const scannerModal = document.getElementById('barcode-scanner-modal');
@@ -205,6 +208,7 @@
             }
             else if (document.visibilityState === 'visible') {
                 if (currentUser) rollVfitToCurrentDayIfNeeded();
+                if (typeof syncStepTrackingOnVisible === 'function') syncStepTrackingOnVisible();
                 if (barcodeImagePickerOpen) {
                     // Older WebViews do not always emit the file-input `cancel`
                     // event. Detect a return with no selected file and restore the

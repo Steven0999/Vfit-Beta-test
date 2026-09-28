@@ -4,3 +4,8 @@ functions/.env*
 functions/.secret.local
 .firebase/
 firebase-debug.log
+android/.gradle/
+android/local.properties
+android/**/build/
+*.jks
+*.keystore
