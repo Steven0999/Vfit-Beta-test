@@ -16,6 +16,7 @@
     let nativeStepSyncPending = false;
     let stepPermissionRequestPending = false;
     let nativeStepPermissionAckTimer = null;
+    let nativeStepPermissionResultTimer = null;
     let nativeStepPermissionOpening = false;
     let stepTrackingAccountReady = false;
     let pendingNativeStepPayloads = [];
@@ -200,12 +201,18 @@
             );
         }
         nativeStepState.lastSyncAt = (payload && payload.capturedAt) || nativeStepState.lastSyncAt || new Date().toISOString();
-        nativeStepState.lastError = '';
-        if (!cachedValue) nativeStepSyncPending = false;
+        if (!cachedValue) {
+            nativeStepState.lastError = '';
+            if (stepPermissionRequestPending) nativeStepState.permission = 'granted';
+            nativeStepPermissionOpening = false;
+            clearTimeout(nativeStepPermissionResultTimer);
+            nativeStepPermissionResultTimer = null;
+            nativeStepSyncPending = false;
+        }
         writeStepTrackingPreferences({
-            enabled: true,
+            enabled: cachedValue ? readStepTrackingPreferences().enabled : true,
             mode: 'health-connect',
-            permission: 'granted',
+            permission: cachedValue ? nativeStepState.permission : 'granted',
             lastSyncAt: nativeStepState.lastSyncAt
         });
         if (!ignoreOlderCache) saveState();
@@ -228,6 +235,10 @@
         });
         nativeStepState.lastSyncAt = (payload && payload.capturedAt) || new Date().toISOString();
         nativeStepState.lastError = '';
+        if (stepPermissionRequestPending) nativeStepState.permission = 'granted';
+        nativeStepPermissionOpening = false;
+        clearTimeout(nativeStepPermissionResultTimer);
+        nativeStepPermissionResultTimer = null;
         nativeStepSyncPending = false;
         writeStepTrackingPreferences({
             enabled: true,
@@ -274,6 +285,22 @@
         });
     }
 
+    function waitForNativeStepPermissionResult() {
+        clearTimeout(nativeStepPermissionResultTimer);
+        nativeStepPermissionResultTimer = setTimeout(() => {
+            nativeStepPermissionResultTimer = null;
+            if (!stepPermissionRequestPending || !nativeStepPermissionOpening) return;
+            if (document.visibilityState === 'hidden') {
+                waitForNativeStepPermissionResult();
+                return;
+            }
+            stepPermissionRequestPending = false;
+            nativeStepPermissionOpening = false;
+            nativeStepState.lastError = 'Android received the request, but Health Connect did not finish. Check VFIT Steps access in Health Connect, then retry.';
+            renderStepTrackingUI();
+        }, 12000);
+    }
+
     function handleNativeStepMessage(value) {
         const payload = parseNativeStepMessage(value);
         if (!payload || !String(payload.type || '').startsWith('vfit-health-connect-')) return;
@@ -283,6 +310,7 @@
                 clearTimeout(nativeStepPermissionAckTimer);
                 nativeStepPermissionAckTimer = null;
                 nativeStepPermissionOpening = true;
+                waitForNativeStepPermissionResult();
                 renderStepTrackingUI();
             }
             return;
@@ -292,6 +320,8 @@
             if (!stepPermissionRequestPending || payload.permission === 'granted' || payload.permission === 'denied') {
                 clearTimeout(nativeStepPermissionAckTimer);
                 nativeStepPermissionAckTimer = null;
+                clearTimeout(nativeStepPermissionResultTimer);
+                nativeStepPermissionResultTimer = null;
                 nativeStepPermissionOpening = false;
             }
             nativeStepState = Object.assign({}, nativeStepState, {
@@ -317,9 +347,11 @@
         }
 
         if (payload.type === 'vfit-health-connect-request-opening') {
+            if (!stepPermissionRequestPending) return;
             clearTimeout(nativeStepPermissionAckTimer);
             nativeStepPermissionAckTimer = null;
             nativeStepPermissionOpening = true;
+            waitForNativeStepPermissionResult();
             renderStepTrackingUI();
             return;
         }
@@ -345,6 +377,8 @@
         if (payload.type === 'vfit-health-connect-error') {
             clearTimeout(nativeStepPermissionAckTimer);
             nativeStepPermissionAckTimer = null;
+            clearTimeout(nativeStepPermissionResultTimer);
+            nativeStepPermissionResultTimer = null;
             nativeStepPermissionOpening = false;
             nativeStepSyncPending = false;
             nativeStepState.lastError = String(payload.message || 'Health Connect could not be read').slice(0, 180);
@@ -387,7 +421,7 @@
     function stepTrackingStatusText() {
         const prefs = readStepTrackingPreferences();
         if (hasNativeHealthConnectBridge()) {
-            if (nativeStepPermissionOpening) return 'Health Connect access screen is opening…';
+            if (nativeStepPermissionOpening) return 'Android received the request · checking Steps access…';
             if (nativeStepState.lastError) return nativeStepState.lastError;
             if (nativeStepState.availability === 'checking') return 'Checking VFIT access to Health Connect…';
             if (nativeStepState.availability === 'provider_update_required') return 'Health Connect needs installing or updating';
@@ -417,7 +451,7 @@
             else if (nativeStepState.availability === 'provider_update_required') action = 'Update';
             else if (nativeStepState.permission === 'denied') action = 'Open access';
             else if (nativeStepState.lastError) action = 'Retry';
-            else if (nativeStepPermissionOpening || stepPermissionRequestPending) action = 'Opening…';
+            else if (nativeStepPermissionOpening || stepPermissionRequestPending) action = 'Checking…';
             else action = 'Allow';
         } else if (webStepTrackingActive) {
             action = 'Tracking';
@@ -593,6 +627,9 @@
             } else {
                 if (stepPermissionRequestPending) return;
                 stepPermissionRequestPending = true;
+                nativeStepPermissionOpening = false;
+                clearTimeout(nativeStepPermissionResultTimer);
+                nativeStepPermissionResultTimer = null;
                 nativeStepState.lastError = '';
                 const sent = sendNativeStepCommand('request_permission');
                 if (sent) {
@@ -688,6 +725,8 @@
         stopNativeStepAutoRefresh();
         clearTimeout(nativeStepPermissionAckTimer);
         nativeStepPermissionAckTimer = null;
+        clearTimeout(nativeStepPermissionResultTimer);
+        nativeStepPermissionResultTimer = null;
         nativeStepPermissionOpening = false;
         stopWebStepTracking(false);
         nativeStepSyncPending = false;

@@ -318,9 +318,14 @@ assert.equal(stepTrackingAction.textContent, 'Allow');
 assert.equal(stepTrackingAction.disabled, false);
 assert.equal(stepTrackingAction.classList.contains('opacity-60'), false);
 
+let permissionResultTimeout;
+sandbox.setTimeout = (callback, delay) => {
+  if (delay === 12000) permissionResultTimeout = callback;
+  return 1;
+};
 app.requestStepTrackingPermission();
 assert.equal(nativeStepCommands.at(-1).command, 'request_permission');
-assert.equal(stepTrackingAction.textContent, 'Opening…');
+assert.equal(stepTrackingAction.textContent, 'Checking…');
 assert.equal(stepTrackingAction.disabled, false);
 
 nativeStepListeners.get('message')({ data: JSON.stringify({
@@ -328,8 +333,18 @@ nativeStepListeners.get('message')({ data: JSON.stringify({
 }) });
 assert.equal(app.nativeStepDebug().permissionOpening, true);
 assert.equal(app.nativeStepDebug().permissionPending, true);
+assert.equal(typeof permissionResultTimeout, 'function');
+permissionResultTimeout();
+assert.equal(app.nativeStepDebug().permissionOpening, false);
+assert.equal(app.nativeStepDebug().permissionPending, false);
+assert.equal(stepTrackingAction.textContent, 'Retry');
+app.requestStepTrackingPermission();
+assert.equal(nativeStepCommands.at(-1).command, 'request_permission');
+nativeStepListeners.get('message')({ data: JSON.stringify({
+  type: 'vfit-health-connect-ack', command: 'request_permission'
+}) });
 app.handleNativeStepMessage({ type: 'vfit-health-connect-request-opening' });
-assert.equal(stepTrackingAction.textContent, 'Opening…');
+assert.equal(stepTrackingAction.textContent, 'Checking…');
 assert.equal(typeof nativeStepListeners.get('message'), 'function');
 nativeStepListeners.get('message')({ data: JSON.stringify({
   type: 'vfit-health-connect-status',
@@ -374,6 +389,16 @@ assert.equal(app.getState().stepsLogs[stepTodayKey], 4500);
 assert.equal(app.nativeStepDebug().syncPending, false);
 assert.equal(stepTrackingAction.textContent, 'Sync now');
 assert.equal(stepTrackingAction.disabled, false);
+
+// A fresh step result must complete the request even if a separate status
+// message never arrives from the Android wrapper.
+app.handleNativeStepMessage({ type: 'vfit-health-connect-status', availability: 'available', permission: 'prompt' });
+app.requestStepTrackingPermission();
+nativeStepListeners.get('message')({ data: JSON.stringify({ type: 'vfit-health-connect-ack', command: 'request_permission' }) });
+app.handleNativeStepMessage({ type: 'vfit-health-connect-steps', date: stepTodayKey, steps: 4600, capturedAt: new Date().toISOString(), cached: false });
+assert.equal(app.nativeStepDebug().permissionOpening, false);
+assert.equal(app.nativeStepDebug().permissionPending, false);
+assert.equal(stepTrackingAction.textContent, 'Sync now');
 app.teardownStepTracking();
 assert.equal(app.nativeStepDebug().accountReady, false);
 app.setState(app.defaultState());

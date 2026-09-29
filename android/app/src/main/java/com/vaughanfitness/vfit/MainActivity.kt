@@ -474,9 +474,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendWebPayload(payload: JSONObject) {
         webView.post {
-            if (!pageLoaded || !isTrustedOrigin(Uri.parse(webView.url ?: ""))) return@post
             val message = payload.toString()
             try {
+                // A command's proxy is already bound to the verified main frame.
+                // onPageStarted may leave pageLoaded false across a same-document
+                // navigation, so never discard that frame's permission result.
                 stepReplyProxy?.let {
                     it.postMessage(message)
                     return@post
@@ -486,6 +488,7 @@ class MainActivity : AppCompatActivity() {
                 Log.w("VFIT Health Connect", "Bridge reply failed; using main-frame message", error)
                 stepReplyProxy = null
             }
+            if (!pageLoaded || !isTrustedOrigin(Uri.parse(webView.url ?: ""))) return@post
             // Startup reads can finish before JavaScript posts its first command.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) {
                 WebViewCompat.postWebMessage(webView, WebMessageCompat(message), Uri.parse(APP_ORIGIN))

@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.30` restores replies through Android's origin-restricted WebView message bridge and acknowledges permission taps directly from the receiving frame. Startup status also uses the WebView message channel, so a missed reply can be distinguished from Health Connect permission failures. It retains automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover, the visible-web motion fallback, revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.31` delivers Health Connect results through the verified frame even when WebView page-load state is stale. It clears the pending permission state when step data arrives and offers a retry if Android acknowledges the request but returns no result. It retains automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover, the visible-web motion fallback, revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
 
 ## What is included
 
