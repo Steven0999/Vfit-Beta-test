@@ -316,7 +316,20 @@ assert.equal(stepTrackingAction.classList.contains('opacity-60'), false);
 
 app.requestStepTrackingPermission();
 assert.equal(nativeStepCommands.at(-1).command, 'request_permission');
-assert.equal(stepTrackingAction.textContent, 'Allow');
+assert.equal(stepTrackingAction.textContent, 'Opening…');
+assert.equal(stepTrackingAction.disabled, false);
+
+app.handleNativeStepMessage({ type: 'vfit-health-connect-request-opening' });
+assert.equal(stepTrackingAction.textContent, 'Opening…');
+app.handleNativeStepMessage({
+  type: 'vfit-health-connect-status',
+  availability: 'available',
+  permission: 'denied',
+  backgroundPermission: false
+});
+assert.equal(stepTrackingAction.textContent, 'Open access');
+app.requestStepTrackingPermission();
+assert.equal(nativeStepCommands.at(-1).command, 'open_settings');
 assert.equal(stepTrackingAction.disabled, false);
 
 app.handleNativeStepMessage({

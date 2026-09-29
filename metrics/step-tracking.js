@@ -9,11 +9,14 @@
         availability: 'checking',
         permission: 'prompt',
         backgroundPermission: false,
+        backgroundAvailable: false,
         lastSyncAt: null,
         lastError: ''
     };
     let nativeStepSyncPending = false;
     let stepPermissionRequestPending = false;
+    let nativeStepPermissionAckTimer = null;
+    let nativeStepPermissionOpening = false;
     let stepTrackingAccountReady = false;
     let pendingNativeStepPayloads = [];
     let nativeStepAutoRefreshTimer = null;
@@ -276,11 +279,17 @@
         if (!payload || !String(payload.type || '').startsWith('vfit-health-connect-')) return;
 
         if (payload.type === 'vfit-health-connect-status') {
+            if (!stepPermissionRequestPending || payload.permission === 'granted' || payload.permission === 'denied') {
+                clearTimeout(nativeStepPermissionAckTimer);
+                nativeStepPermissionAckTimer = null;
+                nativeStepPermissionOpening = false;
+            }
             nativeStepState = Object.assign({}, nativeStepState, {
                 availability: payload.availability || 'unavailable',
                 permission: payload.permission || 'prompt',
                 backgroundPermission: payload.backgroundPermission === true,
-                lastError: ''
+                backgroundAvailable: payload.backgroundAvailable === true,
+                lastError: payload.permission === 'granted' ? '' : nativeStepState.lastError
             });
             writeStepTrackingPreferences({
                 mode: 'health-connect',
@@ -292,8 +301,16 @@
             if (nativeStepState.permission === 'granted' && stepTrackingAccountReady && currentUser) requestNativeStepSync();
             else if (stepPermissionRequestPending && nativeStepState.permission === 'denied') {
                 stepPermissionRequestPending = false;
-                showToast('Step access was not granted. Manual entry and the web fallback are still available.', 6000);
+                showToast('Open Health Connect → App permissions → VFIT and allow Steps.', 6000);
             }
+            return;
+        }
+
+        if (payload.type === 'vfit-health-connect-request-opening') {
+            clearTimeout(nativeStepPermissionAckTimer);
+            nativeStepPermissionAckTimer = null;
+            nativeStepPermissionOpening = true;
+            renderStepTrackingUI();
             return;
         }
 
@@ -316,6 +333,9 @@
         }
 
         if (payload.type === 'vfit-health-connect-error') {
+            clearTimeout(nativeStepPermissionAckTimer);
+            nativeStepPermissionAckTimer = null;
+            nativeStepPermissionOpening = false;
             nativeStepSyncPending = false;
             nativeStepState.lastError = String(payload.message || 'Health Connect could not be read').slice(0, 180);
             renderStepTrackingUI();
@@ -357,6 +377,9 @@
     function stepTrackingStatusText() {
         const prefs = readStepTrackingPreferences();
         if (hasNativeHealthConnectBridge()) {
+            if (nativeStepPermissionOpening) return 'Health Connect access screen is opening…';
+            if (nativeStepState.lastError) return nativeStepState.lastError;
+            if (nativeStepState.availability === 'checking') return 'Checking VFIT access to Health Connect…';
             if (nativeStepState.availability === 'provider_update_required') return 'Health Connect needs installing or updating';
             if (nativeStepState.availability === 'unavailable') return 'Health Connect is unavailable · manual entry still works';
             if (nativeStepState.permission === 'granted') {
@@ -364,7 +387,7 @@
                 if (nativeStepState.backgroundPermission) return 'Health Connect · all-day background sync enabled';
                 return 'Health Connect · includes steps taken while VFIT was closed';
             }
-            if (nativeStepState.permission === 'denied') return 'Health Connect step access not granted';
+            if (nativeStepState.permission === 'denied') return 'VFIT has no Steps access. Open Health Connect app permissions.';
             return 'Allow read-only Health Connect step access';
         }
         if (webStepTrackingActive) return 'Web motion counter active · VFIT must remain open';
@@ -382,6 +405,8 @@
         if (hasNativeHealthConnectBridge()) {
             if (nativeStepState.permission === 'granted') action = nativeStepSyncPending ? 'Updating…' : 'Sync now';
             else if (nativeStepState.availability === 'provider_update_required') action = 'Update';
+            else if (nativeStepState.permission === 'denied' || nativeStepState.lastError) action = 'Open access';
+            else if (nativeStepPermissionOpening || stepPermissionRequestPending) action = 'Opening…';
             else action = 'Allow';
         } else if (webStepTrackingActive) {
             action = 'Tracking';
@@ -395,6 +420,13 @@
             button.textContent = action;
             button.disabled = syncIsBlocking;
             button.classList.toggle('opacity-60', syncIsBlocking);
+        });
+
+        document.querySelectorAll('[data-step-background-action]').forEach(button => {
+            button.classList.toggle('hidden', !hasNativeHealthConnectBridge()
+                || nativeStepState.permission !== 'granted'
+                || !nativeStepState.backgroundAvailable
+                || nativeStepState.backgroundPermission);
         });
 
         const goal = currentStepGoal();
@@ -542,11 +574,30 @@
 
     function requestStepTrackingPermission() {
         if (hasNativeHealthConnectBridge()) {
-            stepPermissionRequestPending = true;
             if (nativeStepState.permission === 'granted') {
                 requestNativeStepSync();
+            } else if (nativeStepState.permission === 'denied' || nativeStepState.lastError) {
+                showToast('In Health Connect, open App permissions → VFIT and allow Steps.', 6000);
+                sendNativeStepCommand('open_settings');
             } else {
-                sendNativeStepCommand('request_permission');
+                if (stepPermissionRequestPending) return;
+                stepPermissionRequestPending = true;
+                nativeStepState.lastError = '';
+                const sent = sendNativeStepCommand('request_permission');
+                if (sent) {
+                    clearTimeout(nativeStepPermissionAckTimer);
+                    nativeStepPermissionAckTimer = setTimeout(() => {
+                        nativeStepPermissionAckTimer = null;
+                        if (!stepPermissionRequestPending || nativeStepPermissionOpening) return;
+                        stepPermissionRequestPending = false;
+                        nativeStepState.lastError = 'VFIT could not open access. Open Health Connect → App permissions → VFIT.';
+                        renderStepTrackingUI();
+                    }, 5000);
+                } else {
+                    stepPermissionRequestPending = false;
+                    nativeStepState.lastError = 'VFIT could not reach Android Health Connect. Reopen VFIT and try again.';
+                    showToast(nativeStepState.lastError, 6000);
+                }
             }
             renderStepTrackingUI();
             return;
@@ -556,6 +607,13 @@
             return;
         }
         requestWebStepTrackingPermission(true);
+    }
+
+    function requestBackgroundStepSync() {
+        if (!hasNativeHealthConnectBridge() || nativeStepState.permission !== 'granted') return;
+        if (sendNativeStepCommand('request_background_permission')) {
+            showToast('Allow background access in Health Connect to refresh steps while VFIT is closed.', 5000);
+        }
     }
 
     function revealPedometer() {
@@ -617,6 +675,9 @@
 
     function teardownStepTracking() {
         stopNativeStepAutoRefresh();
+        clearTimeout(nativeStepPermissionAckTimer);
+        nativeStepPermissionAckTimer = null;
+        nativeStepPermissionOpening = false;
         stopWebStepTracking(false);
         nativeStepSyncPending = false;
         stepPermissionRequestPending = false;

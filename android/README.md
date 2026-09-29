@@ -4,11 +4,11 @@ This Android wrapper packages the existing VFIT web application inside a locked-
 
 ## Step behaviour
 
-- VFIT requests read-only `READ_STEPS` access. It never writes to or deletes Health Connect records.
+- VFIT first requests read-only `READ_STEPS` access. It never writes to or deletes Health Connect records. If the access screen no longer opens after repeated denial, the step action opens Health Connect settings where access can be granted manually.
 - Today is aggregated from `00:00` in the phone's current time zone to the current instant, so the displayed total automatically starts a new local day at midnight.
 - Every launch and foreground resume requests a fresh total, including steps recorded while VFIT was closed.
 - When the date has changed, VFIT re-reads every completed day since its last foreground history sync (up to Health Connect's recent 30-day window) before showing the Exercise Logs. Those daily totals and their original goals then remain in VFIT history.
-- Where Health Connect supports it and the user grants it, `READ_HEALTH_DATA_IN_BACKGROUND` lets WorkManager refresh the cached total periodically while VFIT is closed.
+- Where Health Connect supports it, the optional **Enable background refresh** action in Settings requests `READ_HEALTH_DATA_IN_BACKGROUND` for periodic cached updates while VFIT is closed. A fresh total is still read whenever VFIT opens without that optional permission.
 - The PWA keeps its visible-app motion counter and manual entry as fallbacks. It does not claim that a browser can count while closed.
 
 Android 14 and newer can include mobile steps in Health Connect. On older supported phones, the user needs Health Connect plus a phone/watch app that writes step records to it.

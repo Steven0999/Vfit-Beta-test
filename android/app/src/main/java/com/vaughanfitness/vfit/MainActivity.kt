@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -49,21 +50,35 @@ class MainActivity : AppCompatActivity() {
     private var pageLoaded = false
     private var stepSyncInProgress = false
     private var stepSyncQueued = false
+    private var permissionRequestInProgress = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
 
     private val healthPermissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
-    ) { grantedPermissions ->
+    ) { _ ->
+        permissionRequestInProgress = false
         getSharedPreferences(HEALTH_PERMISSION_PREFERENCES, MODE_PRIVATE)
             .edit()
             .putBoolean(HEALTH_PERMISSION_REQUESTED, true)
             .apply()
-        val readGranted = HealthStepReader.readStepsPermission in grantedPermissions
-        val backgroundGranted = HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in grantedPermissions
-        if (readGranted && backgroundGranted) StepSyncScheduler.schedule(this)
-        publishHealthStatus()
-        if (readGranted) syncStepHistory()
+        lifecycleScope.launch {
+            try {
+                // The callback can contain only the permissions requested in this
+                // launch. Recheck the complete grant set after either request.
+                val granted = HealthStepReader.client(this@MainActivity)
+                    .permissionController.getGrantedPermissions()
+                val readGranted = HealthStepReader.readStepsPermission in granted
+                val backgroundGranted = HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted
+                if (readGranted && backgroundGranted) StepSyncScheduler.schedule(this@MainActivity)
+                publishHealthStatus()
+                if (readGranted) syncStepHistory()
+                else publishHealthError("VFIT needs Steps access. Open Health Connect → App permissions → VFIT and allow Steps.")
+            } catch (error: Exception) {
+                Log.e("VFIT Health Connect", "Could not check permission result", error)
+                publishHealthError("VFIT could not check Steps access. Open Health Connect → App permissions → VFIT.")
+            }
+        }
     }
 
     private val cameraPermissionLauncher = registerForActivityResult(
@@ -189,73 +204,156 @@ class MainActivity : AppCompatActivity() {
             BRIDGE_NAME,
             setOf(APP_ORIGIN)
         ) { _, message, sourceOrigin, isMainFrame, _ ->
-            if (!isMainFrame || sourceOrigin.toString().removeSuffix("/") != APP_ORIGIN) return@addWebMessageListener
+            // Compare URL parts: WebView may include the default :443 port in
+            // sourceOrigin even when the allowed origin rule omits it.
+            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
             val payload = try { JSONObject(message.data ?: "{}") } catch (error: Exception) { JSONObject() }
             when (payload.optString("command")) {
                 "status" -> publishHealthStatus()
                 "request_permission" -> requestHealthPermissions()
+                "request_background_permission" -> requestBackgroundPermission()
+                "open_settings" -> openHealthConnectSettings()
                 "sync" -> syncStepHistory()
             }
         }
     }
 
     private fun requestHealthPermissions() {
-        when (HealthStepReader.sdkStatus(this)) {
-            HealthConnectClient.SDK_AVAILABLE -> lifecycleScope.launch {
-                val client = HealthStepReader.client(this@MainActivity)
-                val permissions = mutableSetOf(HealthStepReader.readStepsPermission)
-                if (HealthStepReader.backgroundReadAvailable(client)) {
-                    permissions += HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+        if (permissionRequestInProgress) return
+        permissionRequestInProgress = true
+        try {
+            when (HealthStepReader.sdkStatus(this)) {
+                HealthConnectClient.SDK_AVAILABLE -> lifecycleScope.launch {
+                    try {
+                        val granted = HealthStepReader.client(this@MainActivity)
+                            .permissionController.getGrantedPermissions()
+                        if (HealthStepReader.readStepsPermission in granted) {
+                            permissionRequestInProgress = false
+                            publishHealthStatus()
+                            syncStepHistory()
+                            return@launch
+                        }
+                        // Request the essential Steps grant on its own. The optional
+                        // background grant has a separate action in Settings.
+                        publishPermissionOpening()
+                        healthPermissionLauncher.launch(setOf(HealthStepReader.readStepsPermission))
+                    } catch (error: Exception) {
+                        permissionRequestInProgress = false
+                        Log.e("VFIT Health Connect", "Could not request Steps access", error)
+                        publishHealthError("VFIT could not open the access screen. Open Health Connect → App permissions → VFIT.")
+                    }
                 }
-                getSharedPreferences(HEALTH_PERMISSION_PREFERENCES, MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(HEALTH_PERMISSION_REQUESTED, true)
-                    .apply()
-                healthPermissionLauncher.launch(permissions)
+                HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                    permissionRequestInProgress = false
+                    publishHealthStatus()
+                    openHealthConnectInPlayStore()
+                }
+                else -> {
+                    permissionRequestInProgress = false
+                    publishHealthError("Health Connect is unavailable on this phone.")
+                }
             }
-            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
-                publishHealthStatus()
-                openHealthConnectInPlayStore()
+        } catch (error: Exception) {
+            permissionRequestInProgress = false
+            Log.e("VFIT Health Connect", "Could not check Health Connect", error)
+            publishHealthError("VFIT could not check Health Connect access. Open Health Connect → App permissions → VFIT.")
+        }
+    }
+
+    private fun requestBackgroundPermission() {
+        if (permissionRequestInProgress) return
+        permissionRequestInProgress = true
+        lifecycleScope.launch {
+            try {
+                val client = HealthStepReader.client(this@MainActivity)
+                val granted = client.permissionController.getGrantedPermissions()
+                if (HealthStepReader.readStepsPermission !in granted) {
+                    permissionRequestInProgress = false
+                    publishHealthStatus()
+                    return@launch
+                }
+                if (!HealthStepReader.backgroundReadAvailable(client)) {
+                    permissionRequestInProgress = false
+                    return@launch
+                }
+                if (HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted) {
+                    permissionRequestInProgress = false
+                    StepSyncScheduler.schedule(this@MainActivity)
+                    publishHealthStatus()
+                    return@launch
+                }
+                publishPermissionOpening()
+                healthPermissionLauncher.launch(setOf(HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND))
+            } catch (error: Exception) {
+                permissionRequestInProgress = false
+                Log.e("VFIT Health Connect", "Could not request background access", error)
+                publishHealthError("VFIT could not open background access. Daily steps still sync when you open VFIT.")
             }
-            else -> publishHealthStatus()
+        }
+    }
+
+    private fun publishPermissionOpening() {
+        sendWebPayload(JSONObject().put("type", "vfit-health-connect-request-opening"))
+    }
+
+    private fun publishHealthError(message: String) {
+        sendWebPayload(JSONObject().put("type", "vfit-health-connect-error").put("message", message))
+    }
+
+    private fun openHealthConnectSettings() {
+        try {
+            startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
+        } catch (error: ActivityNotFoundException) {
+            publishHealthError("Open Android Settings → Health Connect → App permissions → VFIT, then allow Steps.")
         }
     }
 
     private fun publishHealthStatus() {
         lifecycleScope.launch {
-            val sdkStatus = HealthStepReader.sdkStatus(this@MainActivity)
-            val payload = JSONObject()
-                .put("type", "vfit-health-connect-status")
-                .put(
-                    "availability",
-                    when (sdkStatus) {
-                        HealthConnectClient.SDK_AVAILABLE -> "available"
-                        HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "provider_update_required"
-                        else -> "unavailable"
-                    }
-                )
-            if (sdkStatus == HealthConnectClient.SDK_AVAILABLE) {
-                val client = HealthStepReader.client(this@MainActivity)
-                val granted = client.permissionController.getGrantedPermissions()
-                val requested = getSharedPreferences(HEALTH_PERMISSION_PREFERENCES, MODE_PRIVATE)
-                    .getBoolean(HEALTH_PERMISSION_REQUESTED, false)
-                payload.put(
-                    "permission",
-                    when {
-                        HealthStepReader.readStepsPermission in granted -> "granted"
-                        requested -> "denied"
-                        else -> "prompt"
-                    }
-                )
-                payload.put(
-                    "backgroundPermission",
-                    HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted
-                )
-            } else {
-                payload.put("permission", "unavailable")
-                payload.put("backgroundPermission", false)
+            try {
+                val sdkStatus = HealthStepReader.sdkStatus(this@MainActivity)
+                val payload = JSONObject()
+                    .put("type", "vfit-health-connect-status")
+                    .put(
+                        "availability",
+                        when (sdkStatus) {
+                            HealthConnectClient.SDK_AVAILABLE -> "available"
+                            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "provider_update_required"
+                            else -> "unavailable"
+                        }
+                    )
+                if (sdkStatus == HealthConnectClient.SDK_AVAILABLE) {
+                    val client = HealthStepReader.client(this@MainActivity)
+                    val granted = client.permissionController.getGrantedPermissions()
+                    val requested = getSharedPreferences(HEALTH_PERMISSION_PREFERENCES, MODE_PRIVATE)
+                        .getBoolean(HEALTH_PERMISSION_REQUESTED, false)
+                    payload.put(
+                        "permission",
+                        when {
+                            HealthStepReader.readStepsPermission in granted -> "granted"
+                            requested -> "denied"
+                            else -> "prompt"
+                        }
+                    )
+                    payload.put(
+                        "backgroundPermission",
+                        HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in granted
+                    )
+                    payload.put("backgroundAvailable", try {
+                        HealthStepReader.backgroundReadAvailable(client)
+                    } catch (error: Exception) {
+                        false // Optional capability must not hide the Steps permission state.
+                    })
+                } else {
+                    payload.put("permission", "unavailable")
+                    payload.put("backgroundPermission", false)
+                    payload.put("backgroundAvailable", false)
+                }
+                sendWebPayload(payload)
+            } catch (error: Exception) {
+                Log.e("VFIT Health Connect", "Could not read Health Connect status", error)
+                publishHealthError("VFIT could not read Health Connect permissions. Open Health Connect → App permissions → VFIT.")
             }
-            sendWebPayload(payload)
         }
     }
 
@@ -363,7 +461,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isTrustedOrigin(origin: Uri): Boolean =
-        origin.scheme == "https" && origin.host == Uri.parse(APP_ORIGIN).host
+        origin.scheme == "https" && origin.host == Uri.parse(APP_ORIGIN).host &&
+            (origin.port == -1 || origin.port == 443)
 
     private fun openHealthConnectInPlayStore() {
         val marketIntent = Intent(

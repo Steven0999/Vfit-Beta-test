@@ -252,7 +252,7 @@
                     <div class="flex items-center justify-between gap-3 rounded-2xl bg-amber-50 px-3 py-2">
                         <div class="min-w-0">
                             <p class="text-[10px] font-black uppercase text-amber-700">Phone step tracking</p>
-                            <p data-step-tracking-status class="truncate text-[10px] font-medium text-slate-500">Checking availability…</p>
+                            <p data-step-tracking-status class="text-[10px] leading-tight font-medium text-slate-500">Checking availability…</p>
                         </div>
                         <button data-step-tracking-action onclick="requestStepTrackingPermission()" class="flex-shrink-0 rounded-xl bg-amber-500 px-3 py-2 text-[10px] font-black text-white">Connect</button>
                     </div>
@@ -1372,6 +1372,7 @@
                                     <button data-step-tracking-action onclick="requestStepTrackingPermission()" class="flex-shrink-0 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Connect</button>
                                 </div>
                                 <p class="mt-2 text-[10px] leading-relaxed text-slate-400">The Android app uses Health Connect for the complete daily total, including steps taken while VFIT is closed. The web fallback counts only while VFIT is open.</p>
+                                <button data-step-background-action onclick="requestBackgroundStepSync()" class="hidden mt-2 rounded-xl border border-amber-300 px-3 py-2 text-xs font-bold text-amber-700">Enable background refresh</button>
                             </div>
                         </div>
                     </div>
