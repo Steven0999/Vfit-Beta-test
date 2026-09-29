@@ -3,7 +3,7 @@ importScripts(
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js'
 );
 
-const CACHE_VERSION = 'vfit-2.1.0-beta.24';
+const CACHE_VERSION = 'vfit-2.1.0-beta.25';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

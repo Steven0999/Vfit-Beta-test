@@ -135,6 +135,8 @@ firestore.FieldValue = {
   arrayUnion(value) { return value; }, arrayRemove(value) { return value; }
 };
 
+const nativeStepCommands = [];
+
 const sandbox = {
   console, document, localStorage,
   navigator: { onLine: true, standalone: false, storage: {}, userAgent: 'VFIT smoke test' },
@@ -152,6 +154,11 @@ const sandbox = {
   Image: class {}, FileReader: class {},
   confirm() { return true; }, alert() {}, prompt() { return null; },
   isSecureContext: true
+};
+sandbox.vfitHealthConnect = {
+  postMessage(payload) {
+    nativeStepCommands.push(JSON.parse(payload));
+  }
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -228,6 +235,14 @@ const expose = `
   finaliseStepDay,
   stepGoalForDate,
   stepHistoryEntries,
+  handleNativeStepMessage,
+  initialiseStepTracking,
+  teardownStepTracking,
+  nativeStepDebug: () => ({
+    syncPending: nativeStepSyncPending,
+    accountReady: stepTrackingAccountReady,
+    bufferedPayloads: pendingNativeStepPayloads.length
+  }),
   saveState,
   loadState,
   getState: () => state,
@@ -269,6 +284,47 @@ const savedStepDay = app.stepHistoryEntries().find(entry => entry.date === '2026
 assert.equal(savedStepDay.steps, 8400);
 assert.equal(savedStepDay.percent, 105);
 assert.equal(savedStepDay.reached, true);
+
+// A Health Connect result that arrives before Firebase/account hydration must
+// wait, then apply to the signed-in state. An older cache must not regress it.
+const stepTodayKey = app.localDateKey();
+app.setState(app.defaultState());
+app.setUser(null);
+app.handleNativeStepMessage({
+  type: 'vfit-health-connect-history',
+  entries: [{ date: stepTodayKey, steps: 4321, capturedAt: '2026-09-29T05:00:00.000Z' }],
+  capturedAt: '2026-09-29T05:00:00.000Z'
+});
+assert.equal(app.getState().stepsLogs[stepTodayKey], undefined);
+assert.equal(app.nativeStepDebug().bufferedPayloads, 1);
+
+app.setUser({ uid: 'step-smoke-user', email: 'steps@example.test' });
+app.initialiseStepTracking();
+assert.equal(app.getState().stepsLogs[stepTodayKey], 4321);
+assert.equal(app.nativeStepDebug().bufferedPayloads, 0);
+assert.ok(nativeStepCommands.some(command => command.command === 'status'));
+assert.ok(nativeStepCommands.some(command => command.command === 'sync'));
+
+app.handleNativeStepMessage({
+  type: 'vfit-health-connect-steps',
+  date: stepTodayKey,
+  steps: 4000,
+  capturedAt: '2026-09-29T04:45:00.000Z',
+  cached: true
+});
+assert.equal(app.getState().stepsLogs[stepTodayKey], 4321);
+assert.equal(app.nativeStepDebug().syncPending, true);
+
+app.handleNativeStepMessage({
+  type: 'vfit-health-connect-history',
+  entries: [{ date: stepTodayKey, steps: 4500, capturedAt: '2026-09-29T05:01:00.000Z' }],
+  capturedAt: '2026-09-29T05:01:00.000Z',
+  cached: false
+});
+assert.equal(app.getState().stepsLogs[stepTodayKey], 4500);
+assert.equal(app.nativeStepDebug().syncPending, false);
+app.teardownStepTracking();
+assert.equal(app.nativeStepDebug().accountReady, false);
 app.setState(app.defaultState());
 
 // Saved serving sizes and custom gram weights must use the same nutrition basis.

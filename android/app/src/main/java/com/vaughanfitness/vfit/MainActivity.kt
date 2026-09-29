@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var pageLoaded = false
     private var stepSyncInProgress = false
+    private var stepSyncQueued = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
 
@@ -260,12 +261,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncStepHistory() {
         publishCachedSteps()
-        if (stepSyncInProgress) return
+        if (stepSyncInProgress) {
+            // A launch/resume read can still be running when the web account
+            // finishes loading and asks for its own refresh. Never discard that
+            // post-login request: run it once more after the active read ends.
+            stepSyncQueued = true
+            return
+        }
         if (HealthStepReader.sdkStatus(this) != HealthConnectClient.SDK_AVAILABLE) {
             publishHealthStatus()
             return
         }
         stepSyncInProgress = true
+        stepSyncQueued = false
         lifecycleScope.launch {
             try {
                 val client = HealthStepReader.client(this@MainActivity)
@@ -292,6 +300,10 @@ class MainActivity : AppCompatActivity() {
                 )
             } finally {
                 stepSyncInProgress = false
+                if (stepSyncQueued && pageLoaded) {
+                    stepSyncQueued = false
+                    syncStepHistory()
+                }
             }
         }
     }
@@ -299,16 +311,17 @@ class MainActivity : AppCompatActivity() {
     private fun publishCachedSteps() {
         val cached = StepCache.read(this) ?: return
         val today = LocalDate.now(ZoneId.systemDefault()).toString()
-        if (cached.date == today) publishStepTotal(cached)
+        if (cached.date == today) publishStepTotal(cached, cachedValue = true)
     }
 
-    private fun publishStepTotal(total: CachedStepTotal) {
+    private fun publishStepTotal(total: CachedStepTotal, cachedValue: Boolean) {
         sendWebPayload(
             JSONObject()
                 .put("type", "vfit-health-connect-steps")
                 .put("date", total.date)
                 .put("steps", total.steps)
                 .put("capturedAt", total.capturedAt)
+                .put("cached", cachedValue)
                 .put("timeZone", ZoneId.systemDefault().id)
         )
     }
@@ -328,6 +341,7 @@ class MainActivity : AppCompatActivity() {
                 .put("type", "vfit-health-connect-history")
                 .put("entries", entries)
                 .put("capturedAt", totals.firstOrNull()?.capturedAt ?: java.time.Instant.now().toString())
+                .put("cached", false)
                 .put("timeZone", ZoneId.systemDefault().id)
         )
     }

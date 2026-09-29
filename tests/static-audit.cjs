@@ -130,6 +130,9 @@ assert.ok(stepTrackingSource.includes("const dateKey = localDateKey()") && stepT
 assert.ok(stepTrackingSource.includes("document.visibilityState === 'hidden'") && stepTrackingSource.includes('pauseStepTrackingWhenHidden'), 'the web fallback must stop claiming sensor access when hidden');
 assert.ok(stepTrackingSource.includes('function stepHistoryEntries(') && stepTrackingSource.includes('function finaliseStepDay('), 'step totals and their goals must remain available after midnight');
 assert.ok(stepTrackingSource.includes("payload.type === 'vfit-health-connect-history'"), 'the web app must accept recovered Health Connect daily history');
+assert.ok(stepTrackingSource.includes('stepTrackingAccountReady') && stepTrackingSource.includes('pendingNativeStepPayloads'), 'native step results must wait for signed-in state hydration');
+assert.ok(stepTrackingSource.includes('payload.cached === true') && stepTrackingSource.includes('ignoreOlderCache'), 'an older native cache must not move today\'s step total backwards');
+assert.ok(stepTrackingSource.includes('NATIVE_STEP_AUTO_REFRESH_MS = 60000') && stepTrackingSource.includes('scheduleNativeStepAutoRefresh'), 'visible Android step totals must refresh every minute');
 
 const androidManifestPath = path.join(root, 'android/app/src/main/AndroidManifest.xml');
 const androidMainPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/MainActivity.kt');
@@ -145,6 +148,8 @@ assert.ok(androidManifest.includes('android.permission.health.READ_HEALTH_DATA_I
 assert.ok(!androidManifest.includes('WRITE_STEPS'), 'VFIT must not request permission to alter Health Connect steps');
 assert.ok(androidMain.includes('setOf(APP_ORIGIN)') && androidMain.includes('isTrustedOrigin(request.origin)'), 'native bridges and camera permissions must be restricted to the packaged VFIT origin');
 assert.ok(androidMain.includes('PermissionController.createRequestPermissionResultContract()'), 'Android app must use the Health Connect permission screen');
+assert.ok(androidMain.includes('stepSyncQueued') && androidMain.includes('if (stepSyncInProgress)'), 'overlapping launch/login Health Connect reads must be queued instead of discarded');
+assert.ok(androidMain.includes('.put("cached", cachedValue)'), 'native cached step payloads must be labelled so the web UI can wait for the fresh read');
 assert.ok(androidSync.includes('date.atStartOfDay(zone).toInstant()'), 'Android daily steps must start at phone-local midnight');
 assert.ok(androidSync.includes('StepsRecord.COUNT_TOTAL'), 'Android app must read Health Connect aggregated step totals');
 assert.ok(androidSync.includes('readRecentDays') && androidMain.includes('vfit-health-connect-history'), 'Android must recover completed days after a closed-app midnight rollover');

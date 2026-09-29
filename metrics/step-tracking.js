@@ -3,6 +3,7 @@
     // ==========================================================================
     const STEP_TRACKING_PREFS_PREFIX = 'vfit_step_tracking_v1:';
     const NATIVE_STEP_ORIGIN = 'https://appassets.androidplatform.net';
+    const NATIVE_STEP_AUTO_REFRESH_MS = 60000;
 
     let nativeStepState = {
         availability: 'checking',
@@ -13,6 +14,9 @@
     };
     let nativeStepSyncPending = false;
     let stepPermissionRequestPending = false;
+    let stepTrackingAccountReady = false;
+    let pendingNativeStepPayloads = [];
+    let nativeStepAutoRefreshTimer = null;
     let webStepTrackingActive = false;
     let webStepHandler = null;
     let webStepSaveTimer = null;
@@ -178,21 +182,34 @@
     function applyPhoneStepTotal(payload) {
         const dateKey = validStepDateKey(payload && payload.date) ? payload.date : localDateKey();
         const steps = Math.max(0, Math.round(Number(payload && payload.steps) || 0));
-        recordDailyStepTotal(dateKey, steps, 'health-connect', payload && payload.capturedAt);
-        nativeStepState.lastSyncAt = (payload && payload.capturedAt) || new Date().toISOString();
+        const cachedValue = payload && payload.cached === true;
+        const existingSteps = Math.max(0, Math.round(Number(state.stepsLogs && state.stepsLogs[dateKey]) || 0));
+        // The native wrapper publishes its last background cache immediately so
+        // the screen is never blank. Do not let an older/lower cached value make
+        // today's visible total move backwards while the fresh read is running.
+        const ignoreOlderCache = cachedValue && dateKey === localDateKey() && existingSteps >= steps;
+        if (!ignoreOlderCache) {
+            recordDailyStepTotal(
+                dateKey,
+                steps,
+                cachedValue ? 'health-connect-cache' : 'health-connect',
+                payload && payload.capturedAt
+            );
+        }
+        nativeStepState.lastSyncAt = (payload && payload.capturedAt) || nativeStepState.lastSyncAt || new Date().toISOString();
         nativeStepState.lastError = '';
-        nativeStepSyncPending = false;
+        if (!cachedValue) nativeStepSyncPending = false;
         writeStepTrackingPreferences({
             enabled: true,
             mode: 'health-connect',
             permission: 'granted',
             lastSyncAt: nativeStepState.lastSyncAt
         });
-        saveState();
+        if (!ignoreOlderCache) saveState();
         updateVisibleStepCount(dateKey);
         renderStepTrackingUI();
         if (typeof renderStepHistoryLogs === 'function') renderStepHistoryLogs();
-        if (stepPermissionRequestPending) {
+        if (stepPermissionRequestPending && !cachedValue) {
             stepPermissionRequestPending = false;
             showToast(`Health Connect linked · ${steps.toLocaleString()} steps today`, 5000);
         }
@@ -234,6 +251,26 @@
         return value && typeof value === 'object' ? value : null;
     }
 
+    function bufferNativeStepPayload(payload) {
+        const type = String(payload && payload.type || '');
+        if (!type) return;
+        // Only the newest pre-login payload of each type is useful. Holding it
+        // until account hydration finishes prevents a fresh result being saved
+        // into the temporary guest state and then replaced by cloud data.
+        pendingNativeStepPayloads = pendingNativeStepPayloads.filter(item => item.type !== type);
+        pendingNativeStepPayloads.push(payload);
+    }
+
+    function flushBufferedNativeStepPayloads() {
+        if (!stepTrackingAccountReady || !currentUser || !pendingNativeStepPayloads.length) return;
+        const buffered = pendingNativeStepPayloads.slice();
+        pendingNativeStepPayloads = [];
+        buffered.forEach(payload => {
+            if (payload.type === 'vfit-health-connect-steps') applyPhoneStepTotal(payload);
+            else if (payload.type === 'vfit-health-connect-history') applyPhoneStepHistory(payload);
+        });
+    }
+
     function handleNativeStepMessage(value) {
         const payload = parseNativeStepMessage(value);
         if (!payload || !String(payload.type || '').startsWith('vfit-health-connect-')) return;
@@ -250,9 +287,9 @@
                 permission: nativeStepState.permission,
                 enabled: nativeStepState.permission === 'granted'
             });
-            nativeStepSyncPending = false;
+            if (nativeStepState.permission !== 'granted') nativeStepSyncPending = false;
             renderStepTrackingUI();
-            if (nativeStepState.permission === 'granted') requestNativeStepSync();
+            if (nativeStepState.permission === 'granted' && stepTrackingAccountReady && currentUser) requestNativeStepSync();
             else if (stepPermissionRequestPending && nativeStepState.permission === 'denied') {
                 stepPermissionRequestPending = false;
                 showToast('Step access was not granted. Manual entry and the web fallback are still available.', 6000);
@@ -261,11 +298,19 @@
         }
 
         if (payload.type === 'vfit-health-connect-steps') {
+            if (!stepTrackingAccountReady || !currentUser) {
+                bufferNativeStepPayload(payload);
+                return;
+            }
             applyPhoneStepTotal(payload);
             return;
         }
 
         if (payload.type === 'vfit-health-connect-history') {
+            if (!stepTrackingAccountReady || !currentUser) {
+                bufferNativeStepPayload(payload);
+                return;
+            }
             applyPhoneStepHistory(payload);
             return;
         }
@@ -286,6 +331,23 @@
         nativeStepSyncPending = sendNativeStepCommand('sync');
         renderStepTrackingUI();
         return nativeStepSyncPending;
+    }
+
+    function stopNativeStepAutoRefresh() {
+        clearTimeout(nativeStepAutoRefreshTimer);
+        nativeStepAutoRefreshTimer = null;
+    }
+
+    function scheduleNativeStepAutoRefresh() {
+        stopNativeStepAutoRefresh();
+        if (!hasNativeHealthConnectBridge() || !stepTrackingAccountReady || !currentUser || document.visibilityState === 'hidden') return;
+        nativeStepAutoRefreshTimer = setTimeout(() => {
+            nativeStepAutoRefreshTimer = null;
+            if (stepTrackingAccountReady && currentUser && document.visibilityState !== 'hidden') {
+                requestNativeStepSync();
+                scheduleNativeStepAutoRefresh();
+            }
+        }, NATIVE_STEP_AUTO_REFRESH_MS);
     }
 
     function stepTrackingStatusText() {
@@ -509,10 +571,14 @@
     }
 
     function initialiseStepTracking() {
+        stepTrackingAccountReady = !!currentUser;
+        flushBufferedNativeStepPayloads();
         renderStepTrackingUI();
         if (hasNativeHealthConnectBridge()) {
             stopWebStepTracking(false);
             sendNativeStepCommand('status');
+            requestNativeStepSync();
+            scheduleNativeStepAutoRefresh();
             return;
         }
         const prefs = readStepTrackingPreferences();
@@ -524,8 +590,11 @@
     function syncStepTrackingOnVisible() {
         if (!currentUser) return;
         if (hasNativeHealthConnectBridge()) {
+            if (!stepTrackingAccountReady) return;
+            flushBufferedNativeStepPayloads();
             sendNativeStepCommand('status');
             requestNativeStepSync();
+            scheduleNativeStepAutoRefresh();
             return;
         }
         const prefs = readStepTrackingPreferences();
@@ -536,13 +605,17 @@
     }
 
     function pauseStepTrackingWhenHidden() {
+        stopNativeStepAutoRefresh();
         if (webStepTrackingActive) stopWebStepTracking(false);
     }
 
     function teardownStepTracking() {
+        stopNativeStepAutoRefresh();
         stopWebStepTracking(false);
         nativeStepSyncPending = false;
         stepPermissionRequestPending = false;
+        stepTrackingAccountReady = false;
+        pendingNativeStepPayloads = [];
     }
 
     window.addEventListener('message', event => {
