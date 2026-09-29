@@ -278,6 +278,16 @@
         const payload = parseNativeStepMessage(value);
         if (!payload || !String(payload.type || '').startsWith('vfit-health-connect-')) return;
 
+        if (payload.type === 'vfit-health-connect-ack') {
+            if (payload.command === 'request_permission' && stepPermissionRequestPending) {
+                clearTimeout(nativeStepPermissionAckTimer);
+                nativeStepPermissionAckTimer = null;
+                nativeStepPermissionOpening = true;
+                renderStepTrackingUI();
+            }
+            return;
+        }
+
         if (payload.type === 'vfit-health-connect-status') {
             if (!stepPermissionRequestPending || payload.permission === 'granted' || payload.permission === 'denied') {
                 clearTimeout(nativeStepPermissionAckTimer);
@@ -591,7 +601,7 @@
                         nativeStepPermissionAckTimer = null;
                         if (!stepPermissionRequestPending || nativeStepPermissionOpening) return;
                         stepPermissionRequestPending = false;
-                        nativeStepState.lastError = 'VFIT did not receive a reply from Android. Close and reopen VFIT, then retry.';
+                        nativeStepState.lastError = 'VFIT could not confirm that Android received the request. Close and reopen VFIT, then retry.';
                         renderStepTrackingUI();
                     }, 5000);
                 } else {

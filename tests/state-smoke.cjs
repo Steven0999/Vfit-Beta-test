@@ -247,7 +247,9 @@ const expose = `
   nativeStepDebug: () => ({
     syncPending: nativeStepSyncPending,
     accountReady: stepTrackingAccountReady,
-    bufferedPayloads: pendingNativeStepPayloads.length
+    bufferedPayloads: pendingNativeStepPayloads.length,
+    permissionOpening: nativeStepPermissionOpening,
+    permissionPending: stepPermissionRequestPending
   }),
   saveState,
   loadState,
@@ -321,6 +323,11 @@ assert.equal(nativeStepCommands.at(-1).command, 'request_permission');
 assert.equal(stepTrackingAction.textContent, 'Opening…');
 assert.equal(stepTrackingAction.disabled, false);
 
+nativeStepListeners.get('message')({ data: JSON.stringify({
+  type: 'vfit-health-connect-ack', command: 'request_permission'
+}) });
+assert.equal(app.nativeStepDebug().permissionOpening, true);
+assert.equal(app.nativeStepDebug().permissionPending, true);
 app.handleNativeStepMessage({ type: 'vfit-health-connect-request-opening' });
 assert.equal(stepTrackingAction.textContent, 'Opening…');
 assert.equal(typeof nativeStepListeners.get('message'), 'function');

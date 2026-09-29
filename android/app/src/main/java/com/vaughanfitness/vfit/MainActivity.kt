@@ -26,6 +26,8 @@ import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -47,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var assetLoader: WebViewAssetLoader
     private var pageLoaded = false
+    private var stepReplyProxy: JavaScriptReplyProxy? = null
     private var stepSyncInProgress = false
     private var stepSyncQueued = false
     private var permissionRequestInProgress = false
@@ -154,6 +157,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
+                stepReplyProxy = null
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -206,12 +210,25 @@ class MainActivity : AppCompatActivity() {
             webView,
             BRIDGE_NAME,
             setOf(APP_ORIGIN)
-        ) { _, message, sourceOrigin, isMainFrame, _ ->
+        ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
             // Compare URL parts: WebView may include the default :443 port in
             // sourceOrigin even when the allowed origin rule omits it.
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
+            stepReplyProxy = replyProxy
             val payload = try { JSONObject(message.data ?: "{}") } catch (error: Exception) { JSONObject() }
-            when (payload.optString("command")) {
+            val command = payload.optString("command")
+            // Reply through the exact frame that sent the command. This also
+            // acknowledges a tap when page navigation has made pageLoaded stale.
+            try {
+                replyProxy.postMessage(
+                    JSONObject().put("type", "vfit-health-connect-ack")
+                        .put("command", command).toString()
+                )
+            } catch (error: Exception) {
+                Log.w("VFIT Health Connect", "Could not acknowledge bridge command", error)
+                stepReplyProxy = null
+            }
+            when (command) {
                 "status" -> publishHealthStatus()
                 "request_permission" -> requestHealthPermissions()
                 "request_background_permission" -> requestBackgroundPermission()
@@ -456,12 +473,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendWebPayload(payload: JSONObject) {
-        if (!pageLoaded) return
         webView.post {
-            // Only the packaged main frame receives Health Connect data. This
-            // route works for startup/resume reads even before the page has
-            // sent a bridge command or acquired a JavaScriptReplyProxy.
-            if (!isTrustedOrigin(Uri.parse(webView.url ?: ""))) return@post
+            if (!pageLoaded || !isTrustedOrigin(Uri.parse(webView.url ?: ""))) return@post
+            val message = payload.toString()
+            try {
+                stepReplyProxy?.let {
+                    it.postMessage(message)
+                    return@post
+                }
+            } catch (error: Exception) {
+                // A navigation can invalidate a frame's proxy before onPageStarted.
+                Log.w("VFIT Health Connect", "Bridge reply failed; using main-frame message", error)
+                stepReplyProxy = null
+            }
+            // Startup reads can finish before JavaScript posts its first command.
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) {
+                WebViewCompat.postWebMessage(webView, WebMessageCompat(message), Uri.parse(APP_ORIGIN))
+                return@post
+            }
             val quoted = JSONObject.quote(payload.toString())
             webView.evaluateJavascript(
                 "if (typeof window.__vfitReceiveNativeStepPayload === 'function') " +
