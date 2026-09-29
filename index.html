@@ -718,6 +718,10 @@
                         </div>
                     </div>
                     <div id="nutrition-readiness-card" class="hidden"></div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="glass-card rounded-2xl p-4"><p class="text-xs font-bold text-slate-400">Carbohydrates today</p><p class="text-xl font-black"><span id="total-carbs">0.0</span>g</p></div>
+                        <div class="glass-card rounded-2xl p-4"><p class="text-xs font-bold text-slate-400">Fat today</p><p class="text-xl font-black"><span id="total-fat">0.0</span>g</p></div>
+                    </div>
 
                     <div id="meal-sections"></div>
 
@@ -766,10 +770,11 @@
                         <p id="food-search-hint" class="text-xs text-slate-400 mt-2 px-1">Try "chicken breast" or "Hobnobs"</p>
                     </div>
 
-                    <!-- Food data source — UK only -->
-                    <div class="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl">
-                        <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
-                        <span class="text-[11px] font-bold text-slate-500">Showing 🇬🇧 UK food data from Open Food Facts</span>
+                    <!-- VFIT owns the default search records. Live UK products remain optional. -->
+                    <div class="bg-slate-50 px-3 py-3 rounded-xl space-y-2">
+                        <label for="food-search-source" class="text-sm font-bold text-slate-500">Search in</label>
+                        <select id="food-search-source" onchange="setFoodSearchSource()" class="w-full p-3 rounded-xl bg-white font-bold text-sm"><option value="database">VFIT Food Database</option><option value="online">Online UK products</option></select>
+                        <p id="food-catalog-status" class="text-xs text-slate-400" role="status">UK foods included with VFIT · plus saved foods</p>
                     </div>
 
                     <!-- Quick filter chips -->
@@ -1663,6 +1668,12 @@
             </button>
             <div id="food-database-count" class="text-[10px] font-black uppercase text-slate-400 mb-2 flex-shrink-0"></div>
             <div id="food-database-list" class="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1"></div>
+            <div class="flex items-center justify-between gap-2 mt-3 flex-shrink-0">
+                <button id="food-database-prev" onclick="changeFoodDatabasePage(-1)" class="p-3 rounded-xl bg-slate-100 font-bold text-sm disabled:opacity-40">Previous</button>
+                <span id="food-database-page-label" class="text-xs text-slate-400">Page 1</span>
+                <button id="food-database-next" onclick="changeFoodDatabasePage(1)" class="p-3 rounded-xl bg-slate-100 font-bold text-sm disabled:opacity-40">Next</button>
+            </div>
+            <details class="mt-3 text-xs text-slate-400 flex-shrink-0"><summary class="cursor-pointer font-bold">Food data and export</summary><p class="mt-2">2,853 UK foods with all four macros, stored with VFIT. Source: Public Health England, CoFID 2021, under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener" class="underline">Open Government Licence v3.0</a>. Typical values; raw and cooked foods are separate. Trace values count as 0. 34 source records without complete macros are excluded.</p><button onclick="downloadVfitFoodDatabase()" class="mt-2 p-3 rounded-xl bg-orange-600 text-white font-bold">Export food database</button></details>
         </div>
     </div>
 
@@ -2190,6 +2201,7 @@
                     <span id="toggle-text">Show More ▼</span>
                 </button>
                 <p id="popup-nutrition" class="text-xs text-center text-slate-500 mt-3"></p>
+                <p id="popup-food-source" class="hidden text-xs text-center text-slate-400 mt-2"></p>
                 <div id="popup-serving-detail" class="hidden mt-3 bg-white/70 border border-indigo-100 rounded-xl p-3 text-center text-xs font-bold text-slate-600"></div>
 
                 <!-- Edit the scanned/looked-up values if they're wrong -->
@@ -2268,26 +2280,27 @@
                     </div>
                 </div>
                 <div id="popup-custom-weight-field" class="hidden">
-                    <label for="popup-custom-weight" class="text-xs font-bold text-slate-500 block mb-2">Custom weight</label>
+                    <label id="popup-custom-weight-label" for="popup-custom-weight" class="text-xs font-bold text-slate-500 block mb-2">Custom weight</label>
                     <div class="relative">
                         <input id="popup-custom-weight" type="number" inputmode="decimal" value="100" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-16 text-4xl font-black text-center outline-none focus:border-emerald-500 transition-colors">
-                        <span class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
+                        <span id="popup-custom-weight-unit" class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
                     </div>
-                    <p class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
+                    <p id="popup-custom-weight-help" class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
                 </div>
             </div>
             <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6 shadow-xl">
                 <p class="text-[10px] font-black uppercase text-slate-400 text-center mb-3">Total You're Adding</p>
-                <div class="flex justify-around items-center">
+                <div class="grid grid-cols-2 gap-4 items-center">
                     <div class="text-center">
                         <p id="popup-total-kcal" class="font-black text-3xl mb-1">0</p>
                         <p class="text-xs text-slate-400 uppercase">Calories</p>
                     </div>
-                    <div class="w-px h-12 bg-slate-700"></div>
                     <div class="text-center">
                         <p id="popup-total-protein" class="font-black text-3xl text-emerald-400 mb-1">0g</p>
                         <p class="text-xs text-slate-400 uppercase">Protein</p>
                     </div>
+                    <div class="text-center"><p id="popup-total-carbs" class="font-black text-xl mb-1">0g</p><p class="text-xs text-slate-400 uppercase">Carbs</p></div>
+                    <div class="text-center"><p id="popup-total-fat" class="font-black text-xl mb-1">0g</p><p class="text-xs text-slate-400 uppercase">Fat</p></div>
                 </div>
             </div>
             <button id="popup-add-btn" onclick="addFoodItem()" class="w-full bg-gradient-to-r from-emerald-600 to-green-600 text-white py-5 rounded-[24px] font-black text-lg shadow-lg hover:shadow-xl transition-all active:scale-95 mb-3">
@@ -2444,10 +2457,10 @@
             </div>
 
             <div id="edit-meal-custom-weight-field" class="hidden mb-4">
-                <label for="edit-meal-custom-weight" class="text-xs font-bold text-slate-500 mb-2 block">Custom weight</label>
+                <label id="edit-meal-custom-weight-label" for="edit-meal-custom-weight" class="text-xs font-bold text-slate-500 mb-2 block">Custom weight</label>
                 <div class="relative">
                     <input id="edit-meal-custom-weight" type="number" value="100" min="0.1" step="0.1" class="w-full bg-slate-50 border-4 border-slate-200 rounded-[24px] py-5 pr-16 text-4xl font-black text-center outline-none focus:border-emerald-500" oninput="updateEditPreview()">
-                    <span class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
+                    <span id="edit-meal-custom-weight-unit" class="absolute right-6 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">g</span>
                 </div>
                 <p class="text-xs text-slate-400 mt-2">Enter the exact weight for this diary copy.</p>
             </div>
@@ -2512,7 +2525,7 @@
             </div>
             <div class="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl mb-3">
                 <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
-                <span class="text-[11px] font-bold text-slate-500">Search or scan 🇬🇧 UK food data from Open Food Facts</span>
+                <div class="w-full space-y-2"><label for="meal-food-search-source" class="text-sm font-bold text-slate-500">Ingredient source</label><select id="meal-food-search-source" onchange="setMealFoodSearchSource()" class="w-full p-3 bg-white rounded-xl text-sm font-bold"><option value="database">VFIT Food Database</option><option value="online">Online UK products</option></select><p id="meal-food-catalog-status" class="text-xs text-slate-400" role="status">UK foods included with VFIT · plus saved foods</p></div>
             </div>
             <div id="meal-barcode-inline-slot" class="hidden bg-slate-50 border-2 border-indigo-200 rounded-[28px] mb-4 overflow-hidden"></div>
             <div id="meal-barcode-result" class="hidden bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 mb-4" role="status" aria-live="polite">
@@ -3691,6 +3704,7 @@
     <!-- VFIT application modules: ordered classic scripts share one app state. -->
     <script src="./core/state.js"></script>
     <script src="./training/training.js"></script>
+    <script src="./nutrition/food-catalog.js"></script>
     <script src="./nutrition/meal-planner.js"></script>
     <script src="./nutrition/scanner.js"></script>
     <script src="./ui/navigation.js"></script>

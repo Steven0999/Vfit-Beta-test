@@ -10,6 +10,7 @@ const styles = fs.readFileSync(path.join(root, 'Styles.css'), 'utf8');
 const moduleFiles = [
   'core/state.js',
   'training/training.js',
+  'nutrition/food-catalog.js',
   'nutrition/meal-planner.js',
   'nutrition/scanner.js',
   'ui/navigation.js',

@@ -1,9 +1,13 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.33` separates treadmill entry from normal outdoor running in Cardio. Outdoor runs record a GPS route, distance and speed, then appear in Training Logs with a route outline and GPX export. The Android wrapper tracks a user-started run with a location foreground service while the screen is locked; browser tracking requires VFIT to stay open. It retains daily and weekly step charts, Health Connect result delivery, automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover and existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.34` adds an owned UK food catalogue with 2,853 complete records, offline food and ingredient search, carbohydrate/fat diary totals and database export. It retains treadmill/outdoor running choices, GPS routes and speed logs, daily/weekly Step Progress charts, Health Connect integration and all existing beta features.
+
 
 ## What is included
 
+- VFIT-owned UK food records with calories, protein, carbohydrates and fat, used by default for food and ingredient searches without a live food API.
+- A searchable, paginated Food Database combining the included catalogue, owner-managed shared foods and the signed-in account’s saved barcode foods. Optional Online UK products search and the original camera scanner remain available.
+- Daily carbohydrate and fat totals, accurate gram/millilitre portions, raw/cooked food distinctions, and a downloadable database export.
 - Daily readiness scoring from sleep, energy, fatigue, soreness and stress, with safe train/adjust/recover guidance.
 - Optional daily “How are you feeling?” questions controlled from Profile → Preferences & Goals → Tracking Options.
 - A consistent VFIT wordmark and home-screen icon with a full-size V and one-third-size, baseline-aligned FIT in the existing orange branding.
@@ -45,6 +49,8 @@ The conversational coach uses structured logic on the device and the member’s 
 - `core/state.js` — configuration, sign-in helpers, shared state, settings and common utilities.
 - `training/training.js` — exercise catalogue, workouts, volume and progression.
 - `nutrition/meal-planner.js` — nutrition diary, shift meals and recipe details.
+- `nutrition/food-catalog.js` — owned food storage, local search, catalogue import and export.
+- `nutrition/data/uk-foods-2021.json` — the bundled UK food database and source/license metadata.
 - `nutrition/scanner.js` — camera/photo/manual barcode scanning and Open Food Facts lookup.
 - `nutrition/meal-safety.js` — structured built-in recipe safety records.
 - `nutrition/weekly-planner.js` — seven-day rota planner and embedded shopping scanner.
@@ -78,6 +84,7 @@ Then open `http://localhost:8080`. Camera, push and App Check should be tested o
 node tests/static-audit.cjs
 node tests/state-smoke.cjs
 node tests/photo-storage.cjs
+node tests/food-catalog.cjs
 find core training nutrition ui metrics coaching firebase feedback -name '*.js' -print0 | xargs -0 -n1 node --check
 node --check sw.js
 node --check functions/index.js
@@ -85,6 +92,16 @@ git diff --check
 ```
 
 The checks cover module order/compilation, unique IDs/functions, inline handlers, pinned browser libraries, PWA assets, network-only private APIs, account-isolated local data, cloud/device reconciliation, all 124 safety records, seven-day planning, embedded scanner placement, durable photo references, coaching calculations and security-rule guardrails.
+
+## Owned food database
+
+The catalogue ships inside the Android APK and the PWA shell. Its 2,853 records come from the official Public Health England CoFID 2021 workbook, with all four required macros present. The importer excludes 34 records without a calorie or carbohydrate value rather than inventing those values. CoFID’s duplicate code `13-669` is kept as two separate food identities; mineral rows are joined by code and name. Source trace values are treated as zero, optional missing nutrients are labelled “Not reported”, and alcoholic drinks retain their per-100ml basis. The source URL, workbook SHA-256, licence and excluded record list are in the bundled JSON.
+
+On first use, VFIT imports this public catalogue into its own IndexedDB database in one transaction, including a version and count marker. Reopening uses those stored records. If device storage is unavailable, the bundled file still supports food search; the UI only claims “saved for offline search” after a successful database write. PWA offline use needs the initial app installation/cache; the APK includes the file. This dataset is a starting catalogue, not every food or every supermarket product worldwide. Current package labels should be used for reformulated branded foods.
+
+Owner-managed foods continue to use the existing protected Firestore `foodDatabase` collection. Personal meal logs and previously scanned foods keep their existing account isolation and cloud-sync preferences; catalogue records are never copied into health snapshots. Existing foods are checked before an external barcode lookup. A first lookup of a new barcode or the optional online search still needs the internet. Included catalogue records remain immutable; approved editors can create their own copy of a gram-based food using its popup.
+
+Rebuild the shipped dataset with `python3 tools/import-food-catalog.py /path/to/cofid-2021.xlsx` (requires `openpyxl`). Download the workbook from [GOV.UK](https://www.gov.uk/government/publications/composition-of-foods-integrated-dataset-cofid). Contains public sector information licensed under the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
 
 ## Firebase setup
 

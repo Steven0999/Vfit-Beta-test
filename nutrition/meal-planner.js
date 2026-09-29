@@ -44,11 +44,17 @@
         const todayMeals = state.dailyMeals.filter(m => m.date === state.viewDate);
         const totalCals = todayMeals.reduce((sum, m) => sum + (m.calories || 0), 0);
         const totalProtein = todayMeals.reduce((sum, m) => sum + (m.protein || 0), 0);
+        const totalCarbs = todayMeals.reduce((sum, m) => sum + (m.carbs || 0), 0);
+        const totalFat = todayMeals.reduce((sum, m) => sum + (m.fat || 0), 0);
 
         const totalKcalEl = document.getElementById('total-kcal');
         if (totalKcalEl) totalKcalEl.innerText = Math.round(totalCals);
         const totalProteinEl = document.getElementById('total-protein');
         if (totalProteinEl) totalProteinEl.innerText = totalProtein.toFixed(1);
+        const totalCarbsEl = document.getElementById('total-carbs');
+        const totalFatEl = document.getElementById('total-fat');
+        if (totalCarbsEl) totalCarbsEl.textContent = totalCarbs.toFixed(1);
+        if (totalFatEl) totalFatEl.textContent = totalFat.toFixed(1);
         const target = typeof getDailyCalorieTarget === 'function' ? getDailyCalorieTarget(state.viewDate) : ((state.goals && state.goals.calories) || 2500);
         const targetEl = document.getElementById('nutrition-calorie-target');
         if (targetEl) targetEl.textContent = `Target ${Math.round(target)} kcal`;
@@ -76,7 +82,7 @@
                             const safeId = escapeJsString(m.id);
                             const image = safeImageUrl(m.image);
                             const amountLabel = m.amount
-                                ? ` • ${escapeHtml(m.amount)}${m.amountType === 'grams' ? 'g' : ' serving' + (Number(m.amount) > 1 ? 's' : '')}`
+                                ? ` • ${escapeHtml(m.amount)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving' + (Number(m.amount) > 1 ? 's' : '')}`
                                 : '';
                             return `
                             <div class="flex justify-between items-center py-2 border-b last:border-0">
@@ -85,6 +91,7 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="font-bold text-sm truncate flex items-center gap-1">${escapeHtml(m.name)} <i data-lucide="pencil" class="w-3 h-3 text-slate-300"></i></div>
                                         <div class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} cal • ${(Number(m.protein) || 0).toFixed(1)}g protein${amountLabel}</div>
+                                        <div class="text-xs text-slate-400">${(Number(m.carbs) || 0).toFixed(1)}g carbs • ${(Number(m.fat) || 0).toFixed(1)}g fat</div>
                                     </div>
                                 </div>
                                 <button onclick="removeMeal('${safeId}')" class="w-8 h-8 bg-red-50 text-red-500 rounded-lg text-sm flex-shrink-0 ml-2" aria-label="Remove ${escapeHtml(m.name || 'meal')}">×</button>
@@ -155,6 +162,7 @@
             id: databaseFood ? databaseFood.id : Date.now(),
             databaseId: m.databaseFoodId || '',
             databaseItem: Boolean(databaseFood),
+            basisUnit: foodAmountUnit(m),
             name: m.name,
             brand: databaseFood ? (databaseFood.brand || databaseFood.store || '') : '',
             image: m.image || null,
@@ -303,7 +311,7 @@
     }
 
     // ==========================================================================
-    // FOOD SEARCH (USDA + OpenFoodFacts with relevance ranking + filters)
+    // FOOD SEARCH (owned UK catalogue by default; optional live UK products)
     // ==========================================================================
 
     let searchTimer = null;
@@ -408,6 +416,11 @@
         const resultsList = document.getElementById('search-results-list');
         const hint = document.getElementById('food-search-hint');
 
+        if (['myfoods', 'high-protein', 'low-cal'].includes(currentFoodFilter)) {
+            searchVfitFoodDatabase('', 1);
+            return;
+        }
+
         if (currentFoodFilter === 'recent') {
             const recents = getRecentFoods(20);
             if (recents.length === 0) {
@@ -473,6 +486,12 @@
             const key = m.name.toLowerCase().trim();
             if (seen.has(key)) continue;
             seen.add(key);
+            const catalogFood = m.catalogId ? vfitFoodCatalogFoods.find(food => food.catalogId === m.catalogId) : null;
+            if (catalogFood) {
+                out.push({ ...catalogFood, _source: 'recent' });
+                if (out.length >= limit) break;
+                continue;
+            }
             const linkedDatabaseFood = (state.customFoods || []).find(food =>
                 m.databaseFoodId && String(food.id) === String(m.databaseFoodId)
             );
@@ -554,8 +573,11 @@
                 perLabel = item.serving ? `per ${item.serving}` : 'per serving';
                 sourceData = safeJsonForInline({
                     id: item.id || '',
-                    databaseId: item.databaseId || (item._source === 'custom' ? item.id || '' : ''),
+                    databaseId: item.catalogFood || item.savedBarcodeFood ? '' : (item.databaseId || (item._source === 'custom' ? item.id || '' : '')),
                     databaseItem: Boolean(item.databaseItem || item._source === 'custom'),
+                    catalogFood: Boolean(item.catalogFood), savedBarcodeFood: Boolean(item.savedBarcodeFood),
+                    catalogId: item.catalogId || '', basisUnit: foodAmountUnit(item),
+                    missingNutrients: item.missingNutrients || [], traceNutrients: item.traceNutrients || [],
                     name, brand, image, calories: cals, protein, carbs, fat,
                     fiber: item.fiber || 0, sugar: item.sugar || 0, satFat: item.satFat || 0,
                     sodium: item.sodium || 0, sodiumMg: item.sodiumMg || 0, cholesterol: item.cholesterol || 0,
@@ -625,6 +647,8 @@
     }
 
     function sourceTag(source) {
+        if (source === 'catalog') return '<span class="text-[10px] font-black px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">VFIT · UK</span>';
+        if (source === 'savedbarcode') return '<span class="text-[10px] font-black px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">SAVED BARCODE</span>';
         if (source === 'recent') return '<span class="text-[9px] font-black px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded">RECENT</span>';
         if (source === 'custom') return '<span class="text-[9px] font-black px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded">DATABASE</span>';
         if (source === 'usda') return '<span class="text-[9px] font-black px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">USDA</span>';
@@ -698,6 +722,44 @@
     }
 
     async function searchFood(query, page) {
+        const source = document.getElementById('food-search-source');
+        if (source && source.value === 'online') return searchOnlineFood(query, page);
+        return searchVfitFoodDatabase(query, page);
+    }
+
+    async function searchVfitFoodDatabase(query, page) {
+        const requestToken = ++foodSearchToken;
+        const results = document.getElementById('search-results-list');
+        const loading = document.getElementById('search-loading');
+        const hint = document.getElementById('food-search-hint');
+        if (!results) return;
+        if (loading) loading.classList.remove('hidden');
+        hideSearchPagination();
+        searchState.query = query;
+        searchState.page = page || 1;
+        searchState.source = 'database';
+        if (query) { currentFoodFilter = null; renderFilterChips(); }
+        try {
+            await ensureVfitFoodCatalog();
+            if (requestToken !== foodSearchToken) return;
+            const store = document.getElementById('store-select');
+            const response = queryVfitDatabaseFoods(query, { page: page || 1, filter: currentFoodFilter, store: store && store.value, includeRecent: Boolean(query) });
+            searchState.hasMore = response.hasMore;
+            if (response.foods.length) renderResultCards(response.foods);
+            else results.innerHTML = emptyState('search-x', 'No match in VFIT', 'Try a different name, scan a barcode or select Online UK products.');
+            if (hint) hint.textContent = `${response.total.toLocaleString('en-GB')} matching VFIT foods · ${currentFoodFilter === 'high-protein' ? '15g+ protein per 100g/ml' : currentFoodFilter === 'low-cal' ? 'up to 200 kcal per 100g/ml' : 'tap a food to choose your amount'}`;
+            renderPagination();
+        } catch (error) {
+            if (requestToken !== foodSearchToken) return;
+            results.innerHTML = emptyState('database', 'Food database unavailable', error.message);
+            if (hint) hint.textContent = 'Reopen VFIT or tap Search again to retry';
+        } finally {
+            if (requestToken === foodSearchToken && loading) loading.classList.add('hidden');
+            refreshIcons();
+        }
+    }
+
+    async function searchOnlineFood(query, page) {
         page = page || 1;
         const requestToken = ++foodSearchToken;
         const resultsList = document.getElementById('search-results-list');
@@ -707,6 +769,7 @@
 
         searchState.query = query;
         searchState.page = page;
+        searchState.source = 'online';
 
         // Clear the active filter chip when user starts typing — they're searching, not filtering
         currentFoodFilter = null;
@@ -856,7 +919,8 @@
 
     function searchNextPage() {
         if (!searchState.hasMore) return;
-        searchFood(searchState.query, searchState.page + 1);
+        if (searchState.source === 'database') searchVfitFoodDatabase(searchState.query, searchState.page + 1);
+        else searchFood(searchState.query, searchState.page + 1);
         // Scroll results back to top of the search view
         const el = document.getElementById('search-results-list');
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -864,7 +928,8 @@
 
     function searchPrevPage() {
         if (searchState.page <= 1) return;
-        searchFood(searchState.query, searchState.page - 1);
+        if (searchState.source === 'database') searchVfitFoodDatabase(searchState.query, searchState.page - 1);
+        else searchFood(searchState.query, searchState.page - 1);
         const el = document.getElementById('search-results-list');
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -1119,8 +1184,11 @@
         if (!food || typeof food !== 'object') return;
         currentFoodItem = {
             id: food.id || Date.now(),
-            databaseId: food.databaseId || food.id || '',
-            databaseItem: Boolean(food.databaseItem || food.databaseId || food.id),
+            databaseId: food.catalogFood || food.savedBarcodeFood ? '' : (food.databaseId || food.id || ''),
+            databaseItem: !food.catalogFood && !food.savedBarcodeFood && Boolean(food.databaseItem || food.databaseId || food.id),
+            catalogId: food.catalogId || '', catalogFood: Boolean(food.catalogFood),
+            basisUnit: foodAmountUnit(food),
+            missingNutrients: food.missingNutrients || [], traceNutrients: food.traceNutrients || [],
             name: String(food.name || 'Food').slice(0, 160),
             brand: String(food.brand || food.store || '').slice(0, 160),
             image: safeImageUrl(food.image || ''),
@@ -1213,6 +1281,25 @@
         const sodiumMg = nutritionNumber(currentFoodItem.sodiumMg || (Number(currentFoodItem.sodium) || 0) * 1000);
         document.getElementById('popup-nutrition-sodium').textContent = Math.round(sodiumMg) + 'mg';
         document.getElementById('popup-nutrition-cholesterol').textContent = nutritionNumber(currentFoodItem.cholesterol) + 'mg';
+        const optionalFields = { fiber: 'fiber', sugar: 'sugar', satFat: 'satfat', sodiumMg: 'sodium', cholesterol: 'cholesterol' };
+        (currentFoodItem.missingNutrients || []).forEach(key => {
+            const element = document.getElementById('popup-nutrition-' + optionalFields[key]);
+            if (element) element.textContent = 'Not reported';
+        });
+        const sourceNote = document.getElementById('popup-food-source');
+        if (sourceNote) {
+            sourceNote.textContent = currentFoodItem.catalogFood ? 'UK CoFID 2021 · Typical values. Trace amounts count as 0. Check the current label for a branded product.' : '';
+            sourceNote.classList.toggle('hidden', !currentFoodItem.catalogFood);
+        }
+        const unit = foodAmountUnit(currentFoodItem);
+        const weightUnit = document.getElementById('popup-custom-weight-unit');
+        const weightLabel = document.getElementById('popup-custom-weight-label');
+        const weightHelp = document.getElementById('popup-custom-weight-help');
+        const weightButton = document.getElementById('amount-type-grams');
+        if (weightUnit) weightUnit.textContent = unit;
+        if (weightLabel) weightLabel.textContent = unit === 'ml' ? 'Custom volume' : 'Custom weight';
+        if (weightButton) weightButton.textContent = unit === 'ml' ? 'Custom Volume' : 'Custom Weight';
+        if (weightHelp) weightHelp.textContent = `Enter the exact ${unit === 'ml' ? 'volume drunk' : 'weight eaten'}. Nutrition uses the saved per-100${unit} values.`;
         currentFoodItem.serving = foodServingLabel(currentFoodItem.serving || (currentFoodItem.isCustom ? '1 serving' : '100g'));
         document.getElementById('popup-nutrition').textContent = currentFoodItem.isCustom
             ? `Per serving · ${currentFoodItem.serving}`
@@ -1221,14 +1308,14 @@
         if (servingDetail) {
             const grams = nutritionNumber(currentFoodItem.servingGrams);
             servingDetail.textContent = grams > 0
-                ? `1 serving is ${currentFoodItem.serving} (${Math.round(grams * 10) / 10}g) · custom weights use the saved per-100g values`
+                ? `1 serving is ${currentFoodItem.serving} (${Math.round(grams * 10) / 10}${unit}) · custom amounts use the saved per-100${unit} values`
                 : 'No serving weight saved · add or edit this food to set an exact gram conversion';
             servingDetail.classList.remove('hidden');
         }
         const databaseLabel = document.getElementById('popup-database-action-label');
         if (databaseLabel) databaseLabel.textContent = currentFoodItem.databaseItem ? 'Edit Database Food' : 'Save to Food Database';
         const databaseAction = document.getElementById('popup-database-action');
-        if (databaseAction) databaseAction.classList.toggle('hidden', typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase());
+        if (databaseAction) databaseAction.classList.toggle('hidden', typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase() || foodAmountUnit(currentFoodItem) === 'ml');
         updatePopupServingWeightEditorAccess(true);
 
         document.getElementById('popup-amount').value = 1;
@@ -1335,7 +1422,7 @@
             if (weightInput && (!(Number(weightInput.value) > 0))) weightInput.value = servingGrams;
         }
         const servingHelp = document.getElementById('popup-serving-amount-help');
-        if (servingHelp) servingHelp.textContent = `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}g).`;
+        if (servingHelp) servingHelp.textContent = `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}${foodAmountUnit(currentFoodItem)}).`;
         updatePopupTotals();
     }
 
@@ -1426,6 +1513,10 @@
         const mult = currentAmountType === 'grams' ? amount / 100 : amount;
         document.getElementById('popup-total-kcal').textContent = Math.round((nutrients.calories || 0) * mult);
         document.getElementById('popup-total-protein').textContent = ((nutrients.protein || 0) * mult).toFixed(1) + 'g';
+        const carbs = document.getElementById('popup-total-carbs');
+        const fat = document.getElementById('popup-total-fat');
+        if (carbs) carbs.textContent = ((nutrients.carbs || 0) * mult).toFixed(1) + 'g';
+        if (fat) fat.textContent = ((nutrients.fat || 0) * mult).toFixed(1) + 'g';
     }
 
     function toggleDetailedNutrition() {
@@ -1458,7 +1549,7 @@
             sodiumMg: sourceNutrients.sodiumMg || 0,
             cholesterol: sourceNutrients.cholesterol || 0,
             isCustom: currentAmountType !== 'grams',
-            serving: currentAmountType === 'grams' ? '100g' : foodServingLabel(currentFoodItem.serving)
+            serving: currentAmountType === 'grams' ? '100' + foodAmountUnit(currentFoodItem) : foodServingLabel(currentFoodItem.serving)
         };
 
         const computed = {
@@ -1480,6 +1571,8 @@
             amountType: currentAmountType,
             base,
             databaseFoodId: currentFoodItem.databaseId || '',
+            catalogId: currentFoodItem.catalogId || '',
+            basisUnit: foodAmountUnit(currentFoodItem),
             servingGrams: currentFoodItem.servingGrams || 0,
             servingLabel: foodServingLabel(currentFoodItem.serving)
         };
@@ -1780,6 +1873,7 @@
 
     function saveCurrentFoodToDatabase() {
         if (!currentFoodItem) return;
+        if (foodAmountUnit(currentFoodItem) === 'ml') { showToast('This drink is already included in the VFIT database'); return; }
         if (typeof canManageFoodDatabase !== 'function' || !canManageFoodDatabase()) {
             showToast('The food database is read only for this account');
             return;
@@ -1824,7 +1918,7 @@
         const modal = document.getElementById('food-database-modal');
         const search = document.getElementById('food-database-search');
         if (!modal) return;
-        if (!preserveSearch && search) search.value = '';
+        if (!preserveSearch && search) { search.value = ''; vfitDatabasePage = 1; }
         modal.style.display = 'flex';
         if (typeof updateFoodDatabasePermissionUI === 'function') updateFoodDatabasePermissionUI();
         renderFoodDatabase();
@@ -1837,59 +1931,66 @@
         if (modal) modal.style.display = 'none';
     }
 
-    function renderFoodDatabase() {
+    async function renderFoodDatabase(page) {
+        const token = ++vfitDatabaseRenderToken;
         const list = document.getElementById('food-database-list');
         const count = document.getElementById('food-database-count');
         if (!list) return;
         const query = String((document.getElementById('food-database-search') || {}).value || '').trim();
-        const allFoods = Array.isArray(state.customFoods) ? state.customFoods : [];
-        const foods = allFoods.filter(food => foodDatabaseMatchesQuery(food, query));
-        const canManage = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
-        if (count) count.textContent = query
-            ? `${foods.length} of ${allFoods.length} saved foods`
-            : `${allFoods.length} saved food${allFoods.length === 1 ? '' : 's'}`;
-
-        if (foods.length === 0) {
-            list.innerHTML = query
-                ? emptyState('search-x', 'No database match', 'Try the food name, brand, category or full barcode.')
-                : `<div class="text-center py-12">
-                    <div class="w-16 h-16 mx-auto mb-4 bg-orange-50 rounded-2xl flex items-center justify-center"><i data-lucide="database" class="w-8 h-8 text-orange-500"></i></div>
-                    <p class="font-black text-slate-700 mb-1">${canManage ? 'Build the VFIT food database' : 'No database foods yet'}</p>
-                    <p class="text-xs text-slate-400 mb-4">${canManage ? 'Save exact serving weights and full nutrition, then everyone can find them instantly.' : 'The owner or an approved editor can add the first food.'}</p>
-                    ${canManage ? '<button onclick="openManualFoodEntry()" class="bg-orange-600 text-white px-5 py-3 rounded-xl font-black text-sm">Add Your First Food</button>' : ''}
-                </div>`;
-            refreshIcons();
-            return;
-        }
-
-        list.innerHTML = foods.map(food => {
-            const safeId = escapeJsString(food.id);
-            const image = safeImageUrl(food.image || '');
-            const servingGrams = nutritionNumber(food.servingGrams);
-            const brand = food.brand || food.store || 'Personal food';
-            const serving = foodServingLabel(food.serving);
-            return `<div class="border border-slate-200 rounded-2xl p-3 bg-white hover:border-orange-300">
-                <div class="flex items-center gap-3">
-                    <div class="w-14 h-14 rounded-xl bg-slate-50 overflow-hidden flex items-center justify-center flex-shrink-0">
-                        ${image ? `<img src="${escapeHtml(image)}" alt="" loading="lazy" class="w-full h-full object-contain" onerror="this.style.display='none'">` : '<i data-lucide="utensils" class="w-5 h-5 text-slate-300"></i>'}
+        vfitDatabasePage = query !== vfitDatabaseQuery ? 1 : (Number(page) || vfitDatabasePage);
+        vfitDatabaseQuery = query;
+        if (count) count.textContent = 'Loading VFIT foods…';
+        try {
+            await ensureVfitFoodCatalog();
+            if (token !== vfitDatabaseRenderToken) return;
+            const allFoods = getVfitDatabaseFoods();
+            let response = queryVfitDatabaseFoods(query, { page: vfitDatabasePage, pageSize: 40 });
+            const lastPage = Math.max(1, Math.ceil(response.total / 40));
+            if (vfitDatabasePage > lastPage) {
+                vfitDatabasePage = lastPage;
+                response = queryVfitDatabaseFoods(query, { page: lastPage, pageSize: 40 });
+            }
+            if (count) count.textContent = `${response.total.toLocaleString('en-GB')} ${query ? 'matching' : 'saved'} foods · ${allFoods.length.toLocaleString('en-GB')} in VFIT`;
+            const label = document.getElementById('food-database-page-label');
+            const previous = document.getElementById('food-database-prev');
+            const next = document.getElementById('food-database-next');
+            if (label) label.textContent = `Page ${vfitDatabasePage} of ${lastPage}`;
+            if (previous) previous.disabled = vfitDatabasePage <= 1;
+            if (next) next.disabled = !response.hasMore;
+            const canManage = typeof canManageFoodDatabase === 'function' && canManageFoodDatabase();
+            list.innerHTML = response.foods.length ? response.foods.map(food => {
+                const safeId = escapeJsString(food.id);
+                const brand = food.brand || food.store || 'VFIT food';
+                const serving = foodServingLabel(food.serving);
+                return `<div class="border border-slate-200 rounded-2xl p-3 bg-white hover:border-orange-300">
+                    <div class="flex items-start gap-2">
+                        <button onclick="openDatabaseFood('${safeId}')" class="flex-1 min-w-0 text-left">
+                            <div class="font-black text-sm text-slate-800">${escapeHtml(food.name || 'Food')}</div>
+                            <div class="text-xs text-slate-400 mt-1">${escapeHtml(brand)} · per ${escapeHtml(serving)}</div>
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-xs">
+                                <span class="font-black text-orange-600">${Math.round(nutritionNumber(food.calories))} kcal</span>
+                                <span>${nutritionNumber(food.protein).toFixed(1)}g protein</span>
+                                <span>${nutritionNumber(food.carbs).toFixed(1)}g carbs</span>
+                                <span>${nutritionNumber(food.fat).toFixed(1)}g fat</span>
+                            </div>
+                        </button>
+                        ${canManage && food._source === 'custom' ? `<div class="flex gap-1 flex-shrink-0">
+                            <button onclick="editDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center" aria-label="Edit ${escapeHtml(food.name || 'food')}"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                            <button onclick="deleteDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-red-50 text-red-500 flex items-center justify-center" aria-label="Delete ${escapeHtml(food.name || 'food')}"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </div>` : ''}
                     </div>
-                    <button onclick="openDatabaseFood('${safeId}')" class="flex-1 min-w-0 text-left">
-                        <div class="font-black text-sm text-slate-800 truncate">${escapeHtml(food.name || 'Food')}</div>
-                        <div class="text-[11px] text-slate-400 truncate">${escapeHtml(brand)} · ${escapeHtml(serving)}${servingGrams > 0 ? ` · ${Math.round(servingGrams * 10) / 10}g` : ''}</div>
-                        <div class="text-xs mt-1"><span class="font-black text-indigo-600">${Math.round(nutritionNumber(food.calories))} kcal</span><span class="font-bold text-emerald-600 ml-3">${nutritionNumber(food.protein).toFixed(1)}g protein</span></div>
-                    </button>
-                    ${canManage ? `<div class="flex gap-1 flex-shrink-0">
-                        <button onclick="editDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center" aria-label="Edit ${escapeHtml(food.name || 'food')}"><i data-lucide="pencil" class="w-4 h-4"></i></button>
-                        <button onclick="deleteDatabaseFood('${safeId}')" class="w-9 h-9 rounded-xl bg-red-50 text-red-500 flex items-center justify-center" aria-label="Delete ${escapeHtml(food.name || 'food')}"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                    </div>` : ''}
-                </div>
-            </div>`;
-        }).join('');
+                </div>`;
+            }).join('') : emptyState('search-x', 'No database match', 'Try another food name, brand or barcode.');
+        } catch (error) {
+            if (token !== vfitDatabaseRenderToken) return;
+            list.innerHTML = emptyState('database', 'Could not load the food database', error.message);
+            if (count) count.textContent = 'Reopen Food Database to retry';
+        }
         refreshIcons();
     }
 
     function openDatabaseFood(foodId) {
-        const food = (state.customFoods || []).find(item => String(item.id) === String(foodId));
+        const food = findVfitDatabaseFood(foodId);
         if (!food) return;
         closeFoodDatabase();
         openFoodPopupCustom(food);

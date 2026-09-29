@@ -168,6 +168,7 @@
         // Wire up the food search input listener. Without this, typing in the
         // food search box does nothing because no input handler is attached.
         setupFoodSearch();
+        ensureVfitFoodCatalog().catch(error => console.warn('Food catalogue will retry when searched:', error));
 
         // Make sure the Gym/Home tabs match the saved environment on load.
         renderWorkoutEnvTabs();

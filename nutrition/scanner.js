@@ -926,6 +926,15 @@
 
     function findCachedBarcodeFood(code) {
         const wanted = barcodeFoodIdentityKeys(code);
+        const shared = (state.customFoods || []).find(item => {
+            const itemKeys = barcodeFoodIdentityKeys(item.barcode);
+            return [...itemKeys].some(key => wanted.has(key));
+        });
+        if (shared) {
+            const nutrients = foodNutrientsPer100g({ ...shared, isCustom: true });
+            return { ...shared, ...nutrients, sodium: nutrients.sodiumMg / 1000,
+                scannedBarcode: normaliseBarcode(code), isCustom: false };
+        }
         return (Array.isArray(state.barcodeFoods) ? state.barcodeFoods : []).find(item => {
             const itemKeys = barcodeFoodIdentityKeys(item.barcode, item.scannedBarcode);
             return [...itemKeys].some(key => wanted.has(key));
@@ -1287,6 +1296,11 @@
         const cached = findCachedBarcodeFood(code);
         let restartAfterFailure = false;
         try {
+            if (cached) {
+                await useResolvedBarcodeFood(cached);
+                showToast('Loaded from VFIT’s saved foods');
+                return;
+            }
             const result = await fetchOpenFoodFactsProduct(code);
             if (!result.found || !result.product) {
                 barcodeScanLocked = false;
@@ -1493,6 +1507,44 @@
     }
 
     async function searchIngredient(query) {
+        const source = document.getElementById('meal-food-search-source');
+        if (!source || source.value !== 'online') return searchVfitIngredient(query);
+        return searchOnlineIngredient(query);
+    }
+
+    async function searchVfitIngredient(query) {
+        const cleanedQuery = String(query || '').trim();
+        if (cleanedQuery.length < 2) return;
+        const token = ++mealIngredientSearchToken;
+        const results = document.getElementById('meal-search-results');
+        const loading = document.getElementById('meal-search-loading');
+        const hint = document.getElementById('meal-search-hint');
+        if (loading) loading.classList.remove('hidden');
+        if (hint) hint.textContent = 'Searching VFIT foods…';
+        try {
+            await ensureVfitFoodCatalog();
+            if (token !== mealIngredientSearchToken) return;
+            const response = queryVfitDatabaseFoods(cleanedQuery, { pageSize: 30 });
+            if (results) results.innerHTML = response.foods.length ? response.foods.map(food => {
+                const nutrients = foodNutrientsPer100g(food);
+                const ingredient = { name: food.name, cal: nutrients.calories, protein: nutrients.protein,
+                    carbs: nutrients.carbs, fat: nutrients.fat, fiber: nutrients.fiber, sugar: nutrients.sugar,
+                    brand: food.brand || '', image: food.image || '', barcode: food.barcode || '', basisUnit: foodAmountUnit(food) };
+                return cardHtml({ name: food.name, brand: food.brand || 'VFIT Database', image: food.image || '',
+                    cals: nutrients.calories, protein: nutrients.protein, carbs: nutrients.carbs, fat: nutrients.fat,
+                    perLabel: 'per 100' + foodAmountUnit(food), sourceBadge: sourceTag(food._source), onClick: `addIngredient(${safeJsonForInline(ingredient)})` });
+            }).join('') : emptyState('search-x', 'No ingredients found in VFIT', 'Try another name, scan a barcode or select Online UK products.');
+            if (hint) hint.textContent = `${response.total.toLocaleString('en-GB')} matches · tap a food and enter your amount`;
+        } catch (error) {
+            if (token !== mealIngredientSearchToken) return;
+            if (results) results.innerHTML = emptyState('database', 'Could not load VFIT foods', error.message);
+        } finally {
+            if (token === mealIngredientSearchToken && loading) loading.classList.add('hidden');
+            refreshIcons();
+        }
+    }
+
+    async function searchOnlineIngredient(query) {
         const cleanedQuery = String(query || '').trim();
         if (cleanedQuery.length < 2) return;
         const requestToken = ++mealIngredientSearchToken;
@@ -1560,7 +1612,7 @@
     function addIngredient(item) {
         if (!item || typeof item !== 'object') return;
         const itemName = String(item.name || 'Ingredient').slice(0, 160);
-        const grams = parseFloat(prompt(`How many grams of "${itemName}"?`, '100'));
+        const grams = parseFloat(prompt(`How many ${foodAmountUnit(item) === 'ml' ? 'ml' : 'grams'} of "${itemName}"?`, '100'));
         if (!grams || grams <= 0) return;
         const safeGrams = Math.min(grams, 100000);
         const per100 = {
@@ -1576,6 +1628,7 @@
             brand: String(item.brand || '').slice(0, 160),
             image: safeImageUrl(item.image || ''),
             barcode: normaliseBarcode(item.barcode),
+            basisUnit: foodAmountUnit(item),
             grams: safeGrams,
             // Keep per-100g base so the weight can be edited later
             calPer100: per100.calories,
@@ -1642,8 +1695,8 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <div class="flex items-center bg-white rounded-lg border border-slate-200 px-2">
-                        <input type="number" min="0" max="100000" step="1" value="${Number(ing.grams) || 0}" oninput="updateIngredientGrams(${i}, this.value)" class="w-16 py-1.5 text-sm font-bold outline-none text-center" aria-label="Grams of ${escapeHtml(ing.name || 'ingredient')}">
-                        <span class="text-xs text-slate-400 font-bold">g</span>
+                        <input type="number" min="0" max="100000" step="1" value="${Number(ing.grams) || 0}" oninput="updateIngredientGrams(${i}, this.value)" class="w-16 py-1.5 text-sm font-bold outline-none text-center" aria-label="${foodAmountUnit(ing)} of ${escapeHtml(ing.name || 'ingredient')}">
+                        <span class="text-xs text-slate-400 font-bold">${foodAmountUnit(ing)}</span>
                     </div>
                     <p id="ing-info-${i}" class="text-[11px] text-slate-500">${Math.round(Number(ing.calories) || 0)} kcal • ${(Number(ing.protein) || 0).toFixed(1)}g protein</p>
                 </div>
@@ -1663,11 +1716,12 @@
         totalsBox.classList.remove('hidden');
         const totalCal = mealIngredients.reduce((s, i) => s + (i.calories || 0), 0);
         const totalProt = mealIngredients.reduce((s, i) => s + (i.protein || 0), 0);
-        const totalWeight = mealIngredients.reduce((s, i) => s + (i.grams || 0), 0);
+        const totalWeight = mealIngredients.filter(i => foodAmountUnit(i) === 'g').reduce((s, i) => s + (i.grams || 0), 0);
+        const totalVolume = mealIngredients.filter(i => foodAmountUnit(i) === 'ml').reduce((s, i) => s + (i.grams || 0), 0);
         document.getElementById('meal-total-cals').textContent = Math.round(totalCal);
         document.getElementById('meal-total-protein').textContent = totalProt.toFixed(1);
         document.getElementById('meal-total-weight').textContent =
-            `${mealIngredients.length} ingredient${mealIngredients.length === 1 ? '' : 's'} • ${Math.round(totalWeight)}g total`;
+            `${mealIngredients.length} ingredient${mealIngredients.length === 1 ? '' : 's'} • ${[totalWeight ? Math.round(totalWeight) + 'g' : '', totalVolume ? Math.round(totalVolume) + 'ml' : ''].filter(Boolean).join(' + ') || '0g'} total`;
     }
 
     function removeIngredient(idx) {
@@ -2124,11 +2178,16 @@
 
         document.getElementById('edit-meal-name').textContent = currentEditingMeal.name;
         document.getElementById('edit-meal-image').src = currentEditingMeal.image || 'https://via.placeholder.com/100';
-        document.getElementById('edit-meal-original').textContent = `Was: ${Math.round(originalAmount * 100) / 100} ${originalType === 'grams' ? 'g' : (originalAmount === 1 ? 'serving' : 'servings')} (${Math.round(currentEditingMeal.calories)} kcal)`;
+        document.getElementById('edit-meal-original').textContent = `Was: ${Math.round(originalAmount * 100) / 100} ${originalType === 'grams' ? foodAmountUnit(currentEditingMeal) : (originalAmount === 1 ? 'serving' : 'servings')} (${Math.round(currentEditingMeal.calories)} kcal)`;
+        const unit = document.getElementById('edit-meal-custom-weight-unit');
+        const weightLabel = document.getElementById('edit-meal-custom-weight-label');
+        if (unit) unit.textContent = foodAmountUnit(currentEditingMeal);
+        if (weightLabel) weightLabel.textContent = foodAmountUnit(currentEditingMeal) === 'ml' ? 'Custom volume' : 'Custom weight';
+        document.getElementById('edit-amount-type-grams').textContent = foodAmountUnit(currentEditingMeal) === 'ml' ? 'Custom Volume' : 'Custom Weight';
         document.getElementById('edit-meal-amount').value = Math.round(servingAmount * 100) / 100;
         document.getElementById('edit-meal-custom-weight').value = Math.round(customWeight * 10) / 10;
         const servingHelp = document.getElementById('edit-meal-serving-help');
-        if (servingHelp) servingHelp.textContent = `1 serving = ${servingLabel} (${Math.round(bases.servingGrams * 10) / 10}g).`;
+        if (servingHelp) servingHelp.textContent = `1 serving = ${servingLabel} (${Math.round(bases.servingGrams * 10) / 10}${foodAmountUnit(currentEditingMeal)}).`;
         editAmountType = originalType;
         setEditAmountType(originalType);
         document.getElementById('edit-meal-type').value = currentEditingMeal.mealType || currentEditingMeal.type || 'lunch';
@@ -2201,7 +2260,7 @@
             sodiumMg: calculated.source.sodiumMg,
             cholesterol: calculated.source.cholesterol,
             isCustom: editAmountType !== 'grams',
-            serving: editAmountType === 'grams' ? '100g' : servingLabel
+            serving: editAmountType === 'grams' ? '100' + foodAmountUnit(currentEditingMeal) : servingLabel
         };
         const mealType = document.getElementById('edit-meal-type').value;
 

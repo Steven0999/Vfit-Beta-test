@@ -8,6 +8,7 @@ const html = fs.readFileSync(new URL('../index.html', `file://${__filename}`), '
 const moduleFiles = [
   'core/state.js',
   'training/training.js',
+  'nutrition/food-catalog.js',
   'nutrition/meal-planner.js',
   'nutrition/scanner.js',
   'ui/navigation.js',

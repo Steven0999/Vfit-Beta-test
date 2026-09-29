@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.33';
+    const VFIT_APP_VERSION = '2.1.0-beta.34';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -287,7 +287,7 @@
                 : 'text-[10px] font-black uppercase text-slate-400';
         }
         const popupAction = document.getElementById('popup-database-action');
-        if (popupAction) popupAction.classList.toggle('hidden', !canManage);
+        if (popupAction) popupAction.classList.toggle('hidden', !canManage || (typeof currentFoodItem !== 'undefined' && currentFoodItem && currentFoodItem.basisUnit === 'ml'));
         if (typeof updatePopupServingWeightEditorAccess === 'function') {
             updatePopupServingWeightEditorAccess();
         }
