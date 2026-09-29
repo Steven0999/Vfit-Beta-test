@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
@@ -42,6 +43,7 @@ class MainActivity : AppCompatActivity() {
         private const val APP_ORIGIN = "https://appassets.androidplatform.net"
         private const val APP_URL = "$APP_ORIGIN/assets/index.html"
         private const val BRIDGE_NAME = "vfitHealthConnect"
+        private const val RUN_BRIDGE_NAME = "vfitRunTracker"
         private const val HEALTH_PERMISSION_PREFERENCES = "vfit_health_permissions"
         private const val HEALTH_PERMISSION_REQUESTED = "step_permission_requested"
     }
@@ -50,6 +52,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var assetLoader: WebViewAssetLoader
     private var pageLoaded = false
     private var stepReplyProxy: JavaScriptReplyProxy? = null
+    private var runReplyProxy: JavaScriptReplyProxy? = null
+    private var pendingRunOwnerUid: String? = null
     private var stepSyncInProgress = false
     private var stepSyncQueued = false
     private var permissionRequestInProgress = false
@@ -95,6 +99,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val runLocationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val ownerUid = pendingRunOwnerUid
+        pendingRunOwnerUid = null
+        if (ownerUid == null) return@registerForActivityResult
+        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) startRunTracking(ownerUid)
+        else publishRunStatus(ownerUid, "Allow precise location to record an outdoor route.")
+    }
+
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -115,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(webView)
         configureWebView()
         installHealthConnectBridge()
+        installRunTrackingBridge()
 
         onBackPressedDispatcher.addCallback(this) {
             if (webView.canGoBack()) webView.goBack() else finish()
@@ -158,6 +173,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
                 stepReplyProxy = null
+                runReplyProxy = null
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -235,6 +251,68 @@ class MainActivity : AppCompatActivity() {
                 "open_settings" -> openHealthConnectSettings()
                 "sync" -> syncStepHistory()
             }
+        }
+    }
+
+    private fun installRunTrackingBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        WebViewCompat.addWebMessageListener(webView, RUN_BRIDGE_NAME, setOf(APP_ORIGIN)) {
+            _, message, sourceOrigin, isMainFrame, replyProxy ->
+            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
+            runReplyProxy = replyProxy
+            val payload = try { JSONObject(message.data ?: "{}") } catch (error: Exception) { JSONObject() }
+            val ownerUid = payload.optString("ownerUid")
+            if (ownerUid.isBlank()) return@addWebMessageListener
+            when (payload.optString("command")) {
+                "status" -> publishRunStatus(ownerUid)
+                "start" -> {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+                        startRunTracking(ownerUid)
+                    else {
+                        pendingRunOwnerUid = ownerUid
+                        val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+                        runLocationPermissionLauncher.launch(permissions.toTypedArray())
+                    }
+                }
+                "finish" -> {
+                    if (RunTrackerService.finish(this, ownerUid) == null) publishRunStatus(ownerUid, "No run is available to finish.")
+                    else publishRunStatus(ownerUid)
+                }
+                "ack_saved" -> {
+                    RunTrackerService.acknowledgeSaved(this, ownerUid, payload.optString("id"))
+                    publishRunStatus(ownerUid)
+                }
+                "discard" -> {
+                    RunTrackerService.discard(this, ownerUid)
+                    publishRunStatus(ownerUid)
+                }
+            }
+        }
+    }
+
+    private fun startRunTracking(ownerUid: String) {
+        val existing = RunTrackerService.read(this)
+        if (existing != null) {
+            publishRunStatus(ownerUid, if (existing.optString("ownerUid") == ownerUid)
+                "Finish or discard your previous run first." else "Another account has a run saved on this phone.")
+            return
+        }
+        if (RunTrackerService.begin(this, ownerUid)) publishRunStatus(ownerUid)
+        else publishRunStatus(ownerUid, "Could not start GPS tracking. Check Location is enabled.")
+    }
+
+    private fun publishRunStatus(ownerUid: String, error: String? = null) {
+        val session = RunTrackerService.read(this)?.takeIf { it.optString("ownerUid") == ownerUid }
+        val message = JSONObject().put("type", "vfit-run-status")
+            .put("session", session ?: JSONObject.NULL)
+            .put("serviceRunning", RunTrackerService.running)
+        if (error != null) message.put("error", error)
+        try {
+            runReplyProxy?.postMessage(message.toString())
+        } catch (exception: Exception) {
+            Log.w("VFIT Run", "Could not send run status to WebView", exception)
+            runReplyProxy = null
         }
     }
 

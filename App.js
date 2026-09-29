@@ -10,6 +10,8 @@
         if (!user) {
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
             if (typeof teardownStepTracking === 'function') teardownStepTracking();
+            if (typeof finishRunOnSignOut === 'function') finishRunOnSignOut();
+            if (typeof teardownRunTracking === 'function') teardownRunTracking();
             stopSharedFoodDatabaseSync();
             currentUser = null;
             firebaseUserData = {};
@@ -92,6 +94,7 @@
         safeInvoke('Workout environment', renderWorkoutEnvTabs);
         safeInvoke('Reminder status', updateRemindersStatus);
         safeInvoke('Phone step tracking', initialiseStepTracking);
+        safeInvoke('Outdoor run tracking', initialiseRunTracking);
 
         if (appScreen) appScreen.style.display = 'block';
         const restoredWorkout = safeInvoke('Workout restore', restoreActiveWorkout) === true;

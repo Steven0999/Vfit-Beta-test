@@ -248,11 +248,13 @@
             workouts.push({
                 id: c.id,
                 date: c.date,
-                focus: cardioType.charAt(0).toUpperCase() + cardioType.slice(1),
+                focus: cardioType === 'outdoor-running' ? 'Normal Running' :
+                    cardioType.charAt(0).toUpperCase() + cardioType.slice(1),
                 duration: c.duration + ' min',
                 category: cardioType === 'walking' ? 'walking' : 'cardio',
                 exercises: [],
                 distance: c.distance,
+                avgSpeedKmh: c.avgSpeedKmh,
                 cardioCalories: c.calories,
                 notes: c.notes
             });
@@ -291,7 +293,7 @@
             if (exerciseCount > 0) {
                 summary = `${exerciseCount} exercise${exerciseCount > 1 ? 's' : ''}`;
             } else if (w.distance) {
-                summary = `${w.distance} km`;
+                summary = `${w.distance} km${w.avgSpeedKmh ? ` · ${w.avgSpeedKmh} km/h` : ''}`;
             }
 
             return `
@@ -319,6 +321,10 @@
         const workout = (state.workoutHistory || []).find(w => String(w.id) === String(workoutId))
             || (state.cardioLogs || []).find(c => String(c.id) === String(workoutId));
         if (!workout) return;
+        if ((state.cardioLogs || []).includes(workout)) {
+            openCardioDetails(workout);
+            return;
+        }
 
         let details = `Date: ${new Date(workout.date).toLocaleDateString()}\n`;
         details += `Focus: ${workout.focus || workout.type}\n`;

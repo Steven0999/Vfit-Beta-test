@@ -445,10 +445,13 @@
 
     function openCardioModal() {
         document.getElementById('cardio-modal').style.display = 'flex';
+        document.getElementById('cardio-type').value = outdoorRunSession ? 'outdoor-running' : 'treadmill';
         document.getElementById('cardio-duration').value = '';
         document.getElementById('cardio-distance').value = '';
         document.getElementById('cardio-calories').value = '';
         document.getElementById('cardio-notes').value = '';
+        updateCardioMode();
+        if (nativeRunTrackingAvailable()) sendRunCommand('status');
     }
 
     function closeCardioModal() {
@@ -457,24 +460,38 @@
 
     function saveCardio() {
         const type = document.getElementById('cardio-type').value;
-        const duration = parseInt(document.getElementById('cardio-duration').value);
-        const distance = parseFloat(document.getElementById('cardio-distance').value) || 0;
+        const gpsRun = type === 'outdoor-running' ? completedOutdoorRun() : null;
+        if (type === 'outdoor-running' && (!gpsRun || gpsRun.route.length < 2 || gpsRun.distance <= 0)) {
+            showToast('Finish a GPS run with a recorded route before saving', 6000);
+            return;
+        }
+        if (gpsRun && (state.cardioLogs || []).some(log => log.runId === gpsRun.runId)) {
+            acknowledgeSavedOutdoorRun();
+            closeCardioModal();
+            return;
+        }
+        const duration = gpsRun ? gpsRun.duration : Number(document.getElementById('cardio-duration').value);
+        const distance = gpsRun ? gpsRun.distance : Number(document.getElementById('cardio-distance').value || 0);
         const calories = parseInt(document.getElementById('cardio-calories').value) || 0;
         const notes = document.getElementById('cardio-notes').value.trim();
 
-        if (!duration || duration <= 0) { showToast('Enter duration'); return; }
+        if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(distance) || distance < 0) {
+            showToast('Enter a valid duration and distance'); return;
+        }
 
         if (!state.cardioLogs) state.cardioLogs = [];
-        state.cardioLogs.unshift({
+        state.cardioLogs.unshift(Object.assign({
             id: Date.now(),
-            date: localDateKey(),
+            date: gpsRun ? gpsRun.date : localDateKey(),
             type: type,
             duration: duration,
             distance: distance,
+            avgSpeedKmh: gpsRun ? gpsRun.avgSpeedKmh : (distance ? Math.round(distance / (duration / 60) * 10) / 10 : 0),
             calories: calories,
             notes: notes
-        });
+        }, gpsRun || {}));
         saveState();
+        if (gpsRun) acknowledgeSavedOutdoorRun();
         closeCardioModal();
         showToast('Cardio logged! 🏃');
         renderTrainingLogs();

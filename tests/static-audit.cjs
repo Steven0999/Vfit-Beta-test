@@ -18,6 +18,7 @@ const moduleFiles = [
   'nutrition/meal-safety.js',
   'nutrition/weekly-planner.js',
   'metrics/step-tracking.js',
+  'metrics/run-tracking.js',
   'metrics/photo-storage.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
@@ -143,6 +144,13 @@ for (const androidPath of [androidManifestPath, androidMainPath, androidSyncPath
 }
 const androidManifest = fs.readFileSync(androidManifestPath, 'utf8');
 const androidMain = fs.readFileSync(androidMainPath, 'utf8');
+const runTrackerPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/RunTrackerService.kt');
+assert.ok(fs.existsSync(runTrackerPath), 'Android outdoor run service must be included');
+assert.ok(androidManifest.includes('android.permission.ACCESS_FINE_LOCATION') &&
+  androidManifest.includes('android.permission.FOREGROUND_SERVICE_LOCATION') &&
+  androidManifest.includes('android:foregroundServiceType="location"'), 'outdoor runs require precise location foreground service declarations');
+assert.ok(androidMain.includes('RUN_BRIDGE_NAME = "vfitRunTracker"') && androidMain.includes('isTrustedOrigin(sourceOrigin)'), 'native run controls must be restricted to the trusted WebView origin');
+assert.ok(html.includes('<option value="treadmill">') && html.includes('<option value="outdoor-running">'), 'cardio must offer separate treadmill and GPS running choices');
 const androidSync = fs.readFileSync(androidSyncPath, 'utf8');
 assert.ok(androidManifest.includes('android.permission.health.READ_STEPS'), 'Android app must request read-only step access');
 assert.ok(androidManifest.includes('android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND'), 'Android app must declare optional background health reads');

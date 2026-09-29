@@ -16,6 +16,7 @@ const moduleFiles = [
   'nutrition/meal-safety.js',
   'nutrition/weekly-planner.js',
   'metrics/step-tracking.js',
+  'metrics/run-tracking.js',
   'metrics/photo-storage.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
@@ -244,6 +245,15 @@ const expose = `
   openStepProgressModal,
   setStepProgressView,
   closeStepProgressModal,
+  acceptWebRunPosition,
+  completedOutdoorRun,
+  finishOutdoorRun,
+  runRouteSvg,
+  runPointDistanceMetres,
+  compactSavedRoute,
+  saveCardio,
+  viewWorkoutDetails,
+  setOutdoorRunSession: value => { outdoorRunSession = value; },
   handleNativeStepMessage,
   initialiseStepTracking,
   requestStepTrackingPermission,
@@ -296,6 +306,53 @@ const savedStepDay = app.stepHistoryEntries().find(entry => entry.date === '2026
 assert.equal(savedStepDay.steps, 8400);
 assert.equal(savedStepDay.percent, 105);
 assert.equal(savedStepDay.reached, true);
+
+// Outdoor GPS points become a saved cardio workout with a route and speed.
+// A physically impossible location jump cannot inflate the measured distance.
+app.setState(app.defaultState());
+app.setUser({ uid: 'running-test-user' });
+const runStart = Date.now() - 30000;
+app.setOutdoorRunSession({
+  id: 'run-smoke-1', ownerUid: 'running-test-user', startedAt: runStart,
+  status: 'recording', distanceMeters: 0, maxSpeedKmh: 0, points: []
+});
+document.getElementById('cardio-type').value = 'outdoor-running';
+const fix = (lat, t) => ({ coords: { latitude: lat, longitude: -0.1, accuracy: 5 }, timestamp: t });
+app.acceptWebRunPosition(fix(51.5, runStart + 1000));
+app.acceptWebRunPosition(fix(51.5001, runStart + 7000));
+app.acceptWebRunPosition(fix(52.5, runStart + 8000));
+assert.ok(app.runPointDistanceMetres({ lat: 51.5, lon: -0.1 }, { lat: 51.5001, lon: -0.1 }) > 10);
+app.finishOutdoorRun();
+const finishedRun = app.completedOutdoorRun();
+assert.equal(finishedRun.route.length, 2);
+assert.ok(finishedRun.distance > 0 && finishedRun.distance < 0.1);
+assert.ok(finishedRun.avgSpeedKmh > 0);
+assert.ok(app.runRouteSvg(finishedRun.route).includes('<svg'));
+const longRoute = Array.from({ length: 1000 }, (_, i) => ({ lat: 51.5 + i / 100000, lon: -0.1, t: runStart + i * 1000, breakBefore: i === 500 }));
+const compactRoute = app.compactSavedRoute(longRoute);
+assert.ok(compactRoute.length <= 301);
+assert.equal(compactRoute[0].t, longRoute[0].t);
+assert.equal(compactRoute.at(-1).t, longRoute.at(-1).t);
+assert.ok(compactRoute.some(p => p.breakBefore));
+document.getElementById('cardio-calories').value = '120';
+document.getElementById('cardio-notes').value = 'Park loop';
+app.saveCardio();
+const savedRun = app.getState().cardioLogs[0];
+assert.equal(savedRun.type, 'outdoor-running');
+assert.equal(savedRun.runId, 'run-smoke-1');
+assert.equal(savedRun.route.length, 2);
+assert.ok(savedRun.avgSpeedKmh > 0);
+app.viewWorkoutDetails(savedRun.id);
+assert.equal(elements.get('cardio-details-modal').style.display, 'flex');
+assert.ok(elements.get('cardio-details-content').innerHTML.includes('GPS route'));
+document.getElementById('cardio-type').value = 'treadmill';
+document.getElementById('cardio-duration').value = '30';
+document.getElementById('cardio-distance').value = '5';
+app.saveCardio();
+assert.equal(app.getState().cardioLogs[0].type, 'treadmill');
+assert.equal(app.getState().cardioLogs[0].avgSpeedKmh, 10);
+app.setUser(null);
+app.setState(stepState);
 
 // The chart compares each saved total to that day's goal, even after a goal
 // change. Weekly targets sum those same saved-day goals across Monday weeks.

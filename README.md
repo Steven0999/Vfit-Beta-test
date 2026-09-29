@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.32` adds a Step Progress button in Training Logs with daily and weekly bar charts. The goal line uses each saved day's goal, including changes to the daily goal; weekly targets sum the goals for the days with recorded totals. It retains Health Connect result delivery, automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover, the visible-web motion fallback, revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.33` separates treadmill entry from normal outdoor running in Cardio. Outdoor runs record a GPS route, distance and speed, then appear in Training Logs with a route outline and GPX export. The Android wrapper tracks a user-started run with a location foreground service while the screen is locked; browser tracking requires VFIT to stay open. It retains daily and weekly step charts, Health Connect result delivery, automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover and existing beta features.
 
 ## What is included
 
@@ -9,6 +9,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, off
 - A consistent VFIT wordmark and home-screen icon with a full-size V and one-third-size, baseline-aligned FIT in the existing orange branding.
 - Android Health Connect read-only step access, local-midnight daily totals, resume/background refresh and a permission-based web motion fallback that clearly counts only while VFIT is open.
 - Training Logs Step Progress chart with daily step bars, a per-day goal line, weekly saved-day totals and their combined goals.
+- Cardio choices for treadmill and normal outdoor running. The Android run notification keeps precise GPS tracking active with the screen locked; the workout log saves distance, time, average speed and a GPS route with GPX export. Browser runs need the page kept open.
 - A dedicated “Add Your Own Food” section for saving a food name, calories, protein and compressed phone photo to the VFIT Food Database.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.

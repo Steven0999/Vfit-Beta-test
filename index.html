@@ -643,7 +643,7 @@
 
                     <button onclick="openCardioModal()" class="w-full mt-3 p-5 bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-[1.5rem] font-bold text-base flex items-center justify-center gap-2 hover:from-cyan-600 hover:to-blue-600">
                         <i data-lucide="activity" class="w-5 h-5"></i>
-                        Log Outdoor Cardio
+                        Log Cardio / Running
                     </button>
                 </div>
 
@@ -2035,8 +2035,9 @@
             </div>
             <div class="mb-4">
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Activity Type</label>
-                <select id="cardio-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
-                    <option value="running">🏃 Running</option>
+                <select id="cardio-type" onchange="updateCardioMode()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                    <option value="treadmill">🏃 Treadmill (enter distance)</option>
+                    <option value="outdoor-running">🏃 Normal running (GPS route)</option>
                     <option value="cycling">🚴 Cycling</option>
                     <option value="swimming">🏊 Swimming</option>
                     <option value="walking">🚶 Walking</option>
@@ -2045,14 +2046,31 @@
                     <option value="elliptical">⚡ Elliptical</option>
                 </select>
             </div>
+            <div id="outdoor-run-panel" class="hidden mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p class="font-black text-sm text-amber-900">Outdoor run tracker</p>
+                <p id="outdoor-run-status" class="mt-1 text-xs text-amber-800" aria-live="polite">Start when you are ready to run.</p>
+                <div class="grid grid-cols-2 gap-3 my-4 text-center">
+                    <div class="rounded-xl bg-white p-3"><p class="text-[10px] uppercase font-black text-slate-500">Distance</p><p id="outdoor-run-distance" class="text-xl font-black">0.00 km</p></div>
+                    <div class="rounded-xl bg-white p-3"><p class="text-[10px] uppercase font-black text-slate-500">Time</p><p id="outdoor-run-time" class="text-xl font-black">00:00</p></div>
+                    <div class="rounded-xl bg-white p-3"><p class="text-[10px] uppercase font-black text-slate-500">Current speed</p><p id="outdoor-run-speed" class="text-xl font-black">0.0 km/h</p></div>
+                    <div class="rounded-xl bg-white p-3"><p class="text-[10px] uppercase font-black text-slate-500">Average speed</p><p id="outdoor-run-avg-speed" class="text-xl font-black">0.0 km/h</p></div>
+                </div>
+                <div id="outdoor-run-route" class="rounded-xl bg-white p-2 mb-3 text-center text-xs text-slate-400">GPS route appears after a location fix.</div>
+                <div class="flex gap-2">
+                    <button id="outdoor-run-start" onclick="startOutdoorRun()" class="flex-1 rounded-xl bg-amber-500 p-3 text-xs font-black text-white">Start GPS run</button>
+                    <button id="outdoor-run-finish" onclick="finishOutdoorRun()" class="hidden flex-1 rounded-xl bg-slate-900 p-3 text-xs font-black text-white">Finish run</button>
+                    <button id="outdoor-run-discard" onclick="discardOutdoorRun()" class="hidden rounded-xl bg-white p-3 text-xs font-black text-rose-600">Discard</button>
+                </div>
+                <p class="mt-3 text-[11px] leading-relaxed text-amber-800">Allow precise location. In the Android app, tracking continues with the screen locked while the run notification is active. In a browser, keep VFIT open. GPS may lose distance in tunnels or weak signal.</p>
+            </div>
             <div class="grid grid-cols-2 gap-4 mb-4">
                 <div>
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Duration (min)</label>
-                    <input type="number" id="cardio-duration" min="1" placeholder="30" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
+                    <input type="number" id="cardio-duration" min="0.1" step="0.1" placeholder="30" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
                 </div>
                 <div>
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Distance (km)</label>
-                    <input type="number" id="cardio-distance" min="0" step="0.1" placeholder="5.0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
+                    <input type="number" id="cardio-distance" min="0" step="0.01" placeholder="5.0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
                 </div>
             </div>
             <div class="mb-4">
@@ -2063,10 +2081,20 @@
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Notes (optional)</label>
                 <textarea id="cardio-notes" rows="3" placeholder="How did it feel?" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none resize-none"></textarea>
             </div>
-            <button onclick="saveCardio()" class="w-full bg-emerald-600 text-white py-5 rounded-[24px] font-black hover:bg-emerald-700 mb-3">
+            <button id="save-cardio-button" onclick="saveCardio()" class="w-full bg-emerald-600 text-white py-5 rounded-[24px] font-black hover:bg-emerald-700 mb-3 disabled:opacity-50">
                 Save Activity
             </button>
             <button onclick="closeCardioModal()" class="w-full py-3 text-sm font-bold text-slate-400 uppercase">Cancel</button>
+        </div>
+    </div>
+
+    <div id="cardio-details-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="cardio-details-title">
+        <div class="bg-white w-full max-w-lg rounded-[32px] p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="cardio-details-title" class="text-xl font-black">Cardio workout</h3>
+                <button onclick="closeCardioDetails()" aria-label="Close cardio workout details" class="w-10 h-10 bg-slate-100 rounded-full text-2xl">×</button>
+            </div>
+            <div id="cardio-details-content"></div>
         </div>
     </div>
 
@@ -3671,6 +3699,7 @@
     <script src="./nutrition/meal-safety.js"></script>
     <script src="./nutrition/weekly-planner.js"></script>
     <script src="./metrics/step-tracking.js"></script>
+    <script src="./metrics/run-tracking.js"></script>
     <script src="./metrics/photo-storage.js"></script>
     <script src="./feedback/beta-feedback.js"></script>
     <script src="./coaching/plan-builder.js"></script>
