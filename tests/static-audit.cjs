@@ -133,6 +133,7 @@ assert.ok(stepTrackingSource.includes("payload.type === 'vfit-health-connect-his
 assert.ok(stepTrackingSource.includes('stepTrackingAccountReady') && stepTrackingSource.includes('pendingNativeStepPayloads'), 'native step results must wait for signed-in state hydration');
 assert.ok(stepTrackingSource.includes('payload.cached === true') && stepTrackingSource.includes('ignoreOlderCache'), 'an older native cache must not move today\'s step total backwards');
 assert.ok(stepTrackingSource.includes('NATIVE_STEP_AUTO_REFRESH_MS = 60000') && stepTrackingSource.includes('scheduleNativeStepAutoRefresh'), 'visible Android step totals must refresh every minute');
+assert.ok(stepTrackingSource.includes("nativeStepState.permission !== 'granted'") && stepTrackingSource.includes('permissionGranted && nativeStepSyncPending'), 'Health Connect sync must not disable Allow before permission is granted');
 
 const androidManifestPath = path.join(root, 'android/app/src/main/AndroidManifest.xml');
 const androidMainPath = path.join(root, 'android/app/src/main/java/com/vaughanfitness/vfit/MainActivity.kt');

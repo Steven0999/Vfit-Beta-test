@@ -299,11 +299,22 @@ assert.equal(app.getState().stepsLogs[stepTodayKey], undefined);
 assert.equal(app.nativeStepDebug().bufferedPayloads, 1);
 
 app.setUser({ uid: 'step-smoke-user', email: 'steps@example.test' });
+nativeStepCommands.length = 0;
 app.initialiseStepTracking();
 assert.equal(app.getState().stepsLogs[stepTodayKey], 4321);
 assert.equal(app.nativeStepDebug().bufferedPayloads, 0);
 assert.ok(nativeStepCommands.some(command => command.command === 'status'));
+assert.ok(!nativeStepCommands.some(command => command.command === 'sync'));
+assert.equal(app.nativeStepDebug().syncPending, false);
+
+app.handleNativeStepMessage({
+  type: 'vfit-health-connect-status',
+  availability: 'available',
+  permission: 'granted',
+  backgroundPermission: true
+});
 assert.ok(nativeStepCommands.some(command => command.command === 'sync'));
+assert.equal(app.nativeStepDebug().syncPending, true);
 
 app.handleNativeStepMessage({
   type: 'vfit-health-connect-steps',

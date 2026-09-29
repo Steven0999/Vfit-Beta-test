@@ -327,7 +327,11 @@
     }
 
     function requestNativeStepSync() {
-        if (!hasNativeHealthConnectBridge() || nativeStepSyncPending) return false;
+        if (!hasNativeHealthConnectBridge()
+            || !stepTrackingAccountReady
+            || !currentUser
+            || nativeStepState.permission !== 'granted'
+            || nativeStepSyncPending) return false;
         nativeStepSyncPending = sendNativeStepCommand('sync');
         renderStepTrackingUI();
         return nativeStepSyncPending;
@@ -386,9 +390,11 @@
         }
 
         document.querySelectorAll('[data-step-tracking-action]').forEach(button => {
+            const permissionGranted = nativeStepState.permission === 'granted';
+            const syncIsBlocking = permissionGranted && nativeStepSyncPending;
             button.textContent = action;
-            button.disabled = nativeStepSyncPending;
-            button.classList.toggle('opacity-60', nativeStepSyncPending);
+            button.disabled = syncIsBlocking;
+            button.classList.toggle('opacity-60', syncIsBlocking);
         });
 
         const goal = currentStepGoal();
@@ -577,7 +583,7 @@
         if (hasNativeHealthConnectBridge()) {
             stopWebStepTracking(false);
             sendNativeStepCommand('status');
-            requestNativeStepSync();
+            if (nativeStepState.permission === 'granted') requestNativeStepSync();
             scheduleNativeStepAutoRefresh();
             return;
         }
@@ -593,7 +599,7 @@
             if (!stepTrackingAccountReady) return;
             flushBufferedNativeStepPayloads();
             sendNativeStepCommand('status');
-            requestNativeStepSync();
+            if (nativeStepState.permission === 'granted') requestNativeStepSync();
             scheduleNativeStepAutoRefresh();
             return;
         }
