@@ -58,6 +58,7 @@
 
         if (!entries.length) {
             container.innerHTML = '<p class="py-5 text-center text-xs italic text-slate-400">No daily steps saved yet</p>';
+            if (document.getElementById('step-progress-modal')?.style.display === 'flex') renderStepProgressChart();
             return;
         }
 
@@ -87,6 +88,146 @@
                     </div>
                 </div>`;
         }).join('');
+        if (document.getElementById('step-progress-modal')?.style.display === 'flex') renderStepProgressChart();
+    }
+
+    // ==========================================================================
+    // STEP PROGRESS CHART
+    // ==========================================================================
+
+    let stepProgressChart = null;
+    let stepProgressView = 'daily';
+
+    function stepProgressSeries(view, entries) {
+        const sorted = (entries || []).filter(entry => /^\d{4}-\d{2}-\d{2}$/.test(entry.date || ''))
+            .slice().sort((a, b) => a.date.localeCompare(b.date));
+        const shortDate = dateKey => new Date(dateKey + 'T12:00:00')
+            .toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+        if (view !== 'weekly') {
+            const days = sorted.slice(-14);
+            return {
+                labels: days.map(day => shortDate(day.date)),
+                values: days.map(day => day.steps),
+                targets: days.map(day => day.goal),
+                days
+            };
+        }
+
+        const byWeek = new Map();
+        sorted.forEach(day => {
+            const date = new Date(day.date + 'T12:00:00');
+            date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+            const weekKey = localDateKey(date);
+            if (!byWeek.has(weekKey)) byWeek.set(weekKey, { date: weekKey, steps: 0, goal: 0, days: 0 });
+            const week = byWeek.get(weekKey);
+            week.steps += day.steps;
+            week.goal += day.goal;
+            week.days += 1;
+        });
+        const weeks = Array.from(byWeek.values()).slice(-8);
+        return {
+            labels: weeks.map(week => 'Week of ' + shortDate(week.date)),
+            values: weeks.map(week => week.steps),
+            targets: weeks.map(week => week.goal),
+            weeks,
+            days: sorted
+        };
+    }
+
+    function openStepProgressModal() {
+        document.getElementById('step-progress-modal').style.display = 'flex';
+        setStepProgressView('daily');
+    }
+
+    function closeStepProgressModal() {
+        document.getElementById('step-progress-modal').style.display = 'none';
+        if (stepProgressChart) { stepProgressChart.destroy(); stepProgressChart = null; }
+    }
+
+    function setStepProgressView(view) {
+        stepProgressView = view === 'weekly' ? 'weekly' : 'daily';
+        ['daily', 'weekly'].forEach(option => {
+            const button = document.getElementById('step-progress-view-' + option);
+            button.className = 'flex-1 py-3 text-xs font-black uppercase rounded-xl ' +
+                (option === stepProgressView ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-400');
+            button.setAttribute('aria-pressed', String(option === stepProgressView));
+        });
+        renderStepProgressChart();
+    }
+
+    function renderStepProgressChart() {
+        const canvas = document.getElementById('step-progress-chart');
+        if (!canvas) return;
+        const series = stepProgressSeries(stepProgressView, stepHistoryEntries());
+        const today = localDateKey();
+        const todayEntry = series.days.find(day => day.date === today);
+        const currentWeek = series.weeks && series.weeks[series.weeks.length - 1];
+        const displayedDays = stepProgressView === 'weekly'
+            ? series.days.filter(day => {
+                const date = new Date(day.date + 'T12:00:00');
+                date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+                return localDateKey(date) === (currentWeek && currentWeek.date);
+            })
+            : series.days;
+        const average = displayedDays.length
+            ? Math.round(displayedDays.reduce((sum, day) => sum + day.steps, 0) / displayedDays.length)
+            : 0;
+
+        document.getElementById('step-progress-total-label').textContent = stepProgressView === 'weekly' ? 'Latest week' : 'Today';
+        document.getElementById('step-progress-total').textContent = (stepProgressView === 'weekly'
+            ? (currentWeek && currentWeek.steps) || 0 : (todayEntry && todayEntry.steps) || 0).toLocaleString();
+        document.getElementById('step-progress-average-label').textContent = stepProgressView === 'weekly' ? 'Avg per saved day' : 'Avg per day shown';
+        document.getElementById('step-progress-average').textContent = average.toLocaleString();
+        document.getElementById('step-progress-goals-label').textContent = stepProgressView === 'weekly' ? 'Goals reached this week' : 'Goals reached';
+        document.getElementById('step-progress-goals').textContent = String(displayedDays.filter(day => day.steps >= day.goal).length);
+        document.getElementById('step-progress-note').textContent = stepProgressView === 'weekly'
+            ? 'Weekly bars and targets sum the days with saved step totals, plus today. Missing days are not counted.'
+            : 'The line uses the goal saved for each day. Today is included.';
+        canvas.setAttribute('aria-label', stepProgressView === 'weekly'
+            ? 'Weekly saved step totals as bars and summed saved-day goals as a line'
+            : 'Daily saved step totals as bars and each day’s goal as a line');
+
+        if (stepProgressChart) { stepProgressChart.destroy(); stepProgressChart = null; }
+        if (!chartLibraryReady(canvas)) return;
+        stepProgressChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: series.labels,
+                datasets: [
+                    {
+                        label: 'Steps',
+                        data: series.values,
+                        backgroundColor: series.values.map((value, i) =>
+                            value >= series.targets[i] ? 'rgba(16, 185, 129, 0.8)' : 'rgba(245, 158, 11, 0.8)'),
+                        borderRadius: 8
+                    },
+                    {
+                        label: stepProgressView === 'weekly' ? 'Saved-day goals' : 'Daily goal',
+                        data: series.targets,
+                        type: 'line',
+                        borderColor: '#f43f5e',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: context => `${context.dataset.label}: ${Number(context.parsed.y).toLocaleString()} steps` } }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#e2e8f0' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
     }
 
     function renderTrainingLogs() {

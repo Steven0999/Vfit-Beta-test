@@ -240,6 +240,10 @@ const expose = `
   finaliseStepDay,
   stepGoalForDate,
   stepHistoryEntries,
+  stepProgressSeries,
+  openStepProgressModal,
+  setStepProgressView,
+  closeStepProgressModal,
   handleNativeStepMessage,
   initialiseStepTracking,
   requestStepTrackingPermission,
@@ -292,6 +296,39 @@ const savedStepDay = app.stepHistoryEntries().find(entry => entry.date === '2026
 assert.equal(savedStepDay.steps, 8400);
 assert.equal(savedStepDay.percent, 105);
 assert.equal(savedStepDay.reached, true);
+
+// The chart compares each saved total to that day's goal, even after a goal
+// change. Weekly targets sum those same saved-day goals across Monday weeks.
+const chartDays = [
+  { date: '2026-09-29', steps: 6000, goal: 12000 },
+  { date: '2026-09-27', steps: 8400, goal: 8000 },
+  { date: '2026-09-28', steps: 3000, goal: 12000 }
+];
+const dailyStepsChart = app.stepProgressSeries('daily', chartDays);
+assert.deepEqual(Array.from(dailyStepsChart.values), [8400, 3000, 6000]);
+assert.deepEqual(Array.from(dailyStepsChart.targets), [8000, 12000, 12000]);
+const weeklyStepsChart = app.stepProgressSeries('weekly', chartDays);
+assert.deepEqual(Array.from(weeklyStepsChart.values), [8400, 9000]);
+assert.deepEqual(Array.from(weeklyStepsChart.targets), [8000, 24000]);
+assert.equal(weeklyStepsChart.weeks[0].days, 1);
+assert.equal(weeklyStepsChart.weeks[1].days, 2);
+
+const stepCharts = [];
+sandbox.Chart = class {
+  constructor(canvas, config) { this.config = config; stepCharts.push(this); }
+  destroy() { this.destroyed = true; }
+};
+app.openStepProgressModal();
+assert.equal(elements.get('step-progress-modal').style.display, 'flex');
+assert.equal(stepCharts.at(-1).config.type, 'bar');
+assert.equal(stepCharts.at(-1).config.data.datasets[1].type, 'line');
+assert.equal(stepCharts.at(-1).config.data.datasets[1].data[0], 8000);
+app.setStepProgressView('weekly');
+assert.equal(stepCharts.at(-2).destroyed, true);
+assert.equal(stepCharts.at(-1).config.data.datasets[1].data[0], 8000);
+app.closeStepProgressModal();
+assert.equal(stepCharts.at(-1).destroyed, true);
+assert.equal(elements.get('step-progress-modal').style.display, 'none');
 
 // A Health Connect result that arrives before Firebase/account hydration must
 // wait, then apply to the signed-in state. An older cache must not regress it.

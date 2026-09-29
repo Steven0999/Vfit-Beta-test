@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.31` delivers Health Connect results through the verified frame even when WebView page-load state is stale. It clears the pending permission state when step data arrives and offers a retry if Android acknowledges the request but returns no result. It retains automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover, the visible-web motion fallback, revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.32` adds a Step Progress button in Training Logs with daily and weekly bar charts. The goal line uses each saved day's goal, including changes to the daily goal; weekly targets sum the goals for the days with recorded totals. It retains Health Connect result delivery, automatic daily step history, per-day goal snapshots and progress bars inside Exercise Logs, completed-day recovery after a closed-app midnight rollover, the visible-web motion fallback, revised V/FIT icon, custom-food section, optional daily-readiness prompt, hardened modular structure and existing beta features.
 
 ## What is included
 
@@ -8,6 +8,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, off
 - Optional daily “How are you feeling?” questions controlled from Profile → Preferences & Goals → Tracking Options.
 - A consistent VFIT wordmark and home-screen icon with a full-size V and one-third-size, baseline-aligned FIT in the existing orange branding.
 - Android Health Connect read-only step access, local-midnight daily totals, resume/background refresh and a permission-based web motion fallback that clearly counts only while VFIT is open.
+- Training Logs Step Progress chart with daily step bars, a per-day goal line, weekly saved-day totals and their combined goals.
 - A dedicated “Add Your Own Food” section for saving a food name, calories, protein and compressed phone photo to the VFIT Food Database.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.

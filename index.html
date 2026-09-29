@@ -891,6 +891,19 @@
                         <div id="step-history-logs-list" class="max-h-[34rem] space-y-3 overflow-y-auto pr-1"></div>
                     </div>
 
+                    <button onclick="openStepProgressModal()" class="w-full glass-card p-5 rounded-2xl flex items-center justify-between hover:shadow-lg transition-all active:scale-95">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center">
+                                <i data-lucide="bar-chart-3" class="w-6 h-6 text-white"></i>
+                            </div>
+                            <div class="text-left">
+                                <h4 class="font-black text-sm">Step Progress</h4>
+                                <p class="text-xs text-slate-400">Daily &amp; weekly steps against your goal</p>
+                            </div>
+                        </div>
+                        <i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i>
+                    </button>
+
                     <div class="glass-card p-4 rounded-2xl">
                         <p class="text-xs font-black uppercase text-slate-400 mb-3">Filter Workouts</p>
                         <div class="grid grid-cols-2 gap-2">
@@ -2782,6 +2795,51 @@
                 <p class="text-slate-400 font-bold mb-2">Select an exercise to view progress</p>
                 <p class="text-xs text-slate-400">Track your strength gains over time</p>
             </div>
+        </div>
+    </div>
+
+    <!-- STEP PROGRESS MODAL -->
+    <div id="step-progress-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="step-progress-title">
+        <div class="bg-white w-full max-w-3xl rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h3 id="step-progress-title" class="text-xl font-black flex items-center gap-2">
+                        <i data-lucide="footprints" class="w-6 h-6 text-amber-500"></i>
+                        Step Progress
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">Saved steps compared with your goal for each day</p>
+                </div>
+                <button onclick="closeStepProgressModal()" aria-label="Close step progress" class="w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none hover:bg-slate-200">×</button>
+            </div>
+
+            <div class="flex bg-slate-100 p-2 rounded-2xl gap-2 mb-6">
+                <button onclick="setStepProgressView('daily')" id="step-progress-view-daily" class="flex-1 py-3 text-xs font-black uppercase rounded-xl bg-white text-amber-700 shadow-sm" aria-pressed="true">Daily</button>
+                <button onclick="setStepProgressView('weekly')" id="step-progress-view-weekly" class="flex-1 py-3 text-xs font-black uppercase rounded-xl text-slate-400" aria-pressed="false">Weekly</button>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                <div class="bg-amber-50 p-4 rounded-2xl">
+                    <p id="step-progress-total-label" class="text-[9px] font-black uppercase text-amber-700 mb-1">Today</p>
+                    <p id="step-progress-total" class="text-xl font-black text-amber-900">0</p>
+                </div>
+                <div class="bg-emerald-50 p-4 rounded-2xl">
+                    <p id="step-progress-average-label" class="text-[9px] font-black uppercase text-emerald-700 mb-1">Daily average</p>
+                    <p id="step-progress-average" class="text-xl font-black text-emerald-900">0</p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-2xl">
+                    <p id="step-progress-goals-label" class="text-[9px] font-black uppercase text-slate-600 mb-1">Goals reached</p>
+                    <p id="step-progress-goals" class="text-xl font-black text-slate-900">0</p>
+                </div>
+            </div>
+
+            <div class="bg-slate-50 rounded-3xl p-4 sm:p-6 mb-4">
+                <div class="h-80 relative"><canvas id="step-progress-chart" role="img" aria-label="Step totals as bars and daily goals as a line"></canvas></div>
+            </div>
+            <div class="flex flex-wrap items-center justify-center gap-5 text-xs font-bold mb-4">
+                <div class="flex items-center gap-2"><div class="w-4 h-4 bg-amber-500 rounded"></div><span>Steps</span></div>
+                <div class="flex items-center gap-2"><div class="w-4 h-1 bg-rose-500"></div><span>Goal</span></div>
+            </div>
+            <p id="step-progress-note" class="text-center text-xs text-slate-500">The goal line uses the goal saved for each day. Today is included.</p>
         </div>
     </div>
 
