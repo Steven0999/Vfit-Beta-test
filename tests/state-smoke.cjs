@@ -89,6 +89,7 @@ function fakeElement() {
 }
 
 const elements = new Map();
+const stepTrackingAction = fakeElement();
 const document = {
   body: fakeElement(), visibilityState: 'visible',
   getElementById(id) {
@@ -100,7 +101,9 @@ const document = {
     return elements.get(id);
   },
   querySelector() { return fakeElement(); },
-  querySelectorAll() { return []; },
+  querySelectorAll(selector) {
+    return selector === '[data-step-tracking-action]' ? [stepTrackingAction] : [];
+  },
   createElement() { return fakeElement(); },
   addEventListener() {}, removeEventListener() {}
 };
@@ -237,6 +240,7 @@ const expose = `
   stepHistoryEntries,
   handleNativeStepMessage,
   initialiseStepTracking,
+  requestStepTrackingPermission,
   teardownStepTracking,
   nativeStepDebug: () => ({
     syncPending: nativeStepSyncPending,
@@ -306,6 +310,14 @@ assert.equal(app.nativeStepDebug().bufferedPayloads, 0);
 assert.ok(nativeStepCommands.some(command => command.command === 'status'));
 assert.ok(!nativeStepCommands.some(command => command.command === 'sync'));
 assert.equal(app.nativeStepDebug().syncPending, false);
+assert.equal(stepTrackingAction.textContent, 'Allow');
+assert.equal(stepTrackingAction.disabled, false);
+assert.equal(stepTrackingAction.classList.contains('opacity-60'), false);
+
+app.requestStepTrackingPermission();
+assert.equal(nativeStepCommands.at(-1).command, 'request_permission');
+assert.equal(stepTrackingAction.textContent, 'Allow');
+assert.equal(stepTrackingAction.disabled, false);
 
 app.handleNativeStepMessage({
   type: 'vfit-health-connect-status',
@@ -315,6 +327,8 @@ app.handleNativeStepMessage({
 });
 assert.ok(nativeStepCommands.some(command => command.command === 'sync'));
 assert.equal(app.nativeStepDebug().syncPending, true);
+assert.equal(stepTrackingAction.textContent, 'Updating…');
+assert.equal(stepTrackingAction.disabled, true);
 
 app.handleNativeStepMessage({
   type: 'vfit-health-connect-steps',
@@ -334,6 +348,8 @@ app.handleNativeStepMessage({
 });
 assert.equal(app.getState().stepsLogs[stepTodayKey], 4500);
 assert.equal(app.nativeStepDebug().syncPending, false);
+assert.equal(stepTrackingAction.textContent, 'Sync now');
+assert.equal(stepTrackingAction.disabled, false);
 app.teardownStepTracking();
 assert.equal(app.nativeStepDebug().accountReady, false);
 app.setState(app.defaultState());
