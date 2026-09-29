@@ -91,14 +91,19 @@ object HealthStepReader {
         return readDate(client, zone, date, now, includeZero = true)!!
     }
 
-    suspend fun readRecentDays(context: Context, dayCount: Int): List<CachedStepTotal> {
+    suspend fun readRecentDays(
+        context: Context,
+        dayCount: Int,
+        todayTotal: CachedStepTotal? = null
+    ): List<CachedStepTotal> {
         val client = client(context)
         val zone = ZoneId.systemDefault()
         val today = LocalDate.now(zone)
         val now = Instant.now()
         return (0 until dayCount.coerceIn(1, 30)).mapNotNull { offset ->
             val date = today.minusDays(offset.toLong())
-            readDate(client, zone, date, now, includeZero = offset == 0)
+            if (offset == 0 && todayTotal?.date == date.toString()) todayTotal
+            else readDate(client, zone, date, now, includeZero = offset == 0)
         }
     }
 

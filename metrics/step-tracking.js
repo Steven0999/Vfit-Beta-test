@@ -685,6 +685,14 @@
         pendingNativeStepPayloads = [];
     }
 
+    // WebViewCompat's origin-restricted object receives replies on its own
+    // message event. Keep the window listener for unsolicited native updates.
+    if (hasNativeHealthConnectBridge() && typeof window.vfitHealthConnect.addEventListener === 'function') {
+        window.vfitHealthConnect.addEventListener('message', event => {
+            handleNativeStepMessage(event.data);
+        });
+    }
+
     window.addEventListener('message', event => {
         if (!hasNativeHealthConnectBridge()) return;
         if (event.origin && event.origin !== NATIVE_STEP_ORIGIN) return;

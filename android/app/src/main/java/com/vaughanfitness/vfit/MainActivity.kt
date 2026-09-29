@@ -27,6 +27,7 @@ import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebMessageCompat
+import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private var stepSyncInProgress = false
     private var stepSyncQueued = false
     private var permissionRequestInProgress = false
+    private var webReplyProxy: JavaScriptReplyProxy? = null
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
 
@@ -153,6 +155,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                pageLoaded = false
+                webReplyProxy = null
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 pageLoaded = true
                 publishCachedSteps()
@@ -203,10 +210,13 @@ class MainActivity : AppCompatActivity() {
             webView,
             BRIDGE_NAME,
             setOf(APP_ORIGIN)
-        ) { _, message, sourceOrigin, isMainFrame, _ ->
+        ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
             // Compare URL parts: WebView may include the default :443 port in
             // sourceOrigin even when the allowed origin rule omits it.
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
+            // Reply on the injected object's own channel. A window message
+            // has different delivery and origin semantics on some WebViews.
+            webReplyProxy = replyProxy
             val payload = try { JSONObject(message.data ?: "{}") } catch (error: Exception) { JSONObject() }
             when (payload.optString("command")) {
                 "status" -> publishHealthStatus()
@@ -382,7 +392,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 val today = LocalDate.now(ZoneId.systemDefault())
                 val dayCount = StepCache.historyDaysToSync(this@MainActivity, today)
-                val totals = HealthStepReader.readRecentDays(this@MainActivity, dayCount)
+                // Update the dashboard as soon as today's read completes; a
+                // first launch can need up to 30 separate history reads.
+                val liveToday = HealthStepReader.readToday(this@MainActivity)
+                StepCache.write(this@MainActivity, liveToday)
+                publishStepTotal(liveToday, cachedValue = false)
+                val totals = HealthStepReader.readRecentDays(this@MainActivity, dayCount, liveToday)
                 val todayTotal = totals.firstOrNull { it.date == today.toString() }
                 if (todayTotal != null) StepCache.write(this@MainActivity, todayTotal)
                 StepCache.markHistorySynced(this@MainActivity, today)
@@ -391,6 +406,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 publishStepHistory(totals)
             } catch (error: Exception) {
+                Log.e("VFIT Health Connect", "Could not sync daily steps", error)
                 sendWebPayload(
                     JSONObject()
                         .put("type", "vfit-health-connect-error")
@@ -447,6 +463,16 @@ class MainActivity : AppCompatActivity() {
     private fun sendWebPayload(payload: JSONObject) {
         if (!pageLoaded) return
         webView.post {
+            val reply = webReplyProxy
+            if (reply != null) {
+                try {
+                    reply.postMessage(payload.toString())
+                    return@post
+                } catch (error: Exception) {
+                    Log.w("VFIT Health Connect", "Bridge reply failed; using main-frame message", error)
+                    webReplyProxy = null
+                }
+            }
             if (WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) {
                 WebViewCompat.postWebMessage(
                     webView,

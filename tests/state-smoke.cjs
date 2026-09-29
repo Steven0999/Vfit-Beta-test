@@ -139,6 +139,7 @@ firestore.FieldValue = {
 };
 
 const nativeStepCommands = [];
+const nativeStepListeners = new Map();
 
 const sandbox = {
   console, document, localStorage,
@@ -161,7 +162,8 @@ const sandbox = {
 sandbox.vfitHealthConnect = {
   postMessage(payload) {
     nativeStepCommands.push(JSON.parse(payload));
-  }
+  },
+  addEventListener(type, listener) { nativeStepListeners.set(type, listener); }
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -321,12 +323,13 @@ assert.equal(stepTrackingAction.disabled, false);
 
 app.handleNativeStepMessage({ type: 'vfit-health-connect-request-opening' });
 assert.equal(stepTrackingAction.textContent, 'Opening…');
-app.handleNativeStepMessage({
+assert.equal(typeof nativeStepListeners.get('message'), 'function');
+nativeStepListeners.get('message')({ data: JSON.stringify({
   type: 'vfit-health-connect-status',
   availability: 'available',
   permission: 'denied',
   backgroundPermission: false
-});
+}) });
 assert.equal(stepTrackingAction.textContent, 'Open access');
 app.requestStepTrackingPermission();
 assert.equal(nativeStepCommands.at(-1).command, 'open_settings');
