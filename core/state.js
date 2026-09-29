@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.25';
+    const VFIT_APP_VERSION = '2.1.0-beta.29';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -5675,6 +5675,14 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
 
     function registerVfitServiceWorker() {
         if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+        if (window.vfitHealthConnect) {
+            // The Android wrapper already packages these assets. Remove any
+            // older PWA worker so it cannot serve scripts from a prior APK.
+            navigator.serviceWorker.getRegistration('./')
+                .then(registration => registration && registration.unregister())
+                .catch(() => {});
+            return;
+        }
         navigator.serviceWorker.register('./sw.js', { scope: './' })
             .then(registration => registration.update().catch(() => {}))
             .catch(error => console.warn('Offline app setup unavailable:', error));

@@ -405,7 +405,8 @@
         if (hasNativeHealthConnectBridge()) {
             if (nativeStepState.permission === 'granted') action = nativeStepSyncPending ? 'Updating…' : 'Sync now';
             else if (nativeStepState.availability === 'provider_update_required') action = 'Update';
-            else if (nativeStepState.permission === 'denied' || nativeStepState.lastError) action = 'Open access';
+            else if (nativeStepState.permission === 'denied') action = 'Open access';
+            else if (nativeStepState.lastError) action = 'Retry';
             else if (nativeStepPermissionOpening || stepPermissionRequestPending) action = 'Opening…';
             else action = 'Allow';
         } else if (webStepTrackingActive) {
@@ -576,7 +577,7 @@
         if (hasNativeHealthConnectBridge()) {
             if (nativeStepState.permission === 'granted') {
                 requestNativeStepSync();
-            } else if (nativeStepState.permission === 'denied' || nativeStepState.lastError) {
+            } else if (nativeStepState.permission === 'denied') {
                 showToast('In Health Connect, open App permissions → VFIT and allow Steps.', 6000);
                 sendNativeStepCommand('open_settings');
             } else {
@@ -590,7 +591,7 @@
                         nativeStepPermissionAckTimer = null;
                         if (!stepPermissionRequestPending || nativeStepPermissionOpening) return;
                         stepPermissionRequestPending = false;
-                        nativeStepState.lastError = 'VFIT could not open access. Open Health Connect → App permissions → VFIT.';
+                        nativeStepState.lastError = 'VFIT did not receive a reply from Android. Close and reopen VFIT, then retry.';
                         renderStepTrackingUI();
                     }, 5000);
                 } else {
@@ -685,8 +686,11 @@
         pendingNativeStepPayloads = [];
     }
 
-    // WebViewCompat's origin-restricted object receives replies on its own
-    // message event. Keep the window listener for unsolicited native updates.
+    // The wrapper also calls this receiver for startup and foreground reads.
+    // Its main-frame origin is checked on the Android side before delivery.
+    window.__vfitReceiveNativeStepPayload = value => handleNativeStepMessage(value);
+
+    // Keep both message listeners for compatibility with older beta wrappers.
     if (hasNativeHealthConnectBridge() && typeof window.vfitHealthConnect.addEventListener === 'function') {
         window.vfitHealthConnect.addEventListener('message', event => {
             handleNativeStepMessage(event.data);

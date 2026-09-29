@@ -335,12 +335,13 @@ app.requestStepTrackingPermission();
 assert.equal(nativeStepCommands.at(-1).command, 'open_settings');
 assert.equal(stepTrackingAction.disabled, false);
 
-app.handleNativeStepMessage({
+assert.equal(typeof sandbox.__vfitReceiveNativeStepPayload, 'function');
+sandbox.__vfitReceiveNativeStepPayload(JSON.stringify({
   type: 'vfit-health-connect-status',
   availability: 'available',
   permission: 'granted',
   backgroundPermission: true
-});
+}));
 assert.ok(nativeStepCommands.some(command => command.command === 'sync'));
 assert.equal(app.nativeStepDebug().syncPending, true);
 assert.equal(stepTrackingAction.textContent, 'Updating…');

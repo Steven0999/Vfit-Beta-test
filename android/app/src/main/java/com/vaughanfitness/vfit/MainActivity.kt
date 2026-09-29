@@ -26,8 +26,6 @@ import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
-import androidx.webkit.WebMessageCompat
-import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -52,7 +50,6 @@ class MainActivity : AppCompatActivity() {
     private var stepSyncInProgress = false
     private var stepSyncQueued = false
     private var permissionRequestInProgress = false
-    private var webReplyProxy: JavaScriptReplyProxy? = null
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
 
@@ -157,7 +154,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
-                webReplyProxy = null
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -210,13 +206,10 @@ class MainActivity : AppCompatActivity() {
             webView,
             BRIDGE_NAME,
             setOf(APP_ORIGIN)
-        ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+        ) { _, message, sourceOrigin, isMainFrame, _ ->
             // Compare URL parts: WebView may include the default :443 port in
             // sourceOrigin even when the allowed origin rule omits it.
             if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
-            // Reply on the injected object's own channel. A window message
-            // has different delivery and origin semantics on some WebViews.
-            webReplyProxy = replyProxy
             val payload = try { JSONObject(message.data ?: "{}") } catch (error: Exception) { JSONObject() }
             when (payload.optString("command")) {
                 "status" -> publishHealthStatus()
@@ -231,6 +224,9 @@ class MainActivity : AppCompatActivity() {
     private fun requestHealthPermissions() {
         if (permissionRequestInProgress) return
         permissionRequestInProgress = true
+        // Acknowledge the tap before Health Connect's permission query, which
+        // can exceed the web screen's acknowledgement timeout on some phones.
+        publishPermissionOpening()
         try {
             when (HealthStepReader.sdkStatus(this)) {
                 HealthConnectClient.SDK_AVAILABLE -> lifecycleScope.launch {
@@ -245,7 +241,6 @@ class MainActivity : AppCompatActivity() {
                         }
                         // Request the essential Steps grant on its own. The optional
                         // background grant has a separate action in Settings.
-                        publishPermissionOpening()
                         healthPermissionLauncher.launch(setOf(HealthStepReader.readStepsPermission))
                     } catch (error: Exception) {
                         permissionRequestInProgress = false
@@ -463,26 +458,17 @@ class MainActivity : AppCompatActivity() {
     private fun sendWebPayload(payload: JSONObject) {
         if (!pageLoaded) return
         webView.post {
-            val reply = webReplyProxy
-            if (reply != null) {
-                try {
-                    reply.postMessage(payload.toString())
-                    return@post
-                } catch (error: Exception) {
-                    Log.w("VFIT Health Connect", "Bridge reply failed; using main-frame message", error)
-                    webReplyProxy = null
-                }
-            }
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.POST_WEB_MESSAGE)) {
-                WebViewCompat.postWebMessage(
-                    webView,
-                    WebMessageCompat(payload.toString()),
-                    Uri.parse(APP_ORIGIN)
-                )
-            } else {
-                val quoted = JSONObject.quote(payload.toString())
-                webView.evaluateJavascript("window.postMessage($quoted, '$APP_ORIGIN');", null)
-            }
+            // Only the packaged main frame receives Health Connect data. This
+            // route works for startup/resume reads even before the page has
+            // sent a bridge command or acquired a JavaScriptReplyProxy.
+            if (!isTrustedOrigin(Uri.parse(webView.url ?: ""))) return@post
+            val quoted = JSONObject.quote(payload.toString())
+            webView.evaluateJavascript(
+                "if (typeof window.__vfitReceiveNativeStepPayload === 'function') " +
+                    "window.__vfitReceiveNativeStepPayload($quoted); " +
+                    "else window.postMessage($quoted, '$APP_ORIGIN');",
+                null
+            )
         }
     }
 
