@@ -83,8 +83,8 @@
                             <p class="text-[10px] font-bold ${entry.reached ? 'text-emerald-600' : 'text-slate-400'}">${escapeHtml(progressText)}</p>
                         </div>
                     </div>
-                    <div class="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div role="progressbar" aria-label="${escapeHtml(dateLabel)} step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${cappedProgress}" class="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style="width:${cappedProgress}%"></div>
+                    <div class="vfit-goal-track h-2.5 w-full overflow-hidden rounded-full">
+                        <div role="progressbar" aria-label="${escapeHtml(dateLabel)} step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${cappedProgress}" class="vfit-goal-fill h-full rounded-full" style="width:${cappedProgress}%"></div>
                     </div>
                 </div>`;
         }).join('');

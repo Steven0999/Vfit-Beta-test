@@ -377,6 +377,17 @@
             --tw-gradient-stops: transparent !important;
         }
 
+        /* Goal progress: orange shows the completed portion inside a grey outline. */
+        html body .vfit-goal-track {
+            background-color: var(--vfit-panel-2) !important;
+            border: 1px solid #6b7280 !important;
+        }
+        html body .vfit-goal-fill {
+            background: var(--vfit-orange) !important;
+            border: 0 !important;
+        }
+        html body #calorie-progress-track { color: #6b7280 !important; }
+
         /* ============================================================
            WORKOUT SECTION — grey panel · black fields · orange text
            Also sizes the exercise card so it always fits fully on screen

@@ -182,7 +182,7 @@
                 <div class="glass-card rounded-[2.5rem] p-8 flex flex-col items-center relative overflow-hidden">
                     <div class="relative w-48 h-48 flex items-center justify-center">
                         <svg class="w-full h-full" viewBox="0 0 192 192">
-                            <circle class="text-slate-100" stroke-width="12" stroke="currentColor" fill="transparent" r="85" cx="96" cy="96" />
+                            <circle id="calorie-progress-track" class="text-slate-100" stroke-width="12" stroke="currentColor" fill="transparent" r="85" cx="96" cy="96" />
                             <circle id="calorie-progress" class="text-indigo-600 progress-ring-circle" stroke-width="12" stroke-dasharray="534" stroke-dashoffset="534" stroke-linecap="round" stroke="currentColor" fill="transparent" r="85" cx="96" cy="96" />
                         </svg>
                         <div class="absolute text-center">
@@ -216,8 +216,8 @@
                         </button>
                     </div>
                     <!-- Progress bar -->
-                    <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-3">
-                        <div id="water-progress-bar" class="h-full bg-gradient-to-r from-cyan-400 to-blue-500 rounded-full transition-all" style="width:0%"></div>
+                    <div class="vfit-goal-track w-full h-3 rounded-full overflow-hidden mb-3">
+                        <div id="water-progress-bar" class="vfit-goal-fill h-full rounded-full transition-all" style="width:0%"></div>
                     </div>
                     <!-- Quick-add buttons -->
                     <div class="grid grid-cols-4 gap-2">
@@ -245,8 +245,8 @@
                         </button>
                     </div>
                     <!-- Progress bar -->
-                    <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-                        <div id="steps-progress-bar" role="progressbar" aria-label="Daily step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" class="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all" style="width:0%"></div>
+                    <div class="vfit-goal-track w-full h-3 rounded-full overflow-hidden">
+                        <div id="steps-progress-bar" role="progressbar" aria-label="Daily step goal progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" class="vfit-goal-fill h-full rounded-full transition-all" style="width:0%"></div>
                     </div>
                     <p id="steps-progress-label" class="mt-2 mb-3 text-center text-[11px] font-bold text-amber-700">0% · 10,000 steps remaining</p>
                     <div class="flex items-center justify-between gap-3 rounded-2xl bg-amber-50 px-3 py-2">
