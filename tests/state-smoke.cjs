@@ -322,6 +322,7 @@ for (const [years, level, tier] of [
 }
 assert.equal(app.basicExerciseNames('gym').length, 4);
 assert.equal(app.basicExerciseNames('home').length, 4);
+assert.equal(app.basicExerciseNames('home')[2], 'Superman', 'the starter Home session must not require a band');
 trainingState.disabledExercises.home = ['Bodyweight Squat'];
 assert.equal(app.basicExerciseNames('home')[0], 'Resistance Bands Squats');
 assert.ok(!app.basicExerciseNames('home').includes('Bodyweight Squat'));

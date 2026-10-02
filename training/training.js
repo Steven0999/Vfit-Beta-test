@@ -1360,7 +1360,7 @@
         const movements = env === 'home' ? [
             ['Bodyweight Squat', 'Resistance Bands Squats', 'Lunges'],
             ['Push Ups', 'Pike Push Ups'],
-            ['Resistance Band Back Rows', 'Superman', 'Inverted Row'],
+            ['Superman', 'Resistance Band Back Rows', 'Inverted Row'],
             ['Glute Bridge', 'Step Ups', 'Plank']
         ] : [
             ['Weighted Machine Leg Press', 'Pin Machine Leg Press', 'Squat'],
