@@ -2297,9 +2297,11 @@
     }
 
     function updateMaintenanceCalories(value) {
-        const v = parseInt(value) || 2500;
-        state.goals.calories = v;
-        saveState();
+        setTrackedCalorieGoal(value, 'manual');
+        document.getElementById('maintenance-calories-input').value = state.goals.calories;
+        const goalInput = document.getElementById('calorie-goal-input');
+        if (goalInput) goalInput.value = state.goals.calories;
+        renderDietSafetyStatus();
         renderCalorieTrackingChart();
         renderDashboard();
     }
@@ -2586,8 +2588,9 @@
     // ==========================================================================
 
     function updateCalorieGoal(value) {
-        state.goals.calories = parseInt(value) || 2500;
-        saveState();
+        setTrackedCalorieGoal(value, 'manual');
+        document.getElementById('calorie-goal-input').value = state.goals.calories;
+        renderDietSafetyStatus();
         renderDashboard();
     }
 

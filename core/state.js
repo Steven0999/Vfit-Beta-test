@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.40';
+    const VFIT_APP_VERSION = '2.1.0-beta.41';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -3410,10 +3410,14 @@
 
     /** The normal goal remains untouched; only a completed daily plan can override it. */
     function getDailyCalorieTarget(dateKey) {
+        const today = localDateKey();
+        const safety = typeof renderDietSafetyStatus === 'function' ? renderDietSafetyStatus() : null;
         const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
+        if (dateKey === today && safety?.phase === 'maintenance') return baseline;
         const record = readinessRecordForDate(dateKey);
         if (record && record.status === 'completed' && parseInt(record.recommendedCalories, 10) > 0) {
-            return parseInt(record.recommendedCalories, 10);
+            const bmr = typeof getBMR === 'function' ? getBMR() : null;
+            return Math.max(parseInt(record.recommendedCalories, 10), bmr || 0);
         }
         return baseline;
     }
@@ -3751,6 +3755,13 @@
 
         const nutritionTarget = document.getElementById('nutrition-calorie-target');
         if (nutritionTarget) nutritionTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()} kcal`;
+        const nutritionTdee = document.getElementById('nutrition-tdee');
+        if (nutritionTdee) {
+            const estimate = typeof calculateEnergyExpenditure === 'function' ? calculateEnergyExpenditure() : null;
+            nutritionTdee.textContent = estimate
+                ? `Estimated daily energy expenditure (TDEE): ${estimate.maintenance.toLocaleString()} kcal`
+                : 'Set About You and log a weight to estimate daily energy expenditure.';
+        }
 
         const nutritionCard = document.getElementById('nutrition-readiness-card');
         if (nutritionCard) {
@@ -5193,6 +5204,8 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         userGoals: [],
         // Diet goal for calorie targeting: 'lose' | 'maintain' | 'gain'
         dietGoal: { mode: '', rate: 1, rateUnit: 'lbs', gainRate: 250 },
+        // Date-based guard for planned deficits of 1,000 kcal/day or more.
+        dietSafety: { targetChosen: false, legacyGoalChecked: false, aggressiveSince: null, maintenanceStart: null, maintenanceUntil: null, lastMaintenance: null },
         // Saved coaching answers used to personalise shift nutrition and meal ideas.
         dietaryProfile: {
             completed: false,
@@ -5383,6 +5396,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         });
         normalized.goals = Object.assign({}, DEFAULT_STATE.goals, isPlainRecord(raw.goals) ? raw.goals : {});
         normalized.dietGoal = Object.assign({}, DEFAULT_STATE.dietGoal, isPlainRecord(raw.dietGoal) ? raw.dietGoal : {});
+        normalized.dietSafety = Object.assign({}, DEFAULT_STATE.dietSafety, isPlainRecord(raw.dietSafety) ? raw.dietSafety : {});
         normalized.dietaryProfile = Object.assign({}, DEFAULT_STATE.dietaryProfile, isPlainRecord(raw.dietaryProfile) ? raw.dietaryProfile : {});
         normalized.dietaryProfile.pattern = ['balanced', 'vegan', 'vegetarian', 'ketogenic'].includes(normalized.dietaryProfile.pattern)
             ? normalized.dietaryProfile.pattern

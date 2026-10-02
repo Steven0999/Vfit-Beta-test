@@ -1170,7 +1170,7 @@
     }
 
     // ==========================================================================
-    // MAINTENANCE CALORIES (Mifflin-St Jeor) + BMI
+    // MAINTENANCE CALORIES (Mifflin-St Jeor + logged activity) + BMI
     // ==========================================================================
 
     const ACTIVITY_MULTIPLIERS = {
@@ -1181,23 +1181,95 @@
         very_active: 1.9
     };
 
-    /**
-     * Calculate maintenance (TDEE) from profile.
-     * Returns null if any required field is missing.
-     * Uses the user's most recent recorded weight from metricsHistory.
-     */
-    function calculateMaintenanceCalories() {
+    // Seven complete local days smooth out one unusually long walk or workout.
+    // The log-based baseline includes resting needs and a modest allowance for
+    // unmeasured daily activity/food digestion. Exercise uses NET METs so resting
+    // energy is not counted twice. RIR is only a small intensity cue, not a meter.
+    function calculateEnergyExpenditure(todayKey) {
         const p = state.userProfile || {};
-        if (!p.gender || !p.age || !p.heightCm || !p.activityLevel) return null;
-
-        const latestWeight = getLatestWeightKg();
-        if (!latestWeight) return null;
-
+        const weight = Number(getLatestWeightKg());
         const bmr = getBMR();
-        if (!bmr) return null;
+        if (!bmr || !weight || !ACTIVITY_MULTIPLIERS[p.activityLevel]) return null;
+        const today = /^\d{4}-\d{2}-\d{2}$/.test(String(todayKey || '')) ? todayKey : localDateKey();
+        const [year, month, day] = today.split('-').map(Number);
+        const dates = Array.from({ length: 7 }, (_, index) => {
+            const date = new Date(year, month - 1, day - index - 1, 12);
+            return localDateKey(date);
+        });
+        const days = new Set(dates);
+        const strideMetres = Number(p.heightCm) * 0.00414;
+        const cardioDistanceByDay = {};
+        const cardioLogDays = new Set();
+        let cardio = 0, strength = 0, rirTotal = 0, rirCount = 0;
+        (state.cardioLogs || []).forEach(log => {
+            if (!log || !days.has(log.date)) return;
+            const hours = Math.min(6, Math.max(0, Number(log.duration) || 0) / 60);
+            if (!hours) return;
+            cardioLogDays.add(log.date);
+            const distance = Math.min(80, Math.max(0, Number(log.distance) || 0));
+            const speed = distance / hours;
+            const type = String(log.type || '').toLowerCase();
+            const met = type === 'outdoor-running' || type === 'treadmill'
+                ? (speed >= 7 ? Math.min(13, 6.5 + (speed - 7) * 0.8) : 3.5)
+                : type === 'walking' ? 3.5 : type === 'hiking' ? 5.5
+                : type === 'cycling' ? 6.8 : type === 'swimming' ? 6
+                : type === 'rowing' ? 5 : type === 'elliptical' ? 5 : 4;
+            cardio += Math.max(0, met - 1) * weight * hours;
+            if (['outdoor-running', 'treadmill', 'walking', 'hiking'].includes(type)) {
+                cardioDistanceByDay[log.date] = (cardioDistanceByDay[log.date] || 0) + distance;
+            }
+        });
+        (state.workoutHistory || []).forEach(workout => {
+            if (!workout || !days.has(workout.date)) return;
+            const timer = String(workout.duration || '').split(':').map(Number);
+            const legacySeconds = timer.length === 3 && timer.every(Number.isFinite)
+                ? timer[0] * 3600 + timer[1] * 60 + timer[2] : 0;
+            const hours = Math.min(4, Math.max(0, Number(workout.durationSeconds) || legacySeconds) / 3600);
+            if (!hours) return;
+            if (workout.category === 'cardio') {
+                // The cardio form may also contain this session. Use the cardio
+                // log when both surfaces logged cardio on the same day.
+                if (!cardioLogDays.has(workout.date)) cardio += (5 - 1) * weight * hours;
+                return;
+            }
+            const rir = (workout.exercises || []).flatMap(exercise => (exercise.sets || [])
+                .filter(set => set.rir !== '' && set.rir !== null && set.rir !== undefined).map(set => Number(set.rir)))
+                .filter(value => Number.isFinite(value) && value >= 0 && value <= 10);
+            const averageRir = rir.length ? rir.reduce((sum, value) => sum + value, 0) / rir.length : null;
+            if (rir.length) { rirTotal += rir.reduce((sum, value) => sum + value, 0); rirCount += rir.length; }
+            const met = averageRir === null ? 3.5 : averageRir <= 2 ? 4 : averageRir >= 6 ? 3 : 3.5;
+            strength += (met - 1) * weight * hours;
+        });
+        const stepDays = dates.filter(date => Object.prototype.hasOwnProperty.call(state.stepsLogs || {}, date) &&
+            Number.isFinite(Number(state.stepsLogs[date])) && Number(state.stepsLogs[date]) >= 0);
+        let walking = 0, averageSteps = 0;
+        if (stepDays.length) {
+            let overlapKm = 0;
+            const loggedWalkingKm = stepDays.reduce((sum, date) => {
+                const steps = Math.min(50000, Number(state.stepsLogs[date]));
+                averageSteps += steps / stepDays.length;
+                const totalKm = steps * strideMetres / 1000;
+                // Phone steps already include running/treadmill steps on many devices.
+                overlapKm += Math.min(totalKm, cardioDistanceByDay[date] || 0);
+                return sum + totalKm;
+            }, 0) / stepDays.length;
+            walking = Math.max(0, (loggedWalkingKm - overlapKm / 7) * weight * 0.5);
+        }
+        const hasLogs = stepDays.length > 0 || cardio > 0 || strength > 0;
+        const baseline = bmr * (hasLogs ? 1.1 : ACTIVITY_MULTIPLIERS[p.activityLevel]);
+        const result = {
+            bmr, baseline: Math.round(baseline), walking: Math.round(walking),
+            strength: Math.round(strength / 7), cardio: Math.round(cardio / 7),
+            averageSteps: Math.round(averageSteps), stepDays: stepDays.length,
+            averageRir: rirCount ? Math.round(rirTotal / rirCount * 10) / 10 : null,
+            source: hasLogs ? 'logged' : 'profile'
+        };
+        result.maintenance = Math.round(baseline + walking + strength / 7 + cardio / 7);
+        return result;
+    }
 
-        const multiplier = ACTIVITY_MULTIPLIERS[p.activityLevel] || 1.2;
-        return Math.round(bmr * multiplier);
+    function calculateMaintenanceCalories() {
+        return calculateEnergyExpenditure()?.maintenance || null;
     }
 
     // Mifflin-St Jeor BMR (before activity). This is the floor calories should
@@ -1205,11 +1277,138 @@
     function getBMR() {
         const p = state.userProfile || {};
         const w = getLatestWeightKg();
-        if (!p.gender || !p.age || !p.heightCm || !w) return null;
+        // Adult weight-planning equations are not used for younger members.
+        if (!p.gender || !p.age || Number(p.age) < 18 || !p.heightCm || !w) return null;
         if (p.gender === 'male') {
             return Math.round(10 * w + 6.25 * p.heightCm - 5 * p.age + 5);
         }
         return Math.round(10 * w + 6.25 * p.heightCm - 5 * p.age - 161);
+    }
+
+    const AGGRESSIVE_DEFICIT_KCAL = 1000;
+    const AGGRESSIVE_DEFICIT_DAYS = 56;
+    const MAINTENANCE_BREAK_DAYS = 7;
+
+    function dietSafetyState() {
+        if (!state.dietSafety || typeof state.dietSafety !== 'object') state.dietSafety = {};
+        return state.dietSafety;
+    }
+
+    function dietDateOffset(dateKey, days) {
+        const [year, month, day] = String(dateKey).split('-').map(Number);
+        return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+    }
+
+    function dietDaysBetween(start, end) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start || ''))) return 0;
+        return Math.round((Date.parse(end + 'T12:00:00Z') - Date.parse(start + 'T12:00:00Z')) / 86400000);
+    }
+
+    // Reconcile on app open and when the current target is read. A full eight
+    // weeks at a >=1000 kcal planned deficit starts a seven-local-day break.
+    // A completed break leaves the goal at maintenance until the user chooses
+    // another plan; changing a field cannot silently restart the cut.
+    function reconcileDietSafety(todayKey) {
+        const today = /^\d{4}-\d{2}-\d{2}$/.test(String(todayKey || '')) ? todayKey : localDateKey();
+        const safety = dietSafetyState();
+        const maintenance = calculateMaintenanceCalories() || Number(safety.lastMaintenance) || null;
+        const bmr = getBMR();
+        if (!maintenance) return { phase: 'unknown' };
+        let changed = false, notice = '';
+        safety.lastMaintenance = maintenance;
+        if (safety.maintenanceUntil && today >= safety.maintenanceUntil) {
+            safety.maintenanceStart = null;
+            safety.maintenanceUntil = null;
+            safety.aggressiveSince = null;
+            state.goals.calories = maintenance;
+            dietGoalState().mode = 'maintain';
+            changed = true;
+            notice = 'Your maintenance week is complete. You may choose a new deficit if you wish.';
+        }
+        if (safety.maintenanceUntil && today < safety.maintenanceUntil) {
+            if (state.goals.calories !== maintenance) { state.goals.calories = maintenance; changed = true; }
+            if (state.dietGoal?.mode !== 'maintain') { dietGoalState().mode = 'maintain'; changed = true; }
+            if (changed) saveState();
+            return { phase: 'maintenance', maintenance, until: safety.maintenanceUntil,
+                daysLeft: dietDaysBetween(today, safety.maintenanceUntil) };
+        }
+        if (!bmr) {
+            if (changed) saveState();
+            if (notice) showToast(notice, 9000);
+            return { phase: 'unknown' };
+        }
+        if (!safety.legacyGoalChecked) {
+            safety.targetChosen = safety.targetChosen || Number(state.goals.calories) !== DEFAULT_STATE.goals.calories ||
+                state.dietGoal?.mode === 'lose';
+            safety.legacyGoalChecked = true;
+            changed = true;
+        }
+        if (Number(state.goals.calories) < bmr) {
+            state.goals.calories = bmr;
+            changed = true;
+        }
+        const aggressive = safety.targetChosen && maintenance - Number(state.goals.calories) >= AGGRESSIVE_DEFICIT_KCAL;
+        if (aggressive) {
+            if (!safety.aggressiveSince || safety.aggressiveSince > today) {
+                safety.aggressiveSince = today;
+                changed = true;
+            } else if (dietDaysBetween(safety.aggressiveSince, today) >= AGGRESSIVE_DEFICIT_DAYS) {
+                safety.maintenanceStart = today;
+                safety.maintenanceUntil = dietDateOffset(today, MAINTENANCE_BREAK_DAYS);
+                safety.aggressiveSince = null;
+                state.goals.calories = maintenance;
+                dietGoalState().mode = 'maintain';
+                changed = true;
+                notice = `Eight weeks at a planned 1,000 kcal/day deficit: your goal is now maintenance (${maintenance.toLocaleString()} kcal) for seven days, until ${safety.maintenanceUntil}.`;
+            }
+        } else if (safety.aggressiveSince) {
+            safety.aggressiveSince = null;
+            changed = true;
+        }
+        if (changed) saveState();
+        if (notice) showToast(notice, 9000);
+        if (safety.maintenanceUntil) return { phase: 'maintenance', maintenance, until: safety.maintenanceUntil, daysLeft: 7 };
+        return aggressive ? { phase: 'aggressive', maintenance, since: safety.aggressiveSince,
+            days: dietDaysBetween(safety.aggressiveSince, today) } : { phase: 'regular', maintenance };
+    }
+
+    function setTrackedCalorieGoal(value, source) {
+        const desired = Math.round(Number(value));
+        const estimate = calculateEnergyExpenditure();
+        if (!Number.isFinite(desired) || desired <= 0 || !estimate) {
+            showToast('Complete About You and log a weight before changing your calorie target.');
+            return false;
+        }
+        const safety = reconcileDietSafety();
+        if (safety.phase === 'maintenance') {
+            showToast(`Maintenance week: calorie goal stays at ${safety.maintenance.toLocaleString()} kcal until ${safety.until}.`, 7000);
+            return false;
+        }
+        const target = Math.max(desired, estimate.bmr);
+        if (target !== desired) showToast(`Goal raised to your estimated BMR floor of ${estimate.bmr.toLocaleString()} kcal.`, 7000);
+        state.goals.calories = target;
+        if (source === 'manual') dietGoalState().mode = '';
+        const safetyState = dietSafetyState();
+        safetyState.targetChosen = true;
+        safetyState.legacyGoalChecked = true;
+        if (estimate.maintenance - target >= AGGRESSIVE_DEFICIT_KCAL) {
+            if (!safetyState.aggressiveSince) safetyState.aggressiveSince = localDateKey();
+        } else safetyState.aggressiveSince = null;
+        saveState();
+        return true;
+    }
+
+    function renderDietSafetyStatus() {
+        const status = reconcileDietSafety();
+        const elements = [document.getElementById('deficit-safety-status'), document.getElementById('deficit-diary-status')];
+        let message = '';
+        if (status.phase === 'maintenance') {
+            message = `Maintenance week: ${status.maintenance.toLocaleString()} kcal/day until ${status.until} (${status.daysLeft} day${status.daysLeft === 1 ? '' : 's'} left). Aggressive dieting is unavailable during this week; afterwards you can choose it again.`;
+        } else if (status.phase === 'aggressive') {
+            message = `Aggressive deficit: day ${status.days + 1} of 56. After eight weeks, VFIT will set one week at maintenance. This counter starts when VFIT first records this goal.`;
+        }
+        elements.forEach(element => { if (element) { element.textContent = message; element.classList.toggle('hidden', !message); } });
+        return status;
     }
 
     // ==========================================================================
@@ -1295,6 +1494,7 @@
 
     function renderDietGoal() {
         const g = dietGoalState();
+        renderDietSafetyStatus();
         // Highlight the selected mode button
         ['lose', 'maintain', 'gain'].forEach(m => {
             const btn = document.getElementById('goal-btn-' + m);
@@ -1321,6 +1521,11 @@
     }
 
     function setDietGoal(mode) {
+        if (mode === 'lose' && reconcileDietSafety().phase === 'maintenance') {
+            showToast('The maintenance week must finish before a deficit can be selected.', 7000);
+            renderDietGoal();
+            return;
+        }
         dietGoalState().mode = mode;
         saveState();
         renderDietGoal();
@@ -1345,6 +1550,7 @@
         const applyBtn = document.getElementById('goal-apply-btn');
         if (!result) return;
 
+        const safety = renderDietSafetyStatus();
         const maintenance = calculateMaintenanceCalories();
         const bmr = getBMR();
 
@@ -1356,7 +1562,7 @@
             return;
         }
 
-        let target, note = '';
+        let target, note = '', belowFloor = false;
 
         if (g.mode === 'maintain') {
             target = maintenance;
@@ -1370,9 +1576,16 @@
             // 500 kcal/day deficit per lb/week; 1000 kcal/day per kg/week
             const perUnit = g.rateUnit === 'kg' ? 1000 : 500;
             const dailyDeficit = Math.round(rate * perUnit);
-            target = maintenance - dailyDeficit;
+            const requestedTarget = maintenance - dailyDeficit;
+            target = Math.max(requestedTarget, bmr);
+            belowFloor = requestedTarget < bmr;
             const unitLabel = g.rateUnit === 'kg' ? 'kg' : 'lbs';
-            note = `Maintenance (${maintenance.toLocaleString()}) − ${dailyDeficit.toLocaleString()} deficit to lose ~${rate}${unitLabel}/week.`;
+            note = `Estimated TDEE (${maintenance.toLocaleString()}) − ${dailyDeficit.toLocaleString()} requested deficit to lose ~${rate}${unitLabel}/week.${belowFloor ? ' Capped at estimated BMR.' : ''}`;
+        }
+
+        if (safety.phase === 'maintenance') {
+            target = maintenance;
+            note = `Maintenance week until ${safety.until}. A deficit can be chosen again afterwards.`;
         }
 
         // Show the result
@@ -1380,31 +1593,28 @@
         document.getElementById('goal-target-cals').textContent = target.toLocaleString();
         document.getElementById('goal-target-note').textContent = note;
 
-        // SAFETY: stop if the target drops below BMR
-        if (g.mode === 'lose' && target < bmr) {
+        if (belowFloor && safety.phase !== 'maintenance') {
             warning.classList.remove('hidden');
-            document.getElementById('goal-bmr-text').innerHTML =
-                `Eating <b>${target.toLocaleString()} kcal</b> is under your BMR of <b>${bmr.toLocaleString()} kcal</b> — the energy your body needs at rest just to keep organs working. Eating below this is not recommended: it can cost you muscle, slow your metabolism, and harm your health. ` +
-                `Aim for a <b>500–1000 kcal/day</b> deficit at most — try a slower rate. Your lowest sensible target is around your maintenance minus 1000 (${Math.max(bmr, maintenance - 1000).toLocaleString()} kcal).`;
-            // Block applying an unsafe target
-            if (applyBtn) applyBtn.classList.add('hidden');
+            document.getElementById('goal-bmr-text').textContent =
+                `Requested target is below your estimated BMR (${bmr.toLocaleString()} kcal). VFIT raised it to ${target.toLocaleString()} kcal. BMR is an estimate, not a guarantee of adequate fuelling.`;
         } else {
             if (warning) warning.classList.add('hidden');
-            if (applyBtn) applyBtn.classList.remove('hidden');
-            window._pendingGoalTarget = target;
         }
+        if (applyBtn) applyBtn.classList.toggle('hidden', safety.phase === 'maintenance');
+        window._pendingGoalTarget = target;
     }
 
     function applyGoalCalories() {
         const target = window._pendingGoalTarget;
         if (!target) return;
-        state.goals.calories = target;
-        saveState();
+        if (!setTrackedCalorieGoal(target, 'goal')) return;
         // Reflect in the calorie goal input + maintenance note
         const input = document.getElementById('calorie-goal-input');
-        if (input) input.value = target;
+        if (input) input.value = state.goals.calories;
         renderMaintenanceDisplay();
-        showToast(`Calorie goal set to ${target.toLocaleString()} kcal 🎯`);
+        renderDietSafetyStatus();
+        renderDashboard();
+        showToast(`Calorie goal set to ${state.goals.calories.toLocaleString()} kcal 🎯`);
     }
 
     function getLatestWeightKg() {
@@ -1437,7 +1647,8 @@
         const display = document.getElementById('maintenance-display');
         if (!display) return;
 
-        const maintenance = calculateMaintenanceCalories();
+        const estimate = calculateEnergyExpenditure();
+        const maintenance = estimate?.maintenance || null;
         const bmi = calculateBMI();
 
         if (!maintenance && !bmi) {
@@ -1451,12 +1662,20 @@
             const weight = getLatestWeightKg();
             const p = state.userProfile;
             document.getElementById('maintenance-explanation').textContent =
-                `Based on ${weight}kg, ${p.heightCm}cm, ${p.age}y, ${p.gender}, ${p.activityLevel.replace('_', ' ')} activity.`;
+                `Estimated TDEE using ${weight} kg, ${p.heightCm} cm, ${p.age}y, ${p.gender}. ${estimate.source === 'profile' ? 'No recent activity logs: profile activity is the fallback.' : 'Recent complete days: logged steps and exercise are included.'}`;
+            const stepDetail = estimate.stepDays
+                ? `walking +${estimate.walking.toLocaleString()} (${estimate.averageSteps.toLocaleString()} steps/day across ${estimate.stepDays} logged day${estimate.stepDays === 1 ? '' : 's'})`
+                : 'walking unavailable (no saved steps)';
+            document.getElementById('energy-breakdown').textContent = estimate.source === 'logged'
+                ? `BMR ${estimate.bmr.toLocaleString()} · base ${estimate.baseline.toLocaleString()} · ${stepDetail} · strength +${estimate.strength.toLocaleString()}${estimate.averageRir === null ? '' : ` (average RIR ${estimate.averageRir})`} · cardio +${estimate.cardio.toLocaleString()} kcal/day. Seven completed days; exercise and steps are estimates.`
+                : `Estimated BMR ${estimate.bmr.toLocaleString()} kcal/day × profile activity. Add steps and workouts to personalise this estimate.`;
         } else {
             document.getElementById('maintenance-value').textContent = '--';
             document.getElementById('maintenance-explanation').textContent =
-                'Fill in all About You fields + log a weight in Metrics to calculate.';
+                'For adults 18+: fill in About You and log a weight in Metrics to calculate.';
+            document.getElementById('energy-breakdown').textContent = '';
         }
+        renderDietSafetyStatus();
 
         // BMI section
         const bmiSection = document.getElementById('bmi-display');
@@ -1493,9 +1712,8 @@
             note = adj.note;
         }
 
-        state.goals.calories = target;
-        saveState();
-        document.getElementById('calorie-goal-input').value = target;
+        if (!setTrackedCalorieGoal(target, 'goal')) return;
+        document.getElementById('calorie-goal-input').value = state.goals.calories;
 
         const noteEl = document.getElementById('goal-adjusted-note');
         if (noteEl) {
@@ -1522,14 +1740,16 @@
                 const maxDeficit = goal.details.style === 'toned' ? 500 : 750;
                 if (deficit > maxDeficit) {
                     deficit = maxDeficit;
+                    const target = Math.max(getBMR() || 0, maintenance - deficit);
                     return {
-                        target: maintenance - deficit,
-                        note: `Capped at ${maxDeficit} kcal/day deficit for safety — your timeframe may need to be longer.`
+                        target,
+                        note: `Requested deficit capped at ${maxDeficit} kcal/day${target > maintenance - deficit ? ' and target raised to estimated BMR' : ''}; your timeframe may need to be longer.`
                     };
                 }
+                const target = Math.max(getBMR() || 0, maintenance - deficit);
                 return {
-                    target: maintenance - deficit,
-                    note: `Deficit: ${deficit} kcal/day for ${kg}kg in ${weeks}w → ${maintenance - deficit} kcal target.`
+                    target,
+                    note: `Requested deficit: ${deficit} kcal/day for ${kg}kg in ${weeks}w → ${target} kcal target${target > maintenance - deficit ? ' (BMR floor)' : ''}.`
                 };
             }
         }
@@ -1821,8 +2041,8 @@
         const maintenance = calculateMaintenanceCalories();
         if (maintenance && (currentGoalFocus === 'weight_loss' || currentGoalFocus === 'muscle_gain')) {
             const adj = calculateGoalCalorieAdjustment(newGoal, maintenance);
-            state.goals.calories = adj.target;
-            showToast('Goal saved! Calorie target → ' + adj.target);
+            if (setTrackedCalorieGoal(adj.target, 'goal')) showToast('Goal saved! Calorie target → ' + state.goals.calories);
+            else showToast('Goal saved. Calorie target remains at maintenance for this week.');
         } else {
             showToast('Goal added! 🎯');
         }

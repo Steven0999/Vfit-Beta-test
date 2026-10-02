@@ -286,6 +286,15 @@ const expose = `
   editPreviousMealItem,
   setEditAmountType,
   saveEditedMeal,
+  calculateEnergyExpenditure,
+  calculateMaintenanceCalories,
+  getBMR,
+  setTrackedCalorieGoal,
+  reconcileDietSafety,
+  getDailyCalorieTarget,
+  updateCalorieGoal,
+  updateMaintenanceCalories,
+  setDietGoal,
   getExperienceLevel,
   trainingExperienceTier,
   applyTrainingExperienceMode,
@@ -318,7 +327,8 @@ sandbox.navigator.onLine = false;
 assert.equal(app.canManageFoodDatabase(), false);
 app.updateFoodDatabasePermissionUI();
 assert.equal(document.getElementById('food-database-add-button').classList.contains('hidden'), true);
-assert.equal(document.getElementById('diary-add-own-food').classList.contains('hidden'), false);
+assert.ok(html.includes('id="search-add-own-food"'), 'search must retain manual entry');
+assert.ok(!html.includes('id="diary-add-own-food"'), 'diary shortcut is removed');
 app.openManualDiaryFood();
 assert.equal(document.getElementById('manual-diary-food-modal').style.display, 'flex');
 document.getElementById('diary-food-name').value = 'My muffin';
@@ -403,6 +413,103 @@ app.closeManualDiaryFood();
 app.setUser(null);
 app.setState(app.defaultState());
 sandbox.navigator.onLine = true;
+
+// Activity estimates use completed days, avoid counting logged running steps
+// twice, and adjust the lifting component modestly from recorded RIR.
+const energyState = app.defaultState();
+energyState.userProfile = { gender: 'male', age: 30, heightCm: 180, activityLevel: 'moderate' };
+energyState.metricsHistory = [{ date: '2026-10-01', weight: 100 }];
+app.setState(energyState);
+app.setUser({ uid: 'energy-test-user' });
+const energyToday = app.localDateKey();
+const energyYesterday = app.offsetLocalDateKey(energyToday, -1);
+const fallbackTdee = app.calculateMaintenanceCalories();
+energyState.stepsLogs[energyYesterday] = 22000;
+energyState.workoutHistory = [{ date: energyYesterday, category: 'weights', durationSeconds: 3600,
+  exercises: [{ name: 'Squat', sets: [{ reps: '8', weight: '80', rir: '1' }] }] }];
+energyState.cardioLogs = [{ date: energyYesterday, type: 'outdoor-running', duration: 30, distance: 5 }];
+const activeTdee = app.calculateEnergyExpenditure(energyToday);
+assert.equal(activeTdee.source, 'logged');
+assert.equal(activeTdee.stepDays, 1);
+assert.equal(activeTdee.averageSteps, 22000);
+assert.equal(activeTdee.averageRir, 1);
+assert.ok(activeTdee.walking > 0 && activeTdee.strength > 0 && activeTdee.cardio > 0);
+assert.ok(activeTdee.maintenance !== fallbackTdee);
+energyState.workoutHistory[0].exercises[0].sets[0].rir = '8';
+assert.ok(app.calculateEnergyExpenditure(energyToday).strength < activeTdee.strength);
+energyState.workoutHistory[0].exercises[0].sets[0].rir = '1';
+energyState.cardioLogs = [];
+assert.ok(app.calculateEnergyExpenditure(energyToday).walking > activeTdee.walking,
+  'recorded cardio distance must be removed from overlapping step distance');
+energyState.workoutHistory.push({ date: energyYesterday, category: 'cardio', durationSeconds: 1800 });
+assert.ok(app.calculateEnergyExpenditure(energyToday).cardio > 0,
+  'cardio recorded only as a workout is still counted');
+energyState.workoutHistory.pop();
+energyState.cardioLogs = [{ date: energyYesterday, type: 'outdoor-running', duration: 30, distance: 5 }];
+assert.equal(app.calculateMaintenanceCalories(), activeTdee.maintenance);
+const defaultHighActivity = app.defaultState();
+defaultHighActivity.userProfile = energyState.userProfile;
+defaultHighActivity.metricsHistory = energyState.metricsHistory;
+defaultHighActivity.stepsLogs[energyYesterday] = 40000;
+app.setState(defaultHighActivity);
+assert.ok(app.calculateMaintenanceCalories() - defaultHighActivity.goals.calories >= 1000);
+assert.equal(app.reconcileDietSafety(energyToday).phase, 'regular',
+  'the untouched default calorie goal must not silently start an aggressive diet');
+assert.equal(defaultHighActivity.dietSafety.targetChosen, false);
+defaultHighActivity.userProfile = { ...defaultHighActivity.userProfile, age: 16 };
+assert.equal(app.calculateEnergyExpenditure(energyToday), null, 'adult energy targets are not calculated for minors');
+assert.equal(app.setTrackedCalorieGoal(1000, 'manual'), false);
+assert.equal(defaultHighActivity.goals.calories, 2500);
+app.setState(energyState);
+
+// Manual and planned goals share one BMR floor. A continuous 56-day planned
+// deficit of at least 1,000 kcal triggers seven local dates at maintenance.
+const bmrFloor = app.getBMR();
+assert.equal(app.setTrackedCalorieGoal(200, 'manual'), true);
+assert.equal(energyState.goals.calories, bmrFloor);
+assert.ok(energyState.goals.calories >= bmrFloor);
+const aggressiveTarget = activeTdee.maintenance - 1000;
+assert.ok(aggressiveTarget >= bmrFloor, 'the fixture supports a 1000 kcal deficit above BMR');
+app.updateCalorieGoal(String(aggressiveTarget));
+assert.equal(energyState.goals.calories, aggressiveTarget);
+assert.equal(app.reconcileDietSafety(energyToday).phase, 'aggressive');
+energyState.dietSafety.aggressiveSince = app.offsetLocalDateKey(energyToday, -55);
+assert.equal(app.reconcileDietSafety(energyToday).phase, 'aggressive');
+energyState.dietSafety.aggressiveSince = app.offsetLocalDateKey(energyToday, -56);
+const maintenanceWeek = app.reconcileDietSafety(energyToday);
+assert.equal(maintenanceWeek.phase, 'maintenance');
+assert.equal(maintenanceWeek.daysLeft, 7);
+assert.equal(energyState.goals.calories, activeTdee.maintenance);
+assert.equal(app.getDailyCalorieTarget(energyToday), activeTdee.maintenance);
+energyState.dailyReadiness[energyToday] = { status: 'completed', recommendedCalories: 200 };
+assert.equal(app.getDailyCalorieTarget(energyToday), activeTdee.maintenance,
+  'readiness cannot override the enforced maintenance week');
+const savedProfile = energyState.userProfile;
+energyState.userProfile = {};
+assert.equal(app.getDailyCalorieTarget(energyToday), activeTdee.maintenance,
+  'the break remains enforced if profile information is temporarily unavailable');
+energyState.userProfile = savedProfile;
+app.updateCalorieGoal(String(aggressiveTarget));
+assert.equal(energyState.goals.calories, activeTdee.maintenance);
+app.updateMaintenanceCalories(String(aggressiveTarget));
+assert.equal(energyState.goals.calories, activeTdee.maintenance);
+app.setDietGoal('lose');
+assert.equal(energyState.dietGoal.mode, 'maintain');
+assert.equal(app.normalizeState(energyState).dietSafety.maintenanceUntil, maintenanceWeek.until);
+app.setState(app.defaultState());
+app.loadState('energy-test-user');
+assert.equal(app.reconcileDietSafety(energyToday).phase, 'maintenance', 'maintenance week survives reload');
+assert.equal(app.reconcileDietSafety(app.offsetLocalDateKey(energyToday, 6)).phase, 'maintenance');
+assert.equal(app.reconcileDietSafety(app.offsetLocalDateKey(energyToday, 7)).phase, 'regular');
+assert.equal(app.getState().goals.calories, activeTdee.maintenance, 'maintenance stays selected after the lock');
+assert.equal(app.setTrackedCalorieGoal(aggressiveTarget, 'manual'), true, 'a new aggressive goal is permitted after the week');
+assert.equal(app.getState().dietSafety.aggressiveSince, energyToday);
+app.getState().dailyReadiness[energyToday] = { status: 'completed', recommendedCalories: 200 };
+assert.equal(app.getDailyCalorieTarget(energyToday), bmrFloor, 'readiness never sets an intake target below BMR');
+assert.equal(app.setTrackedCalorieGoal(activeTdee.maintenance - 500, 'manual'), true);
+assert.equal(app.getState().dietSafety.aggressiveSince, null, 'a smaller planned deficit resets the eight-week counter');
+app.setUser(null);
+app.setState(app.defaultState());
 
 // Experience changes the controls, but never rewrites a member's workout history.
 const trainingState = app.defaultState();
