@@ -127,10 +127,59 @@
         return Math.max(0, (session.endedAt || now || Date.now()) - session.startedAt);
     }
 
-    function runRouteSvg(points) {
-        const route = (Array.isArray(points) ? points : []).filter(point =>
+    function validRunMapPoints(points) {
+        return (Array.isArray(points) ? points : []).filter(point => point &&
             Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)) &&
             Math.abs(Number(point.lat)) <= 90 && Math.abs(Number(point.lon)) <= 180);
+    }
+
+    // Three measured landmarks fit the Maps URL waypoint limit on mobile browsers.
+    // These are route references; Google Maps may draw different paths between them.
+    function runReferencePoints(points) {
+        const route = validRunMapPoints(points);
+        if (route.length < 3) return [];
+        const distances = [0];
+        for (let i = 1; i < route.length; i++) {
+            const segment = route[i].breakBefore ? 0 : runPointDistanceMetres(route[i - 1], route[i]);
+            distances.push(distances[i - 1] + segment);
+        }
+        const total = distances[distances.length - 1];
+        if (total < 100) return [];
+        const chosen = new Set([0, route.length - 1]);
+        return [0.25, 0.5, 0.75].map(fraction => {
+            const target = total * fraction;
+            let best = -1;
+            for (let i = 1; i < route.length - 1; i++) {
+                if (chosen.has(i) || route[i].breakBefore || distances[i] < 20 || total - distances[i] < 20) continue;
+                if (best < 0 || Math.abs(distances[i] - target) < Math.abs(distances[best] - target)) best = i;
+            }
+            if (best < 0) return null;
+            chosen.add(best);
+            return { index: best, lat: Number(route[best].lat), lon: Number(route[best].lon), distanceMeters: distances[best] };
+        }).filter(Boolean).sort((a, b) => a.index - b.index);
+    }
+
+    function googleMapsRunUrl(points, currentOnly) {
+        const route = validRunMapPoints(points);
+        if (!route.length) return '';
+        const coord = point => `${Number(point.lat).toFixed(6)},${Number(point.lon).toFixed(6)}`;
+        if (currentOnly || route.length === 1) {
+            return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coord(route[route.length - 1]))}`;
+        }
+        const refs = runReferencePoints(route);
+        const waypoints = refs.length ? `&waypoints=${encodeURIComponent(refs.map(coord).join('|'))}` : '';
+        return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(coord(route[0]))}` +
+            `&destination=${encodeURIComponent(coord(route[route.length - 1]))}&travelmode=walking${waypoints}`;
+    }
+
+    function googleMapsLinkTarget() {
+        // The Android WebView opens off-origin links in Maps via ACTION_VIEW;
+        // browsers keep VFIT open in another tab while a web run is recording.
+        return nativeRunTrackingAvailable() ? '_self' : '_blank';
+    }
+
+    function runRouteSvg(points) {
+        const route = validRunMapPoints(points);
         if (route.length < 2) return '<p class="py-12 text-xs text-slate-400">Waiting for GPS route points…</p>';
         const midLat = route.reduce((sum, p) => sum + Number(p.lat), 0) / route.length;
         const factor = Math.max(0.1, Math.cos(midLat * Math.PI / 180));
@@ -147,12 +196,21 @@
             return `${i === 0 || p.breakBefore ? 'M' : 'L'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
         }).join(' ');
         const start = pos(coords[0]), end = pos(coords[coords.length - 1]);
-        return `<svg viewBox="0 0 400 200" role="img" aria-label="Recorded GPS route from green start to orange finish" class="w-full rounded-xl bg-slate-50">
+        const references = runReferencePoints(route);
+        const markers = references.map((reference, index) => {
+            const point = pos(coords[reference.index]);
+            return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="10" fill="#d97706" stroke="white" stroke-width="2"/>
+                <text x="${point.x.toFixed(1)}" y="${(point.y + 3.7).toFixed(1)}" fill="white" font-size="11" text-anchor="middle" font-weight="bold">${index + 1}</text>`;
+        }).join('');
+        const referenceLabel = references.length
+            ? ` · references ${references.map((reference, index) => `${index + 1}: ${(reference.distanceMeters / 1000).toFixed(2)} km`).join(', ')}` : '';
+        return `<svg viewBox="0 0 400 200" role="img" aria-label="Recorded GPS route with green start, orange finish and numbered reference points" class="w-full rounded-xl bg-slate-50">
             <path d="${path}" fill="none" stroke="#f97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            ${markers}
             <circle cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="6" fill="#10b981"/>
             <circle cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="6" fill="#f97316"/>
             <text x="370" y="24" fill="#64748b" font-size="13" font-weight="bold">N ↑</text>
-        </svg><p class="mt-1 text-[10px] text-slate-500">Route outline · green start, orange finish</p>`;
+        </svg><p class="mt-1 text-[10px] text-slate-500">Recorded GPS · green start, orange finish${referenceLabel}</p>`;
     }
 
     function runPointDistanceMetres(a, b) {
@@ -343,6 +401,20 @@
         document.getElementById('outdoor-run-speed').textContent = current.toFixed(1) + ' km/h';
         document.getElementById('outdoor-run-avg-speed').textContent = avg.toFixed(1) + ' km/h';
         document.getElementById('outdoor-run-route').innerHTML = runRouteSvg(points);
+        const mapsTarget = googleMapsLinkTarget();
+        document.getElementById('outdoor-run-plan-map').target = mapsTarget;
+        const currentMapLink = document.getElementById('outdoor-run-current-map');
+        const currentMapUrl = googleMapsRunUrl(points, true);
+        currentMapLink.classList.toggle('hidden', !currentMapUrl);
+        currentMapLink.target = mapsTarget;
+        if (currentMapUrl) currentMapLink.href = currentMapUrl;
+        else currentMapLink.removeAttribute('href');
+        const routeMapLink = document.getElementById('outdoor-run-reference-map');
+        const routeMapUrl = validRunMapPoints(points).length >= 2 ? googleMapsRunUrl(points, false) : '';
+        routeMapLink.classList.toggle('hidden', !routeMapUrl);
+        routeMapLink.target = mapsTarget;
+        if (routeMapUrl) routeMapLink.href = routeMapUrl;
+        else routeMapLink.removeAttribute('href');
         let status = 'Start when you are ready to run.';
         if (outdoorRunStarting) status = 'Requesting precise location…';
         else if (manualFallback) status = 'No usable GPS route was recorded. Enter the distance below to save the run; average speed will be calculated.';
@@ -390,10 +462,11 @@
         const duration = Number(workout.duration) || 0;
         const speed = Number(workout.avgSpeedKmh) || (duration > 0 ? distance / (duration / 60) : 0);
         const route = Array.isArray(workout.route) ? workout.route : [];
+        const mapUrl = googleMapsRunUrl(route, false);
         content.innerHTML = `<p class="mb-4 text-xs text-slate-500">${escapeHtml(new Date(workout.date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>
             <div class="grid grid-cols-2 gap-3 mb-4">${stat('Distance', distance.toFixed(2) + ' km')}${stat('Duration', duration + ' min')}${stat('Average speed', speed.toFixed(1) + ' km/h')}${stat('Top speed', (Number(workout.maxSpeedKmh) || 0).toFixed(1) + ' km/h')}</div>
             ${workout.trackingSource === 'manual-distance' ? '<p class="mb-3 text-xs text-slate-500">Distance entered manually · average speed calculated from time · no GPS route recorded.</p>' : ''}
-            ${route.length ? `<h4 class="font-black mb-2">GPS route</h4><div class="mb-3">${runRouteSvg(route)}</div><button onclick="exportRunGpx('${escapeJsString(workout.id)}')" class="mb-4 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Export route (GPX)</button>` : ''}
+            ${route.length ? `<h4 class="font-black mb-2">GPS route</h4><div class="mb-3">${runRouteSvg(route)}</div><div class="flex flex-wrap gap-2 mb-3"><button onclick="exportRunGpx('${escapeJsString(workout.id)}')" class="rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Export route (GPX)</button>${mapUrl ? `<a href="${escapeHtml(mapUrl)}" target="${googleMapsLinkTarget()}" rel="noopener noreferrer" class="rounded-xl border border-amber-500 px-4 py-3 text-xs font-black text-amber-800">View references in Google Maps</a>` : ''}</div>${mapUrl ? '<p class="mb-4 text-[11px] text-slate-500">Maps shows an approximate walking route through recorded points. VFIT retains the measured GPS route. Opening Maps shares those points with Google.</p>' : ''}` : ''}
             ${workout.notes ? `<p class="text-sm text-slate-600">${escapeHtml(workout.notes)}</p>` : ''}`;
         document.getElementById('cardio-details-modal').style.display = 'flex';
     }

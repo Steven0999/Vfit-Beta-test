@@ -254,6 +254,8 @@ const expose = `
   completedOutdoorRun,
   finishOutdoorRun,
   runRouteSvg,
+  runReferencePoints,
+  googleMapsRunUrl,
   runPointDistanceMetres,
   compactSavedRoute,
   saveCardio,
@@ -377,7 +379,28 @@ assert.equal(finishedRun.route.length, 2);
 assert.ok(finishedRun.distance > 0 && finishedRun.distance < 0.1);
 assert.ok(finishedRun.avgSpeedKmh > 0);
 assert.ok(app.runRouteSvg(finishedRun.route).includes('<svg'));
+app.updateCardioMode();
+assert.match(document.getElementById('outdoor-run-current-map').href, /google\.com\/maps\/search\/\?api=1&query=51\.500100%2C-0\.100000/);
+assert.equal(document.getElementById('outdoor-run-current-map').classList.contains('hidden'), false);
+assert.match(document.getElementById('outdoor-run-reference-map').href, /google\.com\/maps\/dir\/\?api=1/);
+assert.equal(document.getElementById('outdoor-run-reference-map').classList.contains('hidden'), false);
+assert.equal(document.getElementById('outdoor-run-plan-map').target, '_blank');
+assert.equal(app.googleMapsRunUrl([], false), '');
+assert.equal(app.googleMapsRunUrl([{ lat: 91, lon: 0 }], true), '');
+assert.match(app.googleMapsRunUrl([{ lat: 51.5, lon: -0.1 }], false), /search\/\?api=1/);
 const longRoute = Array.from({ length: 1000 }, (_, i) => ({ lat: 51.5 + i / 100000, lon: -0.1, t: runStart + i * 1000, breakBefore: i === 500 }));
+const referencePoints = Array.from(app.runReferencePoints(longRoute));
+assert.equal(referencePoints.length, 3);
+assert.ok(referencePoints.every((p, i) => p.index > 0 && p.index < 999 && (i === 0 || p.index > referencePoints[i - 1].index)));
+assert.ok(referencePoints.every(p => !longRoute[p.index].breakBefore));
+const mapsRouteUrl = app.googleMapsRunUrl(longRoute, false);
+const parsedMapsRoute = new URL(mapsRouteUrl);
+assert.equal(parsedMapsRoute.searchParams.get('travelmode'), 'walking');
+assert.equal(parsedMapsRoute.searchParams.get('origin'), '51.500000,-0.100000');
+assert.equal(parsedMapsRoute.searchParams.get('destination'), '51.509990,-0.100000');
+assert.equal(parsedMapsRoute.searchParams.get('waypoints').split('|').length, 3);
+assert.ok(mapsRouteUrl.length < 2048);
+assert.match(app.runRouteSvg(longRoute), /references 1:/);
 const compactRoute = app.compactSavedRoute(longRoute);
 assert.ok(compactRoute.length <= 301);
 assert.equal(compactRoute[0].t, longRoute[0].t);
@@ -394,6 +417,7 @@ assert.ok(savedRun.avgSpeedKmh > 0);
 app.viewWorkoutDetails(savedRun.id);
 assert.equal(elements.get('cardio-details-modal').style.display, 'flex');
 assert.ok(elements.get('cardio-details-content').innerHTML.includes('GPS route'));
+assert.match(elements.get('cardio-details-content').innerHTML, /View references in Google Maps/);
 document.getElementById('cardio-type').value = 'treadmill';
 document.getElementById('cardio-duration').value = '30';
 document.getElementById('cardio-distance').value = '5';
@@ -414,6 +438,8 @@ app.updateCardioMode();
 assert.equal(document.getElementById('cardio-distance').readOnly, false);
 assert.equal(document.getElementById('save-cardio-button').disabled, true);
 assert.match(document.getElementById('outdoor-run-status').textContent, /No usable GPS route/);
+assert.equal(document.getElementById('outdoor-run-current-map').classList.contains('hidden'), true);
+assert.equal(document.getElementById('outdoor-run-reference-map').classList.contains('hidden'), true);
 document.getElementById('cardio-distance').value = '2.5';
 app.renderOutdoorRunUI();
 app.renderOutdoorRunUI();
@@ -427,6 +453,7 @@ assert.equal(manualRun.avgSpeedKmh, 15);
 assert.equal(manualRun.route.length, 0);
 app.viewWorkoutDetails(manualRun.id);
 assert.match(document.getElementById('cardio-details-content').innerHTML, /Distance entered manually/);
+assert.doesNotMatch(document.getElementById('cardio-details-content').innerHTML, /View references in Google Maps/);
 
 // Native status explains weak GPS and exposes recovery when its service stops.
 const nativeRunCommands = [];
@@ -439,6 +466,7 @@ app.handleNativeRunMessage({ data: JSON.stringify({
   }
 }) });
 assert.match(document.getElementById('outdoor-run-status').textContent, /87 m/);
+assert.equal(document.getElementById('outdoor-run-plan-map').target, '_self');
 app.handleNativeRunMessage({ data: JSON.stringify({
   type: 'vfit-run-status', serviceRunning: false, locationEnabled: true,
   preciseLocationGranted: true, session: {

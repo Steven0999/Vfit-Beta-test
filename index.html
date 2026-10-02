@@ -2089,6 +2089,12 @@
                     <div class="rounded-xl bg-white p-3"><p class="text-[10px] uppercase font-black text-slate-500">Average speed</p><p id="outdoor-run-avg-speed" class="text-xl font-black">0.0 km/h</p></div>
                 </div>
                 <div id="outdoor-run-route" class="rounded-xl bg-white p-2 mb-3 text-center text-xs text-slate-400">GPS route appears after a location fix.</div>
+                <div class="flex flex-wrap gap-2 mb-3 text-xs font-black">
+                    <a id="outdoor-run-plan-map" href="https://www.google.com/maps/dir/?api=1&amp;travelmode=walking" target="_blank" rel="noopener noreferrer" class="rounded-xl border border-amber-400 bg-white px-3 py-3 text-amber-900">Plan in Google Maps</a>
+                    <a id="outdoor-run-current-map" class="hidden rounded-xl border border-amber-400 bg-white px-3 py-3 text-amber-900" target="_blank" rel="noopener noreferrer">Latest GPS point in Maps</a>
+                    <a id="outdoor-run-reference-map" class="hidden rounded-xl border border-amber-400 bg-white px-3 py-3 text-amber-900" target="_blank" rel="noopener noreferrer">Route references in Maps</a>
+                </div>
+                <p class="mb-3 text-[11px] leading-relaxed text-amber-800">Plan your route in Maps, then return to VFIT to record it. Google Maps may choose a different walking path between recorded reference points. VFIT measures your run from GPS. Opening a Maps link shares the selected coordinates with Google.</p>
                 <div class="flex gap-2">
                     <button id="outdoor-run-start" onclick="startOutdoorRun()" class="flex-1 rounded-xl bg-amber-500 p-3 text-xs font-black text-white">Start GPS run</button>
                     <button id="outdoor-run-finish" onclick="finishOutdoorRun()" class="hidden flex-1 rounded-xl bg-slate-900 p-3 text-xs font-black text-white">Finish run</button>
