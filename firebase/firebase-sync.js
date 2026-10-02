@@ -460,10 +460,26 @@
 
     function saveCardio() {
         const type = document.getElementById('cardio-type').value;
-        const gpsRun = type === 'outdoor-running' ? completedOutdoorRun() : null;
-        if (type === 'outdoor-running' && (!gpsRun || gpsRun.route.length < 2 || gpsRun.distance <= 0)) {
-            showToast('Finish a GPS run with a recorded route before saving', 6000);
+        const recordedRun = type === 'outdoor-running' ? completedOutdoorRun() : null;
+        if (type === 'outdoor-running' && !recordedRun) {
+            showToast('Finish your run before saving it', 6000);
             return;
+        }
+        let gpsRun = recordedRun;
+        if (gpsRun && (gpsRun.route.length < 2 || gpsRun.distance <= 0)) {
+            const enteredDistance = Number(document.getElementById('cardio-distance').value);
+            if (!Number.isFinite(enteredDistance) || enteredDistance < 0.01 || gpsRun.duration <= 0) {
+                showToast('GPS recorded no route. Enter a measured distance to calculate speed.', 6000);
+                return;
+            }
+            const distance = Math.round(enteredDistance * 100) / 100;
+            gpsRun = Object.assign({}, gpsRun, {
+                distance,
+                avgSpeedKmh: Math.round(distance / (gpsRun.duration / 60) * 10) / 10,
+                maxSpeedKmh: 0,
+                route: [],
+                trackingSource: 'manual-distance'
+            });
         }
         if (gpsRun && (state.cardioLogs || []).some(log => log.runId === gpsRun.runId)) {
             acknowledgeSavedOutdoorRun();

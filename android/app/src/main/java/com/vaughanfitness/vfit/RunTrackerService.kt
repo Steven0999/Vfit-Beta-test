@@ -34,6 +34,7 @@ class RunTrackerService : Service(), LocationListener {
         private const val NOTIFICATION_ID = 3032
         @Volatile var running = false
             private set
+        private var lastStartAttemptAt = 0L
 
         fun read(context: Context): JSONObject? = try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SESSION, null)?.let(::JSONObject)
@@ -60,11 +61,31 @@ class RunTrackerService : Service(), LocationListener {
                 .put("maxSpeedKmh", 0.0)
                 .put("points", JSONArray()))
             return try {
+                lastStartAttemptAt = now
                 ContextCompat.startForegroundService(context, Intent(context, RunTrackerService::class.java))
                 true
             } catch (error: Exception) {
                 write(context, null)
                 Log.e("VFIT Run", "Could not start location service", error)
+                false
+            }
+        }
+
+        /** Recover an active draft if Android stopped its service. Only called while
+         * the app is visible (the bridge receives a status or retry command). */
+        fun resume(context: Context, ownerUid: String, force: Boolean = false): Boolean {
+            val session = read(context) ?: return false
+            if (session.optString("ownerUid") != ownerUid || session.optString("status") != "recording") return false
+            if (running) return true
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return false
+            val now = System.currentTimeMillis()
+            if (!force && now - lastStartAttemptAt < 15000L) return false
+            lastStartAttemptAt = now
+            return try {
+                ContextCompat.startForegroundService(context, Intent(context, RunTrackerService::class.java))
+                true
+            } catch (error: Exception) {
+                Log.e("VFIT Run", "Could not resume location service", error)
                 false
             }
         }
@@ -111,10 +132,14 @@ class RunTrackerService : Service(), LocationListener {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             running = true
             locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+            var activeProviders = 0
             for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
-                if (locationManager.isProviderEnabled(provider))
+                if (locationManager.isProviderEnabled(provider)) {
                     locationManager.requestLocationUpdates(provider, 2000L, 0f, this, Looper.getMainLooper())
+                    activeProviders++
+                }
             }
+            if (activeProviders == 0) throw IllegalStateException("No location provider is enabled")
         } catch (error: Exception) {
             Log.e("VFIT Run", "Location tracking could not start", error)
             val session = read(this)
@@ -124,13 +149,19 @@ class RunTrackerService : Service(), LocationListener {
             }
             stopSelf()
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onLocationChanged(location: Location) {
         val session = read(this) ?: return
         if (session.optString("status") != "recording") return
-        if (!location.hasAccuracy() || location.accuracy > 40f || location.time < session.optLong("startedAt") - 3000L) return
+        if (location.time < session.optLong("startedAt") - 3000L) return
+        session.put("lastLocationAt", location.time)
+        if (location.hasAccuracy()) session.put("lastLocationAccuracy", location.accuracy.toDouble())
+        if (!location.hasAccuracy() || location.accuracy > 40f) {
+            write(this, session)
+            return
+        }
         val points = session.optJSONArray("points") ?: JSONArray()
         val last = if (points.length() > 0) points.optJSONObject(points.length() - 1) else null
         val elapsed = if (last == null) 0L else location.time - last.optLong("t")

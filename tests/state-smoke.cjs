@@ -247,6 +247,10 @@ const expose = `
   setStepProgressView,
   closeStepProgressModal,
   acceptWebRunPosition,
+  updateCardioMode,
+  renderOutdoorRunUI,
+  handleNativeRunMessage,
+  retryOutdoorRun,
   completedOutdoorRun,
   finishOutdoorRun,
   runRouteSvg,
@@ -352,6 +356,56 @@ document.getElementById('cardio-distance').value = '5';
 app.saveCardio();
 assert.equal(app.getState().cardioLogs[0].type, 'treadmill');
 assert.equal(app.getState().cardioLogs[0].avgSpeedKmh, 10);
+
+// If GPS never got a usable route, an entered distance is retained across UI
+// refreshes and the saved log makes the calculated speed/source explicit.
+app.setState(app.defaultState());
+const manualStart = Date.now() - 600000;
+app.setOutdoorRunSession({
+  id: 'run-manual-1', ownerUid: 'running-test-user', startedAt: manualStart,
+  endedAt: manualStart + 600000, status: 'completed', distanceMeters: 0, points: []
+});
+document.getElementById('cardio-type').value = 'outdoor-running';
+app.updateCardioMode();
+assert.equal(document.getElementById('cardio-distance').readOnly, false);
+assert.equal(document.getElementById('save-cardio-button').disabled, true);
+assert.match(document.getElementById('outdoor-run-status').textContent, /No usable GPS route/);
+document.getElementById('cardio-distance').value = '2.5';
+app.renderOutdoorRunUI();
+app.renderOutdoorRunUI();
+assert.equal(document.getElementById('cardio-distance').value, '2.5');
+assert.equal(document.getElementById('save-cardio-button').disabled, false);
+app.saveCardio();
+const manualRun = app.getState().cardioLogs[0];
+assert.equal(manualRun.trackingSource, 'manual-distance');
+assert.equal(manualRun.distance, 2.5);
+assert.equal(manualRun.avgSpeedKmh, 15);
+assert.equal(manualRun.route.length, 0);
+app.viewWorkoutDetails(manualRun.id);
+assert.match(document.getElementById('cardio-details-content').innerHTML, /Distance entered manually/);
+
+// Native status explains weak GPS and exposes recovery when its service stops.
+const nativeRunCommands = [];
+sandbox.vfitRunTracker = { postMessage: payload => nativeRunCommands.push(JSON.parse(payload)) };
+app.handleNativeRunMessage({ data: JSON.stringify({
+  type: 'vfit-run-status', serviceRunning: true, locationEnabled: true,
+  preciseLocationGranted: true, session: {
+    id: 'run-weak-gps', ownerUid: 'running-test-user', startedAt: Date.now() - 30000,
+    status: 'recording', points: [], distanceMeters: 0, lastLocationAccuracy: 87
+  }
+}) });
+assert.match(document.getElementById('outdoor-run-status').textContent, /87 m/);
+app.handleNativeRunMessage({ data: JSON.stringify({
+  type: 'vfit-run-status', serviceRunning: false, locationEnabled: true,
+  preciseLocationGranted: true, session: {
+    id: 'run-weak-gps', ownerUid: 'running-test-user', startedAt: Date.now() - 30000,
+    status: 'recording', points: [], distanceMeters: 0
+  }
+}) });
+assert.match(document.getElementById('outdoor-run-status').textContent, /GPS tracker stopped/);
+app.retryOutdoorRun();
+assert.equal(nativeRunCommands.at(-1).command, 'resume');
+delete sandbox.vfitRunTracker;
 app.setUser(null);
 app.setState(stepState);
 

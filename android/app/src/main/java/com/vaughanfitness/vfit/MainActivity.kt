@@ -5,11 +5,13 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -26,6 +28,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
@@ -59,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var permissionRequestInProgress = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCameraRequest: PermissionRequest? = null
+    private var pendingWebLocationRequest: Pair<String, GeolocationPermissions.Callback>? = null
 
     private val healthPermissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -109,6 +113,14 @@ class MainActivity : AppCompatActivity() {
         else publishRunStatus(ownerUid, "Allow precise location to record an outdoor route.")
     }
 
+    private val webLocationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val request = pendingWebLocationRequest
+        pendingWebLocationRequest = null
+        request?.second?.invoke(request.first, grants[Manifest.permission.ACCESS_FINE_LOCATION] == true, false)
+    }
+
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -149,6 +161,7 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
+            setGeolocationEnabled(true)
             allowFileAccess = false
             allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -185,6 +198,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
+                if (!isTrustedOrigin(Uri.parse(origin))) {
+                    callback.invoke(origin, false, false)
+                    return
+                }
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    callback.invoke(origin, true, false)
+                } else {
+                    pendingWebLocationRequest?.let { it.second.invoke(it.first, false, false) }
+                    pendingWebLocationRequest = origin to callback
+                    webLocationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                }
+            }
+
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
                     if (!isTrustedOrigin(request.origin) || PermissionRequest.RESOURCE_VIDEO_CAPTURE !in request.resources) {
@@ -264,7 +291,16 @@ class MainActivity : AppCompatActivity() {
             val ownerUid = payload.optString("ownerUid")
             if (ownerUid.isBlank()) return@addWebMessageListener
             when (payload.optString("command")) {
-                "status" -> publishRunStatus(ownerUid)
+                "status" -> {
+                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+                        RunTrackerService.resume(this, ownerUid)
+                    publishRunStatus(ownerUid)
+                }
+                "resume" -> {
+                    if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+                        RunTrackerService.resume(this, ownerUid, force = true)
+                    publishRunStatus(ownerUid)
+                }
                 "start" -> {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
                         startRunTracking(ownerUid)
@@ -304,9 +340,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun publishRunStatus(ownerUid: String, error: String? = null) {
         val session = RunTrackerService.read(this)?.takeIf { it.optString("ownerUid") == ownerUid }
+        val locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         val message = JSONObject().put("type", "vfit-run-status")
             .put("session", session ?: JSONObject.NULL)
             .put("serviceRunning", RunTrackerService.running)
+            .put("locationEnabled", locationManager.isLocationEnabled)
+            .put("preciseLocationGranted", ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED)
         if (error != null) message.put("error", error)
         try {
             runReplyProxy?.postMessage(message.toString())

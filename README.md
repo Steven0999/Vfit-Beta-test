@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.35` shows orange goal progress inside grey tracks for hydration, steps and step history, with a grey calorie ring track. It retains the owned UK food catalogue with 2,853 complete records, offline food and ingredient search, carbohydrate/fat diary totals and database export, treadmill/outdoor running choices, GPS routes and speed logs, daily/weekly Step Progress charts, Health Connect integration and all existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.36` restores outdoor GPS tracking after service interruption, enables location permission in the Android WebView fallback, reports GPS signal problems and lets a completed run save a measured distance when no usable GPS route was recorded. Average speed is calculated from that distance and the recorded time, with the source labelled in Workout Logs. It retains the orange goal progress bars, owned UK food catalogue with 2,853 complete records, offline food search, treadmill/outdoor running choices, GPS routes and speed logs, daily/weekly Step Progress charts, Health Connect integration and all existing beta features.
 
 
 ## What is included

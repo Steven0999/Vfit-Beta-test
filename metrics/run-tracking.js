@@ -7,6 +7,8 @@
     let outdoorRunStarting = false;
     let outdoorRunListenerInstalled = false;
     let outdoorRunServiceRunning = false;
+    let outdoorRunLocationEnabled = true;
+    let outdoorRunPreciseLocationGranted = true;
 
     function nativeRunTrackingAvailable() {
         return !!(window.vfitRunTracker && typeof window.vfitRunTracker.postMessage === 'function');
@@ -45,6 +47,8 @@
         if (!payload || payload.type !== 'vfit-run-status' || !currentUser) return;
         outdoorRunStarting = false;
         outdoorRunServiceRunning = payload.serviceRunning === true;
+        outdoorRunLocationEnabled = payload.locationEnabled !== false;
+        outdoorRunPreciseLocationGranted = payload.preciseLocationGranted !== false;
         const session = payload.session;
         outdoorRunSession = session && session.ownerUid === currentUser.uid ? session : null;
         if (outdoorRunSession) document.getElementById('cardio-type').value = 'outdoor-running';
@@ -262,6 +266,10 @@
         }
     }
 
+    function retryOutdoorRun() {
+        if (outdoorRunSession?.status === 'recording') sendRunCommand('resume');
+    }
+
     function discardOutdoorRun() {
         if (!outdoorRunSession || !confirm('Discard this GPS route and run?')) return;
         if (nativeRunTrackingAvailable()) sendRunCommand('discard');
@@ -294,6 +302,11 @@
         };
     }
 
+    function outdoorRunHasGpsRoute(session) {
+        return Array.isArray(session?.points) && session.points.length >= 2 &&
+            Number(session.distanceMeters) > 0;
+    }
+
     function acknowledgeSavedOutdoorRun() {
         if (!outdoorRunSession) return;
         if (nativeRunTrackingAvailable()) sendRunCommand('ack_saved', { id: outdoorRunSession.id });
@@ -309,7 +322,17 @@
         const session = outdoorRunSession;
         const points = session && Array.isArray(session.points) ? session.points : [];
         const elapsedMs = runElapsedMs(session);
-        const distance = session ? Math.max(0, Number(session.distanceMeters) || 0) / 1000 : 0;
+        const gpsDistance = session ? Math.max(0, Number(session.distanceMeters) || 0) / 1000 : 0;
+        const manualFallback = session?.status === 'completed' && !outdoorRunHasGpsRoute(session);
+        const distanceInput = document.getElementById('cardio-distance');
+        if (manualFallback && distanceInput.dataset.manualRunId !== String(session.id)) {
+            distanceInput.value = '';
+            distanceInput.dataset.manualRunId = String(session.id);
+        }
+        distanceInput.readOnly = !!session && !manualFallback;
+        distanceInput.classList.toggle('opacity-60', !!session && !manualFallback);
+        const manualDistance = manualFallback ? Number(distanceInput.value) || 0 : 0;
+        const distance = manualFallback ? Math.max(0, manualDistance) : gpsDistance;
         const avg = elapsedMs > 0 ? distance / (elapsedMs / 3600000) : 0;
         const last = points[points.length - 1], before = points[points.length - 2];
         const current = before && last && !last.breakBefore && last.t > before.t && Date.now() - last.t < 15000
@@ -322,20 +345,34 @@
         document.getElementById('outdoor-run-route').innerHTML = runRouteSvg(points);
         let status = 'Start when you are ready to run.';
         if (outdoorRunStarting) status = 'Requesting precise location…';
+        else if (manualFallback) status = 'No usable GPS route was recorded. Enter the distance below to save the run; average speed will be calculated.';
         else if (session?.status === 'completed') status = 'Run finished. Add notes if you want, then save it to Workout Logs.';
-        else if (session?.status === 'interrupted') status = 'Tracking stopped. Finish and save the route recorded so far.';
-        else if (session?.status === 'recording') status = points.length
-            ? (nativeRunTrackingAvailable() && !outdoorRunServiceRunning ? 'GPS service is starting or stopped. Check the run notification.' : 'Recording your route. Tap Finish when done.')
+        else if (session?.status === 'interrupted') status = 'GPS tracking stopped. Tap Finish to save the recorded route or enter a measured distance.';
+        else if (session?.status === 'recording' && !outdoorRunLocationEnabled) status = 'Phone Location is off. Turn it on, then tap Retry GPS.';
+        else if (session?.status === 'recording' && !outdoorRunPreciseLocationGranted) status = 'Allow precise location for VFIT in Android app settings, then tap Retry GPS.';
+        else if (session?.status === 'recording' && nativeRunTrackingAvailable() && !outdoorRunServiceRunning && elapsedMs > 15000)
+            status = 'The GPS tracker stopped. Tap Retry GPS while VFIT is open.';
+        else if (session?.status === 'recording' && !points.length && Number(session.lastLocationAccuracy) > 40)
+            status = `GPS accuracy is about ${Math.round(session.lastLocationAccuracy)} m. Move into open sky for a precise fix.`;
+        else if (session?.status === 'recording' && !points.length) status = elapsedMs > 20000
+            ? 'Still waiting for a precise GPS fix. Check Location and move outdoors.'
             : 'Waiting for a precise GPS fix. Move outdoors with Location enabled.';
+        else if (session?.status === 'recording') status = Date.now() - (Number(session.lastFixAt) || 0) > 30000
+            ? 'GPS signal paused. Keep Location enabled; tracking resumes when a fix returns.'
+            : 'Recording your route. Tap Finish when done.';
         document.getElementById('outdoor-run-status').textContent = status;
         document.getElementById('outdoor-run-start').classList.toggle('hidden', !!session);
         document.getElementById('outdoor-run-start').disabled = outdoorRunStarting;
         document.getElementById('outdoor-run-finish').classList.toggle('hidden', !session || session.status === 'completed');
         document.getElementById('outdoor-run-discard').classList.toggle('hidden', !session);
-        document.getElementById('save-cardio-button').disabled = !!(outdoorRunStarting || !session || session.status !== 'completed' || points.length < 2 || distance <= 0);
+        document.getElementById('outdoor-run-retry').classList.toggle('hidden', !session || session.status !== 'recording' || !nativeRunTrackingAvailable() ||
+            (outdoorRunServiceRunning && outdoorRunLocationEnabled && outdoorRunPreciseLocationGranted) ||
+            (!outdoorRunServiceRunning && elapsedMs <= 15000 && outdoorRunLocationEnabled && outdoorRunPreciseLocationGranted));
+        document.getElementById('outdoor-run-manual-note').classList.toggle('hidden', !manualFallback);
+        document.getElementById('save-cardio-button').disabled = !!(outdoorRunStarting || !session || session.status !== 'completed' || distance <= 0);
         if (session) {
             document.getElementById('cardio-duration').value = (elapsedMs / 60000).toFixed(1);
-            document.getElementById('cardio-distance').value = distance.toFixed(2);
+            if (!manualFallback) distanceInput.value = gpsDistance.toFixed(2);
         }
     }
 
@@ -355,6 +392,7 @@
         const route = Array.isArray(workout.route) ? workout.route : [];
         content.innerHTML = `<p class="mb-4 text-xs text-slate-500">${escapeHtml(new Date(workout.date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>
             <div class="grid grid-cols-2 gap-3 mb-4">${stat('Distance', distance.toFixed(2) + ' km')}${stat('Duration', duration + ' min')}${stat('Average speed', speed.toFixed(1) + ' km/h')}${stat('Top speed', (Number(workout.maxSpeedKmh) || 0).toFixed(1) + ' km/h')}</div>
+            ${workout.trackingSource === 'manual-distance' ? '<p class="mb-3 text-xs text-slate-500">Distance entered manually · average speed calculated from time · no GPS route recorded.</p>' : ''}
             ${route.length ? `<h4 class="font-black mb-2">GPS route</h4><div class="mb-3">${runRouteSvg(route)}</div><button onclick="exportRunGpx('${escapeJsString(workout.id)}')" class="mb-4 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Export route (GPX)</button>` : ''}
             ${workout.notes ? `<p class="text-sm text-slate-600">${escapeHtml(workout.notes)}</p>` : ''}`;
         document.getElementById('cardio-details-modal').style.display = 'flex';

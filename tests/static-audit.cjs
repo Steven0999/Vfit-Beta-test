@@ -151,6 +151,10 @@ assert.ok(androidManifest.includes('android.permission.ACCESS_FINE_LOCATION') &&
   androidManifest.includes('android.permission.FOREGROUND_SERVICE_LOCATION') &&
   androidManifest.includes('android:foregroundServiceType="location"'), 'outdoor runs require precise location foreground service declarations');
 assert.ok(androidMain.includes('RUN_BRIDGE_NAME = "vfitRunTracker"') && androidMain.includes('isTrustedOrigin(sourceOrigin)'), 'native run controls must be restricted to the trusted WebView origin');
+assert.ok(androidMain.includes('onGeolocationPermissionsShowPrompt') && androidMain.includes('webLocationPermissionLauncher'), 'the Android WebView fallback must request location access');
+assert.ok(androidMain.includes('RunTrackerService.resume(this, ownerUid)') && androidMain.includes('"resume" ->'), 'the app must recover an interrupted GPS service while visible');
+const nativeRunService = fs.readFileSync(runTrackerPath, 'utf8');
+assert.ok(nativeRunService.includes('return START_STICKY'), 'the active GPS service must restart after process loss');
 assert.ok(html.includes('<option value="treadmill">') && html.includes('<option value="outdoor-running">'), 'cardio must offer separate treadmill and GPS running choices');
 const androidSync = fs.readFileSync(androidSyncPath, 'utf8');
 assert.ok(androidManifest.includes('android.permission.health.READ_STEPS'), 'Android app must request read-only step access');
