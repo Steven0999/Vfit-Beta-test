@@ -38,7 +38,7 @@
 
     <link rel="stylesheet" href="./Styles.css">
 </head>
-<body>
+<body data-training-tier="beginner">
 
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="network-status" class="hidden bg-amber-500 text-black px-4 py-2 rounded-full text-xs font-black shadow-xl" role="status" aria-live="polite"></div>
@@ -309,7 +309,7 @@
                     </div>
                     <div class="glass-card p-4 rounded-[2rem] space-y-3" aria-label="Daily coaching sections">
                         <button type="button" onclick="openCoachingPage('daily')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-orange-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="sunrise" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Today’s Coaching</span><span class="block text-xs text-slate-500 mt-1">Daily conversation, readiness and AI advice</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
-                        <button type="button" onclick="openCoachingPage('training')" class="w-full min-h-[78px] bg-indigo-50 border-2 border-indigo-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="dumbbell" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Training &amp; Goals</span><span class="block text-xs text-slate-500 mt-1">Weekly sets, progression and deload guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('training')" class="w-full min-h-[78px] bg-indigo-50 border-2 border-indigo-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="dumbbell" class="w-5 h-5 text-white"></i></span><span><span id="coaching-training-menu-title" class="block font-black text-sm">Training Basics</span><span id="coaching-training-menu-description" class="block text-xs text-slate-500 mt-1">Full-body workouts and steady progress</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('shifts')" class="w-full min-h-[78px] bg-blue-50 border-2 border-blue-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="calendar-clock" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Shift Plan &amp; Advice</span><span class="block text-xs text-slate-500 mt-1">Rota linked to today’s coaching guidance</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('diet')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-900 border border-orange-500 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="salad" class="w-5 h-5 text-orange-400"></i></span><span><span class="block font-black text-sm">Dietary Plan &amp; Meals</span><span class="block text-xs text-slate-500 mt-1">Requirements, diet style and shift-specific meals</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('coach')" class="w-full min-h-[78px] bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-emerald-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="messages-square" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Coach &amp; Check-ins</span><span class="block text-xs text-slate-500 mt-1">Coach messages and weekly check-in</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
@@ -375,6 +375,12 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <div id="coaching-training-basics-card" data-coaching-page="training" class="hidden glass-card rounded-[2.5rem] p-6">
+                    <h3 class="text-lg font-black mb-2">Build the basics</h3>
+                    <p class="text-sm text-slate-600 mb-4">Start with full-body sessions twice a week. Log your reps and weight, take rest days, and add a set when you feel ready.</p>
+                    <button onclick="switchTab('training')" class="w-full bg-slate-900 text-white p-4 rounded-2xl font-bold">Open Workouts</button>
                 </div>
 
                 <div id="coaching-training-goals-card" data-coaching-page="training" class="hidden glass-card rounded-[2.5rem] p-6">
@@ -591,12 +597,23 @@
 
                 <!-- Workout Setup -->
                 <div id="workout-setup" class="glass-card p-6 rounded-[2.5rem] space-y-4">
+                    <div class="bg-orange-50 border border-orange-200 rounded-2xl p-4">
+                        <div class="flex items-center justify-between gap-2">
+                            <p id="training-level-status" class="text-sm font-black text-orange-700">Training basics</p>
+                            <button type="button" onclick="openAboutYouModal()" class="text-xs font-bold text-orange-700 underline underline-offset-2">Edit years</button>
+                        </div>
+                        <p id="training-level-description" class="text-xs text-slate-600 mt-1">Full-body sessions, reps and weight. Set your years of training to tailor the tools.</p>
+                    </div>
+                    <div id="beginner-workout-guide" class="bg-slate-50 rounded-2xl p-4">
+                        <p class="font-black text-sm">A simple place to start</p>
+                        <p class="text-xs text-slate-600 mt-1">Aim for two full-body workouts a week. Try two sets of 8–12 reps per exercise, with comfortable form. Rest between sessions. For bodyweight moves, 0 kg is fine.</p>
+                    </div>
                     <div class="flex bg-slate-100 p-1 rounded-2xl mb-4">
                         <button onclick="setWorkoutEnv('gym')" id="env-tab-gym" class="flex-1 py-2 text-[10px] font-black uppercase rounded-xl bg-white text-indigo-600 shadow-sm">Gym</button>
                         <button onclick="setWorkoutEnv('home')" id="env-tab-home" class="flex-1 py-2 text-[10px] font-black uppercase rounded-xl text-slate-400">Home</button>
                     </div>
 
-                    <div>
+                    <div id="workout-focus-control">
                         <label class="text-[9px] font-black uppercase text-slate-400 block mb-2">Exercise Focus</label>
                         <select id="workout-focus" onchange="toggleSpecificMuscle()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
                             <option>Full Body</option>
@@ -625,7 +642,7 @@
                         <p id="specific-muscle-count" class="text-xs text-slate-400 mt-2 italic">No muscles selected</p>
                     </div>
 
-                    <div class="bg-slate-50 p-4 rounded-2xl space-y-3">
+                    <div id="workout-extras" class="bg-slate-50 p-4 rounded-2xl space-y-3">
                         <div class="flex items-center justify-between">
                             <span class="text-xs font-black uppercase text-slate-600">Add Cardio</span>
                             <input type="checkbox" id="add-cardio-check" class="w-5 h-5 accent-indigo-600">
@@ -636,7 +653,12 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3 mt-6">
+                    <div id="beginner-workout-start" class="grid grid-cols-1 gap-3 mt-6">
+                        <button onclick="startWorkout('basic')" class="p-5 bg-slate-900 text-white rounded-[1.5rem] font-bold text-base min-h-[60px]">Start Basic Workout</button>
+                        <button onclick="startWorkout('manual')" class="p-4 border-2 border-orange-500 text-orange-600 rounded-[1.5rem] font-bold text-sm">Choose My Exercises</button>
+                    </div>
+
+                    <div id="advanced-workout-start" class="grid grid-cols-2 gap-3 mt-6">
                         <button onclick="startWorkout('manual')" class="p-5 bg-slate-900 text-white rounded-[1.5rem] font-bold text-base min-h-[60px] hover:bg-slate-800 active:bg-slate-700">Manual Entry</button>
                         <button onclick="startWorkout('ai')" class="p-5 bg-indigo-600 text-white rounded-[1.5rem] font-bold text-base min-h-[60px] hover:bg-indigo-700 active:bg-indigo-800">AI Generate</button>
                     </div>

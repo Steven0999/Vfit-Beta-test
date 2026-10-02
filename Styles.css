@@ -582,3 +582,30 @@
             pointer-events: none;
         }
         #coaching [data-coaching-page].hidden { display: none !important; }
+
+        /* Experience controls affect only training. Saved workouts and goal data stay intact. */
+        html body[data-training-tier="beginner"] #workout-focus-control,
+        html body[data-training-tier="beginner"] #workout-extras,
+        html body[data-training-tier="beginner"] #advanced-workout-start,
+        html body[data-training-tier="beginner"] #specific-muscle-container,
+        html body[data-training-tier="beginner"] #volume-tracker-card,
+        html body[data-training-tier="beginner"] #coaching-training-goals-card,
+        html body[data-training-tier="beginner"] #coaching-progression-card,
+        html body[data-training-tier="beginner"] #wizard-new-btn,
+        html body[data-training-tier="beginner"] #exercise-list .beginner-advanced-control,
+        html body[data-training-tier="beginner"] #exercise-list .set-rir,
+        html body[data-training-tier="beginner"] #exercise-list .set-rir-label,
+        html body[data-training-tier="beginner"] #exercise-list .pb-badge,
+        html body[data-training-tier="beginner"] #exercise-list [id^="pb-line-"],
+        html body[data-training-tier="beginner"] #exercise-list .weight-suggestion,
+        html body[data-training-tier="beginner"] #exercise-list .exercise-metadata {
+            display: none !important;
+        }
+        html body[data-training-tier="beginner"] #wizard-nav .grid { grid-template-columns: 1fr; }
+        html body[data-training-tier="intermediate"] #specific-muscle-container,
+        html body[data-training-tier="intermediate"] #coaching-progression-card,
+        html body:not([data-training-tier="beginner"]) #beginner-workout-guide,
+        html body:not([data-training-tier="beginner"]) #beginner-workout-start,
+        html body:not([data-training-tier="beginner"]) #coaching-training-basics-card {
+            display: none !important;
+        }

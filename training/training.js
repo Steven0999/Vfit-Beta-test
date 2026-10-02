@@ -1131,21 +1131,9 @@
                 : 'Sets per muscle · last 7 days · target 12–20 · assisting muscles count ½';
         }
 
-        // Beginners don't need volume landmarks — keep the card hidden for them.
-        if (level === 'Beginner' && !plan) {
+        // The basic view stays focused on workouts even if a detailed goal was saved earlier.
+        if (level !== 'Intermediate' && level !== 'Advanced') {
             card.classList.add('hidden');
-            return;
-        }
-
-        // Experience not set yet → show the card but prompt them to set it, so the
-        // feature is discoverable rather than silently missing.
-        if (level !== 'Intermediate' && level !== 'Advanced' && !plan) {
-            card.classList.remove('hidden');
-            list.innerHTML = `
-                <div class="text-center py-6">
-                    <p class="text-sm text-slate-500 mb-3">Set your training experience to unlock weekly volume tracking (for intermediate & advanced lifters).</p>
-                    <button onclick="switchTab('profile')" class="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700">Set Experience</button>
-                </div>`;
             return;
         }
 
@@ -1367,9 +1355,27 @@
         }
     }
 
+    function basicExerciseNames(env) {
+        const available = new Set(getAvailableExercises(env));
+        const movements = env === 'home' ? [
+            ['Bodyweight Squat', 'Resistance Bands Squats', 'Lunges'],
+            ['Push Ups', 'Pike Push Ups'],
+            ['Resistance Band Back Rows', 'Superman', 'Inverted Row'],
+            ['Glute Bridge', 'Step Ups', 'Plank']
+        ] : [
+            ['Weighted Machine Leg Press', 'Pin Machine Leg Press', 'Squat'],
+            ['Chest Press Machine', 'DB Bench Press', 'Bench Press'],
+            ['Lat Pulldown', 'Seated Row Cable Machine', 'Seated Row Weight Machine'],
+            ['Leg Curl', 'Glute Bridge', 'Romanian Deadlift']
+        ];
+        return movements.map(choices => choices.find(name => available.has(name))).filter(Boolean);
+    }
+
     function startWorkout(mode) {
+        const tier = trainingExperienceTier();
+        if (tier === 'beginner' && mode !== 'manual') mode = 'basic';
         const focus = document.getElementById('workout-focus').value;
-        const isSpecific = focus === 'Specific Muscle';
+        const isSpecific = tier === 'advanced' && focus === 'Specific Muscle';
 
         // Validate Specific Muscle selection before starting
         if (isSpecific && selectedMuscles.length === 0) {
@@ -1386,7 +1392,7 @@
         if (isSpecific) {
             title = selectedMuscles.length === 1 ? selectedMuscles[0] : selectedMuscles.join(' + ');
         } else {
-            title = focus;
+            title = mode === 'basic' ? 'Full Body Basics' : tier === 'beginner' ? 'Full Body' : focus;
         }
         title = envLabel + ' · ' + title;
 
@@ -1396,7 +1402,20 @@
         document.getElementById('active-workout-title').innerText = title;
         document.getElementById('exercise-list').innerHTML = '';
 
-        if (mode === 'ai') {
+        if (mode === 'basic') {
+            let names = basicExerciseNames(state.workoutEnv || 'gym');
+            const recovery = typeof getRecoveryPlanForDate === 'function'
+                ? getRecoveryPlanForDate(window.selectedWorkoutDate || state.viewDate || localDateKey()) : null;
+            if (recovery && names.length > 1) names = names.slice(0, Math.max(1, Math.ceil(names.length * recovery.volumeMultiplier)));
+            if (!names.length) {
+                addExercise();
+                showToast('Choose an exercise to start your workout');
+            } else {
+                names.forEach(name => addExercise(name, { initialSets: 2, initialWeight: state.workoutEnv === 'home' ? 0 : null }));
+                showToast('Basic full-body workout ready');
+            }
+            setTimeout(() => enterWizardMode(), 120);
+        } else if (mode === 'ai') {
             const env = state.workoutEnv || 'gym';
             const addCardio = document.getElementById('add-cardio-check').checked;
             const addCore = document.getElementById('add-core-check').checked;
@@ -1491,7 +1510,7 @@
         // narrow to exercises that match this focus / these muscles.
         currentWorkoutContext = {
             env: state.workoutEnv || 'gym',
-            focus: focus,
+            focus: tier === 'beginner' ? 'Full Body' : focus,
             muscles: isSpecific ? selectedMuscles.slice() : null
         };
 
@@ -1508,7 +1527,7 @@
         // For Specific Muscle we pre-build the exercise list from the chosen muscles.
         // For every other focus, Manual means "I'll pick my own", so we start with a
         // single blank card and let the user add more as they step through.
-        if (mode !== 'ai') {
+        if (mode === 'manual') {
             const env = state.workoutEnv || 'gym';
             document.getElementById('exercise-list').innerHTML = '';
 
@@ -1933,7 +1952,7 @@
         // Swap button — replaces this exercise with another that hits the same muscle(s)
         const swapBtn = document.createElement('button');
         swapBtn.type = "button";
-        swapBtn.className = "w-10 h-10 sm:w-11 sm:h-11 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center hover:bg-amber-200 transition-colors flex-shrink-0";
+        swapBtn.className = "beginner-advanced-control w-10 h-10 sm:w-11 sm:h-11 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center hover:bg-amber-200 transition-colors flex-shrink-0";
         swapBtn.innerHTML = '<i data-lucide="shuffle" class="w-5 h-5"></i>';
         swapBtn.title = "Swap for another exercise that hits the same muscle";
         swapBtn.addEventListener('click', () => {
@@ -2000,7 +2019,7 @@
         header.innerHTML = `
             <div class="flex-1 text-center"><span class="text-xs sm:text-sm font-black text-slate-600 uppercase">Reps</span></div>
             <div class="flex-1 text-center"><span class="text-xs sm:text-sm font-black text-slate-600 uppercase" id="weight-header-${id}">${weightHeaderLabel}</span></div>
-            <div class="w-16 sm:w-20 text-center"><span class="text-xs sm:text-sm font-black text-amber-600 uppercase" title="Reps In Reserve">RIR</span></div>
+            <div class="set-rir-label w-16 sm:w-20 text-center"><span class="text-xs sm:text-sm font-black text-amber-600 uppercase" title="Reps In Reserve">RIR</span></div>
             <div class="w-9 sm:w-10"></div>`;
         setsContainer.appendChild(header);
 
@@ -2036,7 +2055,8 @@
 
         if (!config.skipInitialSet) {
             setTimeout(() => {
-                addSetToExercise(id, pr, name);
+                const initialSets = config.initialSets === 2 ? 2 : 1;
+                for (let index = 0; index < initialSets; index++) addSetToExercise(id, pr, name, { initialWeight: config.initialWeight });
                 persistActiveWorkout();
             }, 60);
         }
@@ -2066,7 +2086,7 @@
             : '';
         return `<div onclick="selectExerciseFromDropdown('${escapeJsString(id)}', '${escapeJsString(ex)}')" class="p-3 hover:bg-indigo-50 cursor-pointer border-b last:border-0 flex justify-between items-center transition-colors">
             <span class="font-medium text-sm">${escapeHtml(ex)}</span>
-            <div class="flex gap-1 flex-shrink-0">${ratingBadge}${prBadge}</div>
+            <div class="exercise-metadata flex gap-1 flex-shrink-0">${ratingBadge}${prBadge}</div>
         </div>`;
     }
 
@@ -2216,7 +2236,7 @@
     // Helper so refreshSetBadges works whether given the raw id or not
     function exerciseId(id) { return id; }
 
-    function addSetToExercise(exerciseId, pr, exerciseName) {
+    function addSetToExercise(exerciseId, pr, exerciseName, options) {
         const container = document.getElementById(`sets-${exerciseId}`);
         if (!container) return;
 
@@ -2242,13 +2262,18 @@
         weightInput.min = "0";
         weightInput.step = "0.5";
         weightInput.className = "set-weight w-full p-3 sm:p-4 bg-slate-50 rounded-lg text-center font-bold text-base sm:text-lg border-2 border-transparent focus:border-indigo-500";
+        if (options && options.initialWeight !== null && options.initialWeight !== undefined) {
+            weightInput.value = String(options.initialWeight);
+        } else if (trainingExperienceTier() === 'beginner' && state.workoutEnv === 'home' && !isAssist) {
+            weightInput.value = '0';
+        }
 
         // Pre-fill / hint with suggested weight from last performance
-        const suggestion = exerciseName ? getSuggestedWeight(exerciseName) : null;
+        const suggestion = exerciseName && trainingExperienceTier() !== 'beginner' ? getSuggestedWeight(exerciseName) : null;
         if (suggestion) {
             weightInput.placeholder = (isAssist ? 'Assist ' : '') + suggestion.suggested + 'kg';
             const hint = document.createElement('span');
-            hint.className = "absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.action === 'progress' ? 'text-emerald-600' : suggestion.changed ? 'text-amber-600' : 'text-slate-400');
+            hint.className = "weight-suggestion absolute -bottom-4 left-0 right-0 text-center text-[8px] font-bold " + (suggestion.action === 'progress' ? 'text-emerald-600' : suggestion.changed ? 'text-amber-600' : 'text-slate-400');
             if (suggestion.action === 'progress') {
                 hint.textContent = isAssist
                     ? `↓ ${suggestion.last}→${suggestion.suggested}kg assist`

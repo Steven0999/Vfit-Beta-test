@@ -30,6 +30,7 @@
             clearInterval(workoutTimer);
             if (barcodeScannerEngine || nativeBarcodeStream || html5QrCode || quaggaDetectedHandler) closeBarcodeScanner();
             document.body.classList.remove('is-coach');
+            document.body.dataset.trainingTier = 'beginner';
             state = normalizeState(DEFAULT_STATE);
             if (authScreen) authScreen.style.display = 'flex';
             if (appScreen) appScreen.style.display = 'none';
@@ -83,6 +84,7 @@
         setupMealIngredientSearch();
         safeInvoke('Nutrition history', renderNutritionHistory);
         safeInvoke('Profile', renderProfile);
+        safeInvoke('Training experience', applyTrainingExperienceMode);
         safeInvoke('Dashboard', renderDashboard);
         safeInvoke('Coaching hub', renderCoachingHub);
         safeInvoke('Membership return', showMembershipReturnStatus);

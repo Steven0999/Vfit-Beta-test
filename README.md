@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.36` restores outdoor GPS tracking after service interruption, enables location permission in the Android WebView fallback, reports GPS signal problems and lets a completed run save a measured distance when no usable GPS route was recorded. Average speed is calculated from that distance and the recorded time, with the source labelled in Workout Logs. It retains the orange goal progress bars, owned UK food catalogue with 2,853 complete records, offline food search, treadmill/outdoor running choices, GPS routes and speed logs, daily/weekly Step Progress charts, Health Connect integration and all existing beta features.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.37` tailors training controls to the years saved in About You: 0–2 years gets a simple full-body workout and basic set logging, over 2 to under 4 years gets workout splits and weekly volume, and 4+ years gets all training tools. Existing workouts and goals are kept when experience changes. This beta also retains outdoor GPS tracking with route, distance and speed logs, orange goal progress bars, the owned UK food catalogue, step charts and Health Connect integration.
 
 
 ## What is included
@@ -14,6 +14,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, off
 - Android Health Connect read-only step access, local-midnight daily totals, resume/background refresh and a permission-based web motion fallback that clearly counts only while VFIT is open.
 - Training Logs Step Progress chart with daily step bars, a per-day goal line, weekly saved-day totals and their combined goals.
 - Cardio choices for treadmill and normal outdoor running. The Android run notification keeps precise GPS tracking active with the screen locked; the workout log saves distance, time, average speed and a GPS route with GPX export. Browser runs need the page kept open.
+- Training years in About You tailor the Training and Training Basics screens. Members with 0–2 years (or no years set) can start a four-movement full-body session with two sets per exercise, log reps and weight, and keep cardio and workout history. Above 2 years, splits and weekly volume appear; at 4+ years specialist muscle focus and smart progression are also available. The home starter session prefills 0 kg so bodyweight sets can be logged.
 - A dedicated “Add Your Own Food” section for saving a food name, calories, protein and compressed phone photo to the VFIT Food Database.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.

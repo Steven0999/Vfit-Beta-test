@@ -663,7 +663,7 @@
     function analyzeWeeklyVolume() {
         const level = getExperienceLevel();
         const plan = activeMuscleGainVolumePlan(state);
-        if (!plan && level !== 'Intermediate' && level !== 'Advanced') return null;
+        if (level !== 'Intermediate' && level !== 'Advanced') return null;
 
         const volume = getWeeklyVolume();
         const allLoggedSets = Object.values(volume).reduce((sum, value) => sum + value, 0);
@@ -1033,12 +1033,14 @@
         state.userProfile.gender = gender;
         state.userProfile.age = isNaN(age) ? null : age;
         state.userProfile.heightCm = isNaN(heightCm) ? null : heightCm;
-        state.userProfile.yearsTraining = isNaN(yearsTraining) ? null : yearsTraining;
+        state.userProfile.yearsTraining = Number.isFinite(yearsTraining) && yearsTraining >= 0 && yearsTraining <= 60 ? yearsTraining : null;
         state.userProfile.activityLevel = activityLevel;
 
         saveState();
         renderExperienceLevel();
         renderMaintenanceDisplay();
+        applyTrainingExperienceMode();
+        renderVolumeTracker();
     }
 
     /**
@@ -1065,6 +1067,13 @@
      * Save handler for the About You modal — persist then close.
      */
     function saveAboutYou() {
+        const yearsInput = document.getElementById('profile-years-training');
+        const years = Number(yearsInput.value);
+        if (yearsInput.value.trim() && (!Number.isFinite(years) || years < 0 || years > 60)) {
+            showToast('Enter a number of training years from 0 to 60');
+            yearsInput.focus();
+            return;
+        }
         saveUserProfile();
         renderAboutYouStatus();
         closeAboutYouModal();
@@ -1100,14 +1109,52 @@
 
     /**
      * Show a friendly experience-level label based on years training.
-     * <1 year = Beginner, 1-3 = Intermediate, 3+ = Advanced.
+     * 0–2 years = Beginner, over 2 to under 4 = Intermediate, 4+ = Advanced.
      */
     function getExperienceLevel() {
         const yrs = state.userProfile && state.userProfile.yearsTraining;
-        if (yrs === null || yrs === undefined || isNaN(yrs)) return null;
-        if (yrs < 1) return 'Beginner';
-        if (yrs < 3) return 'Intermediate';
+        if (yrs === null || yrs === undefined || yrs === '' || !Number.isFinite(Number(yrs)) || Number(yrs) < 0) return null;
+        if (Number(yrs) <= 2) return 'Beginner';
+        if (Number(yrs) < 4) return 'Intermediate';
         return 'Advanced';
+    }
+
+    // Missing experience uses the basic interface until the member sets their years.
+    function trainingExperienceTier() {
+        const level = getExperienceLevel();
+        return level === 'Advanced' ? 'advanced' : level === 'Intermediate' ? 'intermediate' : 'beginner';
+    }
+
+    function applyTrainingExperienceMode() {
+        const tier = trainingExperienceTier();
+        document.body.dataset.trainingTier = tier;
+        const focus = document.getElementById('workout-focus');
+        if (focus) {
+            const allowed = tier === 'beginner' ? ['Full Body']
+                : tier === 'intermediate' ? ['Full Body', 'Upper', 'Lower', 'Push', 'Pull', 'Legs'] : null;
+            Array.from(focus.options || []).forEach(option => {
+                option.disabled = !!allowed && !allowed.includes(option.value || option.textContent);
+                option.hidden = option.disabled;
+            });
+            if (allowed && !allowed.includes(focus.value)) {
+                focus.value = 'Full Body';
+                toggleSpecificMuscle();
+            }
+        }
+        const years = state.userProfile && state.userProfile.yearsTraining;
+        const status = document.getElementById('training-level-status');
+        const description = document.getElementById('training-level-description');
+        if (status) status.textContent = tier === 'beginner' ? 'Training basics' : tier === 'intermediate' ? 'Intermediate training' : 'Full training tools';
+        if (description) description.textContent = getExperienceLevel() === null
+            ? 'Set your years of training to tailor the tools. For now, start with the basics.'
+            : tier === 'beginner' ? `${years} year${Number(years) === 1 ? '' : 's'} training · full-body workouts, reps and weight.`
+            : tier === 'intermediate' ? 'Workout splits and weekly volume are ready. Specialist muscle goals unlock at 4 years.'
+            : 'All workout focuses, weekly volume and progression tools are available.';
+        const menuTitle = document.getElementById('coaching-training-menu-title');
+        const menuDescription = document.getElementById('coaching-training-menu-description');
+        if (menuTitle) menuTitle.textContent = tier === 'beginner' ? 'Training Basics' : 'Training & Goals';
+        if (menuDescription) menuDescription.textContent = tier === 'beginner'
+            ? 'Full-body workouts and steady progress' : 'Weekly sets, progression and deload guidance';
     }
 
     function renderExperienceLevel() {
@@ -1699,7 +1746,7 @@
             }
             if (details.experience && details.experience !== 'Unknown') {
                 const tips = {
-                    Beginner: 'Focus on compound lifts (squat, bench, deadlift, row, OHP) 3×/week. Beginner gains are real — use them.',
+                    Beginner: 'Start with two simple full-body sessions each week. Practise the movements and log your reps and weight.',
                     Intermediate: 'Run a structured 4-5 day split. Track progressive overload week by week.',
                     Advanced: 'Specialization phases and periodization matter more than total volume now.'
                 };

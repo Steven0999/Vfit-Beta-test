@@ -272,6 +272,12 @@ const expose = `
   }),
   saveState,
   loadState,
+  getExperienceLevel,
+  trainingExperienceTier,
+  applyTrainingExperienceMode,
+  basicExerciseNames,
+  addSetToExercise,
+  renderVolumeTracker,
   getState: () => state,
   setState: value => { state = value; },
   setUser: value => { currentUser = value; },
@@ -287,6 +293,43 @@ const app = sandbox.__vfitTest;
 assert.equal(app.defaultState().dailyReadinessEnabled, true);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: false }).dailyReadinessEnabled, false);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: 'false' }).dailyReadinessEnabled, true);
+
+// Experience changes the controls, but never rewrites a member's workout history.
+const trainingState = app.defaultState();
+trainingState.workoutHistory = [{ id: 'existing-workout', exercises: [{ name: 'Squat', sets: [{ reps: '8', weight: '20', rir: '2' }] }] }];
+trainingState.userGoals = [{ focus: 'muscle_gain', details: { scope: 'specific', muscles: ['Chest'] }, completed: false }];
+app.setState(trainingState);
+const focusSelect = document.getElementById('workout-focus');
+focusSelect.options = ['Full Body', 'Upper', 'Lower', 'Push', 'Pull', 'Legs', 'Specific Muscle']
+  .map(value => ({ value, textContent: value, disabled: false, hidden: false }));
+for (const [years, level, tier] of [
+  [null, null, 'beginner'], [0, 'Beginner', 'beginner'], [2, 'Beginner', 'beginner'],
+  [2.5, 'Intermediate', 'intermediate'], [3.5, 'Intermediate', 'intermediate'],
+  [4, 'Advanced', 'advanced'], [9, 'Advanced', 'advanced'], [-1, null, 'beginner']
+]) {
+  trainingState.userProfile.yearsTraining = years;
+  focusSelect.value = 'Specific Muscle';
+  app.applyTrainingExperienceMode();
+  assert.equal(app.getExperienceLevel(), level);
+  assert.equal(app.trainingExperienceTier(), tier);
+  assert.equal(document.body.dataset.trainingTier, tier);
+  assert.equal(focusSelect.options.at(-1).disabled, tier !== 'advanced');
+  assert.equal(focusSelect.options[1].disabled, tier === 'beginner');
+  assert.equal(focusSelect.value, tier === 'advanced' ? 'Specific Muscle' : 'Full Body');
+  app.renderVolumeTracker();
+  assert.equal(document.getElementById('volume-tracker-card').classList.contains('hidden'), tier === 'beginner');
+  assert.equal(trainingState.workoutHistory[0].exercises[0].sets[0].rir, '2');
+}
+assert.equal(app.basicExerciseNames('gym').length, 4);
+assert.equal(app.basicExerciseNames('home').length, 4);
+trainingState.disabledExercises.home = ['Bodyweight Squat'];
+assert.equal(app.basicExerciseNames('home')[0], 'Resistance Bands Squats');
+assert.ok(!app.basicExerciseNames('home').includes('Bodyweight Squat'));
+trainingState.userProfile.yearsTraining = 1;
+trainingState.workoutEnv = 'home';
+app.addSetToExercise('bodyweight-smoke', null, 'Push Ups');
+const bodyweightRow = document.getElementById('sets-bodyweight-smoke').children[0];
+assert.equal(bodyweightRow.children[1].children[0].value, '0', 'home bodyweight sets must save a 0 kg load');
 
 // Step history keeps the final daily total and the goal that applied that day.
 const migratedSteps = app.normalizeState({

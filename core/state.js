@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.36';
+    const VFIT_APP_VERSION = '2.1.0-beta.37';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -5906,7 +5906,9 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             panel.setAttribute('aria-hidden', visible ? 'false' : 'true');
         });
         if (!isHome) {
-            const details = COACHING_PAGE_DETAILS[nextPage];
+            const details = nextPage === 'training' && trainingExperienceTier() === 'beginner'
+                ? ['Training Basics', 'Simple full-body workouts and consistent practice.']
+                : COACHING_PAGE_DETAILS[nextPage];
             if (title) title.textContent = details[0];
             if (description) description.textContent = details[1];
         }
