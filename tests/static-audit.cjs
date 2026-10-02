@@ -311,6 +311,12 @@ assert.ok(mealPlannerSource.includes('manualFoodImageData = await compressImage'
 assert.ok(source.includes("addButton.classList.toggle('hidden', !canManage)"), 'manual database entry must stay restricted to the owner and approved editors');
 assert.ok(source.includes("manualSection.classList.toggle('hidden', !canManage)"), 'the custom-food section must stay restricted to the owner and approved editors');
 assert.ok(source.includes('const requiredNutritionInputs = [') && source.includes("showToast('Please enter calories and protein')"), 'manual database saves must require calories and protein');
+for (const buttonId of ['diary-add-own-food', 'search-add-own-food', 'database-log-own-food']) {
+  const button = html.match(new RegExp(`<button[^>]*id="${buttonId}"[^>]*>`));
+  assert.ok(button && !/\bhidden\b/.test(button[0]), `${buttonId} must be available without database editor access`);
+  assert.ok(button[0].includes('openManualDiaryFood()'), `${buttonId} must open personal food entry`);
+}
+assert.ok(html.includes('onsubmit="saveManualDiaryFood(event)"'), 'manual diary entry must submit through its validated logger');
 
 const runtimeConfig = fs.readFileSync(path.join(root, 'vfit-config.js'), 'utf8');
 assert.ok(runtimeConfig.includes('paymentsEnabled: false'), 'payments must default off until Stripe is configured');

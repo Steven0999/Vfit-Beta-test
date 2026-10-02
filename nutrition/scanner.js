@@ -2187,7 +2187,9 @@
         document.getElementById('edit-meal-amount').value = Math.round(servingAmount * 100) / 100;
         document.getElementById('edit-meal-custom-weight').value = Math.round(customWeight * 10) / 10;
         const servingHelp = document.getElementById('edit-meal-serving-help');
-        if (servingHelp) servingHelp.textContent = `1 serving = ${servingLabel} (${Math.round(bases.servingGrams * 10) / 10}${foodAmountUnit(currentEditingMeal)}).`;
+        if (servingHelp) servingHelp.textContent = currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams)
+            ? '1 serving = the amount originally entered. Weight was not provided.'
+            : `1 serving = ${servingLabel} (${Math.round(bases.servingGrams * 10) / 10}${foodAmountUnit(currentEditingMeal)}).`;
         editAmountType = originalType;
         setEditAmountType(originalType);
         document.getElementById('edit-meal-type').value = currentEditingMeal.mealType || currentEditingMeal.type || 'lunch';
@@ -2201,10 +2203,13 @@
     }
 
     function setEditAmountType(type) {
+        const unknownManualWeight = currentEditingMeal && currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams);
+        if (type === 'grams' && unknownManualWeight) { showToast('Add a food weight before using custom grams'); return; }
         const nextType = type === 'grams' ? 'grams' : 'portion';
         const previousType = editAmountType;
         const p = document.getElementById('edit-amount-type-portion');
         const g = document.getElementById('edit-amount-type-grams');
+        if (g) g.disabled = Boolean(unknownManualWeight);
         const servingField = document.getElementById('edit-meal-serving-field');
         const customWeightField = document.getElementById('edit-meal-custom-weight-field');
         const servingInput = document.getElementById('edit-meal-amount');
@@ -2272,7 +2277,7 @@
             mealType,
             amount,
             amountType: editAmountType,
-            servingGrams: calculated.bases.servingGrams,
+            servingGrams: currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams) ? 0 : calculated.bases.servingGrams,
             servingLabel,
             base,
             calories: calculated.totals.calories,

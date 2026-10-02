@@ -123,6 +123,7 @@
     function editLoggedFood(id) {
         const m = state.dailyMeals.find(x => String(x.id) === String(id));
         if (!m) return;
+        if (m.manualEntry) { openManualDiaryFood(id); return; }
 
         // Reconstruct the per-100g / per-serving base. Older entries saved before
         // this feature won't have .base, so derive it from the stored totals.
@@ -513,7 +514,9 @@
                 fiber: m.fiber || 0,
                 image: m.image || '',
                 isCustom: true,
-                serving: m.serving || '1 serving'
+                serving: m.serving || '1 serving',
+                servingGrams: m.servingGrams ? m.servingGrams * (m.amountType === 'grams' ? (m.amount || 1) / m.servingGrams : (m.amount || 1)) : 0,
+                manualEntry: Boolean(m.manualEntry)
             });
             if (out.length >= limit) break;
         }
@@ -1208,6 +1211,7 @@
             category: String(food.category || 'general'),
             barcode: normaliseBarcode(food.barcode),
             store: String(food.store || '').slice(0, 120),
+            manualEntry: Boolean(food.manualEntry),
             isCustom: true
         };
         editingLoggedMealId = null;
@@ -1387,10 +1391,13 @@
     }
 
     function setAmountType(type) {
+        const unknownManualWeight = currentFoodItem && currentFoodItem.manualEntry && !nutritionNumber(currentFoodItem.servingGrams);
+        if (type === 'grams' && unknownManualWeight) { showToast('Add a food weight before using custom grams'); return; }
         const nextType = type === 'grams' ? 'grams' : 'portion';
         const previousType = currentAmountType;
         const portionBtn = document.getElementById('amount-type-portion');
         const gramsBtn = document.getElementById('amount-type-grams');
+        if (gramsBtn) gramsBtn.disabled = Boolean(unknownManualWeight);
         const servingField = document.getElementById('popup-serving-amount-field');
         const customWeightField = document.getElementById('popup-custom-weight-field');
         const servingInput = document.getElementById('popup-amount');
@@ -1422,7 +1429,9 @@
             if (weightInput && (!(Number(weightInput.value) > 0))) weightInput.value = servingGrams;
         }
         const servingHelp = document.getElementById('popup-serving-amount-help');
-        if (servingHelp) servingHelp.textContent = `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}${foodAmountUnit(currentFoodItem)}).`;
+        if (servingHelp) servingHelp.textContent = unknownManualWeight
+            ? '1 serving = the amount originally entered. Weight was not provided.'
+            : `1 serving = ${foodServingLabel(currentFoodItem && currentFoodItem.serving)} (${Math.round(servingGrams * 10) / 10}${foodAmountUnit(currentFoodItem)}).`;
         updatePopupTotals();
     }
 
@@ -1574,6 +1583,7 @@
             catalogId: currentFoodItem.catalogId || '',
             basisUnit: foodAmountUnit(currentFoodItem),
             servingGrams: currentFoodItem.servingGrams || 0,
+            manualEntry: Boolean(currentFoodItem.manualEntry),
             servingLabel: foodServingLabel(currentFoodItem.serving)
         };
 
@@ -1617,6 +1627,87 @@
     // ==========================================================================
     // MANUAL FOOD ENTRY
     // ==========================================================================
+
+    let manualDiaryFoodSession = null;
+
+    // Personal diary entries do not write to the shared food database, so they
+    // work offline and do not depend on owner/editor permission resolution.
+    function openManualDiaryFood(foodId) {
+        if (!currentUser) { showToast('Sign in to add food'); return; }
+        const existing = foodId == null ? null : state.dailyMeals.find(meal => String(meal.id) === String(foodId));
+        if (foodId != null && !existing) return;
+        manualDiaryFoodSession = { uid: currentUser.uid, date: state.viewDate, id: existing ? existing.id : null };
+        ['name', 'calories', 'protein', 'carbs', 'fat'].forEach(key => {
+            document.getElementById('diary-food-' + key).value = existing ? existing[key] || (key === 'name' ? '' : 0) : '';
+        });
+        const weight = existing && nutritionNumber(existing.servingGrams)
+            ? (existing.amountType === 'grams' ? existing.amount : existing.servingGrams * (existing.amount || 1)) : '';
+        document.getElementById('diary-food-weight').value = weight;
+        document.getElementById('diary-food-meal-type').value = existing ? existing.mealType || existing.type || 'snack' : 'snack';
+        document.getElementById('diary-food-extra-details').open = Boolean(existing && (existing.carbs || existing.fat || weight));
+        document.getElementById('manual-diary-food-title').textContent = existing ? 'Edit Your Food' : 'Add Your Own Food';
+        document.getElementById('diary-food-save-button').textContent = existing ? 'Save Changes' : 'Add to Diary';
+        closeFoodDatabase();
+        document.getElementById('manual-diary-food-modal').style.display = 'flex';
+        document.getElementById('diary-food-name').focus();
+    }
+
+    function closeManualDiaryFood() {
+        document.getElementById('manual-diary-food-modal').style.display = 'none';
+        manualDiaryFoodSession = null;
+    }
+
+    function saveManualDiaryFood(event) {
+        if (event) event.preventDefault();
+        const session = manualDiaryFoodSession;
+        if (!session || !currentUser || currentUser.uid !== session.uid) {
+            showToast('Sign in and open food entry again');
+            return;
+        }
+        if (session.date !== state.viewDate) { showToast('The diary date changed. Open food entry again.'); return; }
+        const nameInput = document.getElementById('diary-food-name');
+        const name = nameInput.value.trim();
+        if (!name) { showToast('Please enter a food name'); nameInput.focus(); return; }
+        const nutrients = {};
+        for (const key of ['calories', 'protein', 'carbs', 'fat']) {
+            const input = document.getElementById('diary-food-' + key);
+            const raw = String(input.value).trim();
+            const value = raw === '' && (key === 'carbs' || key === 'fat') ? 0 : Number(raw);
+            if ((raw === '' && (key === 'calories' || key === 'protein')) || !Number.isFinite(value) || value < 0 || value > 1000000) {
+                showToast('Enter a valid ' + key + ' value'); input.focus(); return;
+            }
+            nutrients[key] = value;
+        }
+        const weightInput = document.getElementById('diary-food-weight');
+        const weightRaw = String(weightInput.value).trim();
+        const servingGrams = weightRaw === '' ? 0 : Number(weightRaw);
+        if (weightRaw && (!Number.isFinite(servingGrams) || servingGrams <= 0 || servingGrams > 100000)) {
+            showToast('Enter a valid food weight or leave it blank'); weightInput.focus(); return;
+        }
+        const mealType = document.getElementById('diary-food-meal-type').value;
+        if (!['breakfast', 'lunch', 'dinner', 'snack'].includes(mealType)) { showToast('Choose a meal'); return; }
+        const index = session.id == null ? -1 : state.dailyMeals.findIndex(meal => String(meal.id) === String(session.id));
+        if (session.id != null && index < 0) { showToast('This food entry no longer exists'); return; }
+        const existing = index < 0 ? {} : state.dailyMeals[index];
+        const extraNutrients = {};
+        ['fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol'].forEach(key => { extraNutrients[key] = nutritionNumber(existing[key]); });
+        const totals = Object.assign({}, extraNutrients, nutrients);
+        const meal = Object.assign({}, existing, totals, {
+            id: existing.id || Date.now() + Math.random(),
+            date: session.date, name: name.slice(0, 160), type: mealType, mealType,
+            amount: 1, amountType: 'portion', servingGrams, servingLabel: '1 serving',
+            manualEntry: true,
+            base: Object.assign({}, totals, { isCustom: true, serving: '1 serving' })
+        });
+        if (index < 0) state.dailyMeals.push(meal);
+        else state.dailyMeals[index] = meal;
+        saveState();
+        autoSaveNutrition();
+        closeManualDiaryFood();
+        renderDiary();
+        renderDashboard();
+        showToast(index < 0 ? 'Added to ' + mealType : 'Food updated');
+    }
 
     let editingCustomFoodId = null;
     let foodDatabaseDraft = null;

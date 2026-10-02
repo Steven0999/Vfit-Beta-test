@@ -702,6 +702,10 @@
 
                 <!-- DIARY VIEW -->
                 <div id="nut-view-diary" class="space-y-6">
+                    <button id="diary-add-own-food" onclick="openManualDiaryFood()" class="w-full bg-orange-600 text-white p-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-orange-700">
+                        <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                        Add Your Own Food
+                    </button>
                     <div class="glass-card p-4 rounded-2xl">
                         <div class="flex items-center justify-between gap-3">
                             <button onclick="changeNutritionDate(-1)" class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center hover:bg-slate-200">
@@ -835,6 +839,10 @@
                     </div>
 
                     <!-- Action buttons -->
+                    <button id="search-add-own-food" onclick="openManualDiaryFood()" class="w-full bg-orange-600 text-white p-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-orange-700">
+                        <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                        Add Your Own Food
+                    </button>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <button onclick="openCopyPreviousDay()" class="bg-purple-600 text-white p-3 rounded-xl font-bold text-sm hover:bg-purple-700 flex items-center justify-center gap-2">
                             <i data-lucide="copy" class="w-4 h-4"></i>
@@ -1576,6 +1584,33 @@
     <!-- ========================================== -->
 
     <!-- MANUAL FOOD ENTRY MODAL -->
+    <!-- PERSONAL MANUAL FOOD LOG -->
+    <div id="manual-diary-food-modal" class="modal-overlay" style="z-index:230;" role="dialog" aria-modal="true" aria-labelledby="manual-diary-food-title">
+        <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
+        <form onsubmit="saveManualDiaryFood(event)">
+            <div class="flex items-start justify-between gap-3 mb-5">
+                <div><h3 id="manual-diary-food-title" class="text-xl font-black">Add Your Own Food</h3><p class="text-xs text-slate-400 mt-2">Enter the total nutrition for the amount you ate. These values go straight into your diary.</p></div>
+                <button type="button" onclick="closeManualDiaryFood()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close manual food entry">×</button>
+            </div>
+            <div class="mb-4"><label for="diary-food-name" class="text-xs font-bold text-slate-400 uppercase block mb-2">Food name</label><input id="diary-food-name" type="text" required maxlength="160" placeholder="e.g. Costco muffin" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div><label for="diary-food-calories" class="text-xs font-bold text-slate-400 uppercase block mb-2">Calories (kcal)</label><input id="diary-food-calories" type="number" inputmode="decimal" required min="0" max="1000000" step="any" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
+                <div><label for="diary-food-protein" class="text-xs font-bold text-slate-400 uppercase block mb-2">Protein (g)</label><input id="diary-food-protein" type="number" inputmode="decimal" required min="0" max="1000000" step="any" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
+            </div>
+            <div class="mb-4"><label for="diary-food-meal-type" class="text-xs font-bold text-slate-400 uppercase block mb-2">Meal</label><select id="diary-food-meal-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snack">Snack</option></select></div>
+            <details id="diary-food-extra-details" class="mb-5">
+                <summary class="text-sm font-bold text-orange-600 cursor-pointer">More details (optional)</summary>
+                <div class="grid grid-cols-2 gap-3 mt-3">
+                    <div><label for="diary-food-carbs" class="text-xs font-bold text-slate-400 block mb-2">Carbs (g)</label><input id="diary-food-carbs" type="number" inputmode="decimal" min="0" max="1000000" step="any" placeholder="0" class="w-full p-3 bg-slate-50 rounded-xl font-bold"></div>
+                    <div><label for="diary-food-fat" class="text-xs font-bold text-slate-400 block mb-2">Fat (g)</label><input id="diary-food-fat" type="number" inputmode="decimal" min="0" max="1000000" step="any" placeholder="0" class="w-full p-3 bg-slate-50 rounded-xl font-bold"></div>
+                    <div class="col-span-2"><label for="diary-food-weight" class="text-xs font-bold text-slate-400 block mb-2">Weight of the amount you ate (g)</label><input id="diary-food-weight" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="Leave blank if unknown" class="w-full p-3 bg-slate-50 rounded-xl font-bold"></div>
+                </div>
+            </details>
+            <button id="diary-food-save-button" type="submit" class="w-full bg-orange-600 text-white p-4 rounded-2xl font-black hover:bg-orange-700">Add to Diary</button>
+        </form>
+        </div>
+    </div>
+
     <div id="manual-food-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-6">
@@ -1684,6 +1719,7 @@
                 <button onclick="closeFoodDatabase()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close food database">×</button>
             </div>
             <div class="relative mb-3 flex-shrink-0"><i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i><input id="food-database-search" oninput="renderFoodDatabase()" placeholder="Search your database..." class="w-full pl-11 pr-4 py-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-orange-400"></div>
+            <button id="database-log-own-food" onclick="openManualDiaryFood()" class="w-full mb-3 p-4 bg-slate-900 text-white rounded-2xl font-black text-sm flex-shrink-0">Add Your Own Food to Diary</button>
             <button id="food-database-add-button" onclick="openManualFoodEntry()" class="hidden w-full mb-4 p-4 bg-orange-600 text-white rounded-2xl font-black text-left flex items-center justify-between gap-3 shadow-lg shadow-orange-100 hover:bg-orange-700 transition-colors flex-shrink-0">
                 <span class="flex items-center gap-3"><span class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0"><i data-lucide="plus" class="w-5 h-5"></i></span><span><span class="block text-sm">Add Your Own Food</span><span class="block text-[11px] font-bold text-orange-100 mt-0.5">Food name, calories, protein and a photo</span></span></span>
                 <i data-lucide="chevron-right" class="w-5 h-5 flex-shrink-0"></i>

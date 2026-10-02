@@ -274,6 +274,18 @@ const expose = `
   }),
   saveState,
   loadState,
+  openManualDiaryFood,
+  closeManualDiaryFood,
+  saveManualDiaryFood,
+  editLoggedFood,
+  getRecentFoods,
+  openFoodPopupCustom,
+  setAmountType,
+  canManageFoodDatabase,
+  updateFoodDatabasePermissionUI,
+  editPreviousMealItem,
+  setEditAmountType,
+  saveEditedMeal,
   getExperienceLevel,
   trainingExperienceTier,
   applyTrainingExperienceMode,
@@ -295,6 +307,102 @@ const app = sandbox.__vfitTest;
 assert.equal(app.defaultState().dailyReadinessEnabled, true);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: false }).dailyReadinessEnabled, false);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: 'false' }).dailyReadinessEnabled, true);
+
+// Manual diary logging must work without database editor access, including
+// offline, while leaving shared foods and other accounts untouched.
+const manualFoodState = app.defaultState();
+manualFoodState.customFoods = [{ id: 'shared-food', name: 'Shared food', calories: 80, protein: 2 }];
+app.setState(manualFoodState);
+app.setUser({ uid: 'manual-food-user' });
+sandbox.navigator.onLine = false;
+assert.equal(app.canManageFoodDatabase(), false);
+app.updateFoodDatabasePermissionUI();
+assert.equal(document.getElementById('food-database-add-button').classList.contains('hidden'), true);
+assert.equal(document.getElementById('diary-add-own-food').classList.contains('hidden'), false);
+app.openManualDiaryFood();
+assert.equal(document.getElementById('manual-diary-food-modal').style.display, 'flex');
+document.getElementById('diary-food-name').value = 'My muffin';
+document.getElementById('diary-food-calories').value = '450.5';
+document.getElementById('diary-food-protein').value = '';
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 0, 'protein cannot be omitted');
+for (const invalid of ['-1', 'NaN', 'Infinity', '1000001']) {
+  document.getElementById('diary-food-protein').value = invalid;
+  app.saveManualDiaryFood();
+  assert.equal(app.getState().dailyMeals.length, 0, 'invalid nutrition must not be logged');
+}
+document.getElementById('diary-food-protein').value = '12.5';
+document.getElementById('diary-food-meal-type').value = 'snack';
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 1);
+const manualFood = app.getState().dailyMeals[0];
+assert.equal(manualFood.calories, 450.5);
+assert.equal(manualFood.protein, 12.5);
+assert.equal(manualFood.carbs, 0);
+assert.equal(manualFood.fat, 0);
+assert.equal(manualFood.mealType, 'snack');
+assert.equal(manualFood.servingGrams, 0, 'an unknown food weight must not be invented');
+assert.equal(manualFood.manualEntry, true);
+assert.equal(app.getState().customFoods.length, 1, 'personal logging must not add shared database foods');
+const savedManualState = JSON.parse(localStorage.getItem(app.stateStorageKey('manual-food-user')));
+assert.equal(savedManualState.dailyMeals[0].protein, 12.5, 'manual food must persist offline');
+assert.equal(app.getState().nutritionHistory.find(day => day.date === manualFood.date).meals[0].calories, 450.5);
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 1, 'resubmitting a closed form must not duplicate food');
+
+app.editLoggedFood(manualFood.id);
+document.getElementById('diary-food-protein').value = '0';
+document.getElementById('diary-food-carbs').value = '55';
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 1, 'editing must update the existing diary row');
+assert.equal(app.getState().dailyMeals[0].id, manualFood.id);
+assert.equal(app.getState().dailyMeals[0].protein, 0, 'zero protein is valid');
+assert.equal(app.getState().dailyMeals[0].carbs, 55);
+
+const manualRecent = app.getRecentFoods(10)[0];
+assert.equal(manualRecent.manualEntry, true);
+assert.equal(manualRecent.servingGrams, 0);
+app.openFoodPopupCustom(manualRecent);
+assert.equal(document.getElementById('amount-type-grams').disabled, true, 'unknown weights cannot be used for gram conversions');
+app.setAmountType('grams');
+assert.equal(document.getElementById('popup-custom-weight-field').classList.contains('hidden'), true);
+
+app.editPreviousMealItem(0, manualFood.date);
+assert.equal(document.getElementById('edit-amount-type-grams').disabled, true);
+app.setEditAmountType('grams');
+document.getElementById('edit-meal-amount').value = '2';
+app.saveEditedMeal();
+assert.equal(app.getState().dailyMeals[1].calories, 901);
+assert.equal(app.getState().dailyMeals[1].servingGrams, 0, 'copying a manual food must retain its unknown weight');
+
+app.openManualDiaryFood();
+document.getElementById('diary-food-name').value = 'Weighed food';
+document.getElementById('diary-food-calories').value = '200';
+document.getElementById('diary-food-protein').value = '10';
+document.getElementById('diary-food-weight').value = '80';
+document.getElementById('diary-food-fat').value = '5';
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals[2].servingGrams, 80);
+app.openFoodPopupCustom(app.getRecentFoods(10).find(food => food.name === 'Weighed food'));
+assert.equal(document.getElementById('amount-type-grams').disabled, false, 'known weights must retain normal conversion support');
+
+app.openManualDiaryFood();
+app.setUser({ uid: 'different-account' });
+document.getElementById('diary-food-name').value = 'Do not leak';
+document.getElementById('diary-food-calories').value = '100';
+document.getElementById('diary-food-protein').value = '10';
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 3, 'a stale form cannot write after an account change');
+app.closeManualDiaryFood();
+app.setUser({ uid: 'manual-food-user' });
+app.openManualDiaryFood();
+app.getState().viewDate = app.offsetLocalDateKey(app.getState().viewDate, -1);
+app.saveManualDiaryFood();
+assert.equal(app.getState().dailyMeals.length, 3, 'a form cannot silently log to a changed diary date');
+app.closeManualDiaryFood();
+app.setUser(null);
+app.setState(app.defaultState());
+sandbox.navigator.onLine = true;
 
 // Experience changes the controls, but never rewrites a member's workout history.
 const trainingState = app.defaultState();

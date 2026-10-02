@@ -8,6 +8,7 @@
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
+            closeManualDiaryFood();
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
             if (typeof teardownStepTracking === 'function') teardownStepTracking();
             if (typeof finishRunOnSignOut === 'function') finishRunOnSignOut();
@@ -40,6 +41,7 @@
         }
 
         stopSharedFoodDatabaseSync();
+        closeManualDiaryFood();
         currentUser = user;
         currentUserIsOwner = false;
         currentUserCanManageFoodDatabase = false;
