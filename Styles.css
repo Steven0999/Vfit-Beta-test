@@ -230,6 +230,27 @@
             --vfit-border: #2d2d2d;    /* subtle border on black panels */
         }
 
+        .goal-progress-track {
+            height: 0.65rem;
+            overflow: hidden;
+            border: 1px solid var(--vfit-border);
+            border-radius: 9999px;
+            background: #242424;
+        }
+        .goal-progress-fill { height: 100%; border-radius: 9999px; background: var(--vfit-orange-bright); }
+        .goal-timeline { margin-left: 0.4rem; border-left: 2px solid #6b4d31; }
+        .goal-timeline-entry { position: relative; margin-left: 1rem; }
+        .goal-timeline-entry::before {
+            content: '';
+            position: absolute;
+            left: -1.43rem;
+            top: 1rem;
+            width: 0.7rem;
+            height: 0.7rem;
+            border-radius: 50%;
+            background: var(--vfit-orange-bright);
+        }
+
         /* Page background */
         body { background-color: var(--vfit-bg) !important; color: var(--vfit-orange) !important; }
         main, section, #app-screen, #dashboard, .tab-content { background-color: transparent !important; }

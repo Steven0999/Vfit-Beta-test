@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.41` moves the private “Add Your Own Food” shortcut out of Diary while retaining it in Search. Estimated daily energy expenditure (TDEE) now considers logged steps, cardio and workout duration with a small RIR intensity adjustment, using the last seven completed local days. A planned deficit of 1,000 kcal/day or more for 56 continuous days triggers seven days at estimated maintenance; targets never go below estimated BMR. This is a planning estimate, not a direct measurement or a guarantee of adequate fuelling. Previous Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.42` adds a dated timeline and personal journal to every goal. Fat loss, muscle gain, strength, healthier eating and activity goals can show a progress value against an optional target, while all goals accept notes; entries can be edited or deleted and sync with the member's account. Estimated daily energy expenditure (TDEE), deficit safeguards, Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
 
 
 ## What is included

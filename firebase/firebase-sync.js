@@ -1795,7 +1795,7 @@
         document.getElementById('goal-deadline').value = '';
 
         // Reset focus buttons
-        ['weight_loss', 'muscle_gain', 'health'].forEach(f => {
+        ['weight_loss', 'muscle_gain', 'health', 'strength', 'healthy_eating', 'activity'].forEach(f => {
             const btn = document.getElementById('focus-' + f);
             if (btn) btn.className = 'p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600 hover:bg-slate-200';
             const fields = document.getElementById('focus-fields-' + f);
@@ -1804,11 +1804,12 @@
 
         // Reset all follow-up fields
         ['wl-kg', 'wl-weeks', 'wl-style', 'wl-photos',
-         'mg-physique',
-         'h-area', 'h-reason'].forEach(id => {
+         'mg-physique', 'mg-target-kg', 'strength-exercise', 'strength-target-kg',
+         'healthy-eating-target', 'activity-target', 'h-area', 'h-reason'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
+        document.getElementById('activity-unit').value = 'steps/day';
         setMuscleGainScope('', { preview: false });
         renderGoalMuscleSelection();
 
@@ -1868,7 +1869,7 @@
         currentGoalFocus = focus;
 
         // Update button styles
-        ['weight_loss', 'muscle_gain', 'health'].forEach(f => {
+        ['weight_loss', 'muscle_gain', 'health', 'strength', 'healthy_eating', 'activity'].forEach(f => {
             const btn = document.getElementById('focus-' + f);
             if (!btn) return;
             if (f === focus) {
@@ -1912,7 +1913,23 @@
                 weeklySetMin: 12,
                 weeklySetMax: currentMuscleGainScope === 'specific' ? 20 : 16,
                 physique: document.getElementById('mg-physique').value || '',
+                targetKg: Number(document.getElementById('mg-target-kg').value) || null,
                 experience: getExperienceLevel() || 'Unknown'
+            };
+        }
+        if (currentGoalFocus === 'strength') {
+            return {
+                exercise: document.getElementById('strength-exercise').value.trim(),
+                targetKg: Number(document.getElementById('strength-target-kg').value) || null
+            };
+        }
+        if (currentGoalFocus === 'healthy_eating') {
+            return { targetDays: Number(document.getElementById('healthy-eating-target').value) || null };
+        }
+        if (currentGoalFocus === 'activity') {
+            return {
+                unit: document.getElementById('activity-unit').value === 'min/week' ? 'min/week' : 'steps/day',
+                targetValue: Number(document.getElementById('activity-target').value) || null
             };
         }
         if (currentGoalFocus === 'health') {
@@ -2012,6 +2029,18 @@
     function saveGoal() {
         if (!currentGoalFocus) { showToast('Pick a focus first'); return; }
 
+        const optionalNumberFields = ['wl-kg', 'mg-target-kg', 'strength-target-kg', 'healthy-eating-target', 'activity-target'];
+        const fieldForFocus = {
+            weight_loss: 'wl-kg', muscle_gain: 'mg-target-kg', strength: 'strength-target-kg',
+            healthy_eating: 'healthy-eating-target', activity: 'activity-target'
+        }[currentGoalFocus];
+        if (fieldForFocus && optionalNumberFields.includes(fieldForFocus)) {
+            const field = document.getElementById(fieldForFocus);
+            if (field.value.trim() && (!field.checkValidity() || !Number.isFinite(Number(field.value)) || Number(field.value) <= 0)) {
+                showToast('Enter a valid positive target'); field.focus(); return;
+            }
+        }
+
         if (currentGoalFocus === 'muscle_gain' && !currentMuscleGainScope) {
             showToast('Choose full body or specific areas');
             return;
@@ -2024,6 +2053,7 @@
         const desc = document.getElementById('goal-description').value.trim();
         const deadline = document.getElementById('goal-deadline').value;
         if (!desc) { showToast('Enter goal description'); return; }
+        if (deadline && deadline < localDateKey()) { showToast('Choose a future target date'); return; }
 
         if (!state.userGoals) state.userGoals = [];
         const newGoal = {
@@ -2033,7 +2063,9 @@
             description: desc,
             deadline: deadline,
             createdAt: new Date().toISOString(),
-            completed: false
+            completed: false,
+            progressEntries: [],
+            deletedProgressEntryIds: []
         };
         state.userGoals.unshift(newGoal);
 
@@ -2052,4 +2084,5 @@
         renderSettings();
         renderGoalVolumeSummary();
         renderDashboard();
+        openGoalProgress(newGoal.id);
     }

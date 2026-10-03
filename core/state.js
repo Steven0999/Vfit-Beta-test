@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.41';
+    const VFIT_APP_VERSION = '2.1.0-beta.42';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -955,7 +955,20 @@
         const shoppingKey = (item, index) => item && (item.id || item.barcode || String(item.name || index).trim().toLowerCase());
         merged.shoppingItems = mergeUniqueItems(local.shoppingItems, remote.shoppingItems, shoppingKey, preferRemote);
         merged.habits = mergeUniqueItems(local.habits, remote.habits, itemKey, preferRemote);
-        merged.userGoals = mergeUniqueItems(local.userGoals, remote.userGoals, itemKey, preferRemote);
+        merged.userGoals = mergeUniqueItems(local.userGoals, remote.userGoals, itemKey, preferRemote, (older, newer) => {
+            const deletedProgressEntryIds = [...new Set(
+                [].concat(older.deletedProgressEntryIds || [], newer.deletedProgressEntryIds || []).map(String)
+            )];
+            const deleted = new Set(deletedProgressEntryIds);
+            return Object.assign({}, older, newer, {
+                // Each device may add journal entries to the same goal before syncing.
+                // Keep both histories, with a tombstone for intentional deletions.
+                progressEntries: mergeUniqueItems(older.progressEntries, newer.progressEntries,
+                    entry => entry.id || `${entry.date || ''}:${entry.createdAt || ''}`, true)
+                    .filter(entry => !deleted.has(String(entry.id))),
+                deletedProgressEntryIds
+            });
+        });
         merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
         merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
         merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);

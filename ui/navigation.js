@@ -2797,7 +2797,10 @@
                     const focusInfo = {
                         weight_loss: { emoji: '🔥', label: 'Fat Loss', color: 'text-rose-600' },
                         muscle_gain: { emoji: '💪', label: 'Muscle Gain', color: 'text-indigo-600' },
-                        health:      { emoji: '🌱', label: 'Health',      color: 'text-emerald-600' }
+                        health:      { emoji: '🌱', label: 'Health',      color: 'text-emerald-600' },
+                        strength:    { emoji: '🏋️', label: 'Strength', color: 'text-amber-600' },
+                        healthy_eating: { emoji: '🥗', label: 'Eat Healthier', color: 'text-emerald-600' },
+                        activity:    { emoji: '👟', label: 'Be More Active', color: 'text-amber-600' }
                     }[g.focus] || { emoji: '🎯', label: g.type ? g.type : 'Goal', color: 'text-slate-600' };
 
                     let summary = '';
@@ -2817,7 +2820,16 @@
                         if (parts.length) summary = parts.join(' · ');
                     } else if (g.focus === 'health' && g.details && g.details.area) {
                         summary = g.details.area;
+                    } else if (g.focus === 'strength' && g.details) {
+                        summary = g.details.exercise || '';
                     }
+
+                    const progress = goalProgressSpec(g);
+                    const entries = goalProgressEntries(g);
+                    const latest = entries.filter(entry => Number.isFinite(entry.value)).at(-1);
+                    const targetText = latest
+                        ? `${goalProgressNumber(latest.value)} ${progress.unit}${progress.target ? ` / ${goalProgressNumber(progress.target)} ${progress.unit}` : ''} · ${goalProgressDateLabel(latest.date)}`
+                        : `${entries.length} journal ${entries.length === 1 ? 'entry' : 'entries'}`;
 
                     return `
                         <div class="bg-slate-50 p-3 rounded-xl">
@@ -2825,7 +2837,10 @@
                                 <span class="text-[10px] font-black ${focusInfo.color} uppercase">${focusInfo.emoji} ${escapeHtml(focusInfo.label)}</span>
                                 <button onclick="removeGoal('${escapeJsString(g.id)}')" class="text-red-500 text-xs font-bold" aria-label="Remove goal">×</button>
                             </div>
-                            <p class="font-bold text-sm">${escapeHtml(g.description)}</p>
+                            <button type="button" onclick="openGoalProgress('${escapeJsString(g.id)}')" class="w-full text-left rounded-lg focus:outline-none" aria-label="Open timeline and journal for ${escapeHtml(g.description || 'goal')}">
+                                <span class="font-bold text-sm block">${escapeHtml(g.description || 'Goal')}</span>
+                                <span class="block text-xs text-amber-600 font-bold mt-1">${escapeHtml(targetText)} · Open timeline &amp; journal →</span>
+                            </button>
                             ${summary ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(summary)}</p>` : ''}
                             ${g.deadline ? `<p class="text-xs text-slate-400 mt-1">Target: ${escapeHtml(new Date(g.deadline).toLocaleDateString())}</p>` : ''}
                         </div>`;
@@ -2839,9 +2854,187 @@
     }
 
     function removeGoal(id) {
+        if (String(activeGoalProgressId) === String(id)) closeGoalProgress();
         state.userGoals = (state.userGoals || []).filter(g => String(g.id) !== String(id));
         saveState();
         renderSettings();
         renderGoalVolumeSummary();
         renderDashboard();
+    }
+
+    let activeGoalProgressId = null;
+
+    function goalProgressSpec(goal) {
+        const details = goal && goal.details || {};
+        const positiveTarget = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
+        switch (goal && goal.focus) {
+            case 'weight_loss': return { label: 'Total weight lost to date', unit: 'kg', target: positiveTarget(details.kg) };
+            case 'muscle_gain': return { label: 'Estimated muscle gained to date', unit: 'kg', target: positiveTarget(details.targetKg) };
+            case 'strength': return { label: `${details.exercise ? String(details.exercise).slice(0, 80) + ' · ' : ''}Best lift`, unit: 'kg', target: positiveTarget(details.targetKg) };
+            case 'healthy_eating': return { label: 'Days eating as planned this week', unit: 'days/week', target: positiveTarget(details.targetDays), max: 7 };
+            case 'activity': {
+                const unit = details.unit === 'min/week' ? 'min/week' : 'steps/day';
+                return { label: unit === 'min/week' ? 'Active minutes this week' : 'Steps on this day', unit, target: positiveTarget(details.targetValue), max: unit === 'min/week' ? 10080 : 200000 };
+            }
+            default: return { label: '', unit: '', target: null };
+        }
+    }
+
+    function goalProgressDateValid(value) {
+        const key = String(value || '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+        const date = new Date(key + 'T12:00:00');
+        return Number.isFinite(date.getTime()) &&
+            `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` === key;
+    }
+
+    function goalProgressDateLabel(date) {
+        return goalProgressDateValid(date)
+            ? new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '';
+    }
+
+    function goalProgressNumber(value) {
+        return Number(value).toLocaleString('en-GB', { maximumFractionDigits: 2 });
+    }
+
+    function goalProgressEntries(goal) {
+        return (Array.isArray(goal && goal.progressEntries) ? goal.progressEntries : [])
+            .filter(entry => entry && goalProgressDateValid(entry.date))
+            .map(entry => ({
+                ...entry,
+                value: entry.value === '' || entry.value == null || !Number.isFinite(Number(entry.value)) || Number(entry.value) < 0
+                    ? null : Number(entry.value)
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    }
+
+    function goalProgressBar(value, target) {
+        if (!target || !Number.isFinite(value)) return '';
+        const percent = Math.max(0, Math.round(value / target * 100));
+        return `<div class="goal-progress-track mt-2" role="progressbar" aria-valuemin="0" aria-valuemax="${target}" aria-valuenow="${Math.min(target, Math.max(0, value))}" aria-label="Goal progress">
+                    <div class="goal-progress-fill" style="width:${Math.min(100, percent)}%"></div>
+                </div><p class="text-[10px] text-slate-400 mt-1">${percent}% of target</p>`;
+    }
+
+    function openGoalProgress(id) {
+        const goal = (state.userGoals || []).find(item => String(item.id) === String(id));
+        if (!goal) return;
+        activeGoalProgressId = goal.id;
+        const spec = goalProgressSpec(goal);
+        document.getElementById('goal-progress-description').textContent = goal.description || 'Goal';
+        const valueWrap = document.getElementById('goal-progress-value-wrap');
+        valueWrap.classList.toggle('hidden', !spec.label);
+        document.getElementById('goal-progress-value-label').textContent = spec.label ? `${spec.label} (${spec.unit}, optional)` : '';
+        const valueInput = document.getElementById('goal-progress-value');
+        if (spec.max) valueInput.max = String(spec.max);
+        else valueInput.removeAttribute('max');
+        valueInput.step = spec.unit === 'kg' ? '0.1' : '1';
+        document.getElementById('goal-progress-date').max = localDateKey();
+        cancelGoalProgressEdit();
+        renderGoalProgress();
+        document.getElementById('goal-progress-modal').style.display = 'flex';
+    }
+
+    function closeGoalProgress() {
+        document.getElementById('goal-progress-modal').style.display = 'none';
+        activeGoalProgressId = null;
+    }
+
+    function cancelGoalProgressEdit() {
+        document.getElementById('goal-progress-edit-id').value = '';
+        document.getElementById('goal-progress-date').value = localDateKey();
+        document.getElementById('goal-progress-value').value = '';
+        document.getElementById('goal-progress-note').value = '';
+        document.getElementById('goal-progress-save').textContent = 'Add to timeline';
+        document.getElementById('goal-progress-cancel-edit').classList.add('hidden');
+    }
+
+    function renderGoalProgress() {
+        const goal = (state.userGoals || []).find(item => String(item.id) === String(activeGoalProgressId));
+        if (!goal) return;
+        const spec = goalProgressSpec(goal);
+        const entries = goalProgressEntries(goal);
+        const latest = entries.filter(entry => Number.isFinite(entry.value)).at(-1);
+        const summary = document.getElementById('goal-progress-summary');
+        summary.innerHTML = `<div class="rounded-xl bg-slate-50 p-4">
+            <p class="text-xs font-bold">${latest ? `${goalProgressNumber(latest.value)} ${escapeHtml(spec.unit)}${spec.target ? ` / ${goalProgressNumber(spec.target)} ${escapeHtml(spec.unit)}` : ''}` : spec.target ? `Target: ${goalProgressNumber(spec.target)} ${escapeHtml(spec.unit)}` : 'Add a dated check-in to start your timeline'}</p>
+            ${latest && spec.target ? goalProgressBar(latest.value, spec.target) : ''}
+            ${goal.deadline && goalProgressDateValid(goal.deadline) ? `<p class="text-xs text-slate-400 mt-2">Target date: ${goalProgressDateLabel(goal.deadline)}</p>` : ''}
+        </div>`;
+        const timeline = document.getElementById('goal-progress-timeline');
+        timeline.innerHTML = entries.length ? `<div class="goal-timeline">${entries.map(entry => {
+            const valueText = Number.isFinite(entry.value) && spec.label
+                ? `<p class="font-bold text-sm">${escapeHtml(spec.label)}: ${goalProgressNumber(entry.value)} ${escapeHtml(spec.unit)}</p>${goalProgressBar(entry.value, spec.target)}`
+                : '';
+            return `<div class="goal-timeline-entry rounded-xl bg-slate-50 p-3 mb-3">
+                <p class="text-xs font-black text-amber-600">${goalProgressDateLabel(entry.date)}</p>
+                ${valueText}
+                ${entry.note ? `<p class="text-sm mt-2 whitespace-pre-wrap break-words">${escapeHtml(String(entry.note))}</p>` : ''}
+                <div class="flex gap-4 mt-2">
+                    <button type="button" onclick="editGoalProgressEntry('${escapeJsString(entry.id)}')" class="text-xs font-bold text-amber-600">Edit</button>
+                    <button type="button" onclick="deleteGoalProgressEntry('${escapeJsString(entry.id)}')" class="text-xs font-bold text-red-500">Delete</button>
+                </div>
+            </div>`;
+        }).join('')}</div>` : '<p class="text-xs text-slate-400">No entries yet. Add a date, a progress value or a journal note above.</p>';
+    }
+
+    function saveGoalProgressEntry() {
+        const goal = (state.userGoals || []).find(item => String(item.id) === String(activeGoalProgressId));
+        if (!goal) return;
+        const spec = goalProgressSpec(goal);
+        const date = document.getElementById('goal-progress-date').value;
+        const rawValue = document.getElementById('goal-progress-value').value.trim();
+        const note = document.getElementById('goal-progress-note').value.trim();
+        if (!goalProgressDateValid(date) || date > localDateKey()) { showToast('Choose a valid check-in date up to today'); return; }
+        if (!note && (!spec.label || !rawValue)) { showToast('Add a progress value or journal note'); return; }
+        const input = document.getElementById('goal-progress-value');
+        if (rawValue && (!spec.label || !input.checkValidity() || !Number.isFinite(Number(rawValue)) || Number(rawValue) < 0 || Number(rawValue) > 1000000)) {
+            showToast('Enter a valid progress value'); return;
+        }
+        const editId = document.getElementById('goal-progress-edit-id').value;
+        if (!Array.isArray(goal.progressEntries)) goal.progressEntries = [];
+        const existing = goal.progressEntries.find(entry => String(entry.id) === editId);
+        const entry = {
+            id: existing ? existing.id : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            date,
+            value: spec.label && rawValue ? Number(rawValue) : null,
+            note: note.slice(0, 1000),
+            createdAt: existing ? existing.createdAt : new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        if (existing) Object.assign(existing, entry);
+        else goal.progressEntries.push(entry);
+        saveState();
+        cancelGoalProgressEdit();
+        renderGoalProgress();
+        renderSettings();
+        showToast(existing ? 'Check-in updated' : 'Check-in added to timeline');
+    }
+
+    function editGoalProgressEntry(id) {
+        const goal = (state.userGoals || []).find(item => String(item.id) === String(activeGoalProgressId));
+        const entry = goal && (goal.progressEntries || []).find(item => String(item.id) === String(id));
+        if (!entry) return;
+        document.getElementById('goal-progress-edit-id').value = entry.id;
+        document.getElementById('goal-progress-date').value = entry.date;
+        document.getElementById('goal-progress-value').value = entry.value == null ? '' : entry.value;
+        document.getElementById('goal-progress-note').value = entry.note || '';
+        document.getElementById('goal-progress-save').textContent = 'Save check-in';
+        document.getElementById('goal-progress-cancel-edit').classList.remove('hidden');
+        document.getElementById('goal-progress-date').focus();
+    }
+
+    function deleteGoalProgressEntry(id) {
+        const goal = (state.userGoals || []).find(item => String(item.id) === String(activeGoalProgressId));
+        if (!goal || !Array.isArray(goal.progressEntries) || !goal.progressEntries.some(entry => String(entry.id) === String(id))) return;
+        if (!confirm('Delete this goal check-in?')) return;
+        goal.progressEntries = goal.progressEntries.filter(entry => String(entry.id) !== String(id));
+        if (!Array.isArray(goal.deletedProgressEntryIds)) goal.deletedProgressEntryIds = [];
+        goal.deletedProgressEntryIds.push(String(id));
+        if (document.getElementById('goal-progress-edit-id').value === String(id)) cancelGoalProgressEdit();
+        saveState();
+        renderGoalProgress();
+        renderSettings();
+        showToast('Check-in deleted');
     }

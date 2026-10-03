@@ -77,6 +77,16 @@ function fakeElement() {
       this.parentElement = null;
     },
     click() {}, focus() {},
+    checkValidity() {
+      if (this.value === '') return true;
+      const number = Number(this.value);
+      if (this.type === 'number' || this.min != null || this.max != null) {
+        if (!Number.isFinite(number)) return false;
+        if (this.min != null && number < Number(this.min)) return false;
+        if (this.max != null && number > Number(this.max)) return false;
+      }
+      return true;
+    },
     addEventListener() {}, removeEventListener() {}, scrollIntoView() {},
     querySelector() { return null; }, querySelectorAll() { return []; },
     getContext() {
@@ -296,6 +306,16 @@ const expose = `
   updateMaintenanceCalories,
   setDietGoal,
   getExperienceLevel,
+  setGoalFocus,
+  openGoalSetting,
+  saveGoal,
+  goalProgressSpec,
+  goalProgressEntries,
+  openGoalProgress,
+  closeGoalProgress,
+  saveGoalProgressEntry,
+  editGoalProgressEntry,
+  deleteGoalProgressEntry,
   trainingExperienceTier,
   applyTrainingExperienceMode,
   basicExerciseNames,
@@ -312,6 +332,110 @@ const expose = `
 vm.createContext(sandbox);
 vm.runInContext(appSource + expose, sandbox, { filename: 'VFIT modules' });
 const app = sandbox.__vfitTest;
+
+// Every focus can be opened as a dated goal journal. A cumulative weight-loss
+// measure uses the latest check-in by date and preserves edits and deletions.
+const journalState = app.defaultState();
+app.setState(journalState);
+app.setUser({ uid: 'goal-journal-test' });
+app.openGoalSetting();
+app.setGoalFocus('weight_loss');
+document.getElementById('wl-kg').value = '20';
+document.getElementById('goal-description').value = 'Lose 20 kg';
+app.saveGoal();
+assert.equal(journalState.userGoals.length, 1);
+const weightGoal = journalState.userGoals[0];
+assert.equal(app.goalProgressSpec(weightGoal).target, 20);
+assert.equal(document.getElementById('goal-progress-modal').style.display, 'flex');
+const beforeDate = app.offsetLocalDateKey(app.localDateKey(), -7);
+const afterDate = app.offsetLocalDateKey(app.localDateKey(), -2);
+const dateInput = document.getElementById('goal-progress-date');
+const valueInput = document.getElementById('goal-progress-value');
+const noteInput = document.getElementById('goal-progress-note');
+dateInput.value = afterDate;
+valueInput.value = '8';
+noteInput.value = 'Training felt steady';
+app.saveGoalProgressEntry();
+dateInput.value = beforeDate;
+valueInput.value = '5';
+noteInput.value = '<img src=x onerror=alert(1)>';
+app.saveGoalProgressEntry();
+assert.equal(app.goalProgressEntries(weightGoal)[0].value, 5);
+assert.equal(app.goalProgressEntries(weightGoal)[1].value, 8);
+assert.ok(document.getElementById('goal-progress-summary').innerHTML.includes('8 kg / 20 kg'));
+assert.ok(document.getElementById('goal-progress-timeline').innerHTML.includes('40% of target'));
+assert.ok(document.getElementById('goal-progress-timeline').innerHTML.includes('&lt;img'));
+assert.ok(!document.getElementById('goal-progress-timeline').innerHTML.includes('<img'));
+const firstEntryId = app.goalProgressEntries(weightGoal)[0].id;
+app.editGoalProgressEntry(firstEntryId);
+assert.equal(valueInput.value, 5);
+valueInput.value = '6';
+app.saveGoalProgressEntry();
+assert.equal(app.goalProgressEntries(weightGoal).length, 2);
+assert.equal(app.goalProgressEntries(weightGoal)[0].value, 6);
+app.deleteGoalProgressEntry(firstEntryId);
+assert.equal(weightGoal.progressEntries.length, 1);
+assert.ok(weightGoal.deletedProgressEntryIds.includes(String(firstEntryId)));
+dateInput.value = app.offsetLocalDateKey(app.localDateKey(), 1);
+valueInput.value = '10';
+app.saveGoalProgressEntry();
+assert.equal(weightGoal.progressEntries.length, 1, 'future check-ins cannot be saved');
+assert.equal(JSON.parse(localStorage.getItem(app.stateStorageKey('goal-journal-test'))).userGoals[0].progressEntries.length, 1,
+  'journal entries persist in the member snapshot');
+app.closeGoalProgress();
+app.openGoalSetting();
+app.setGoalFocus('activity');
+document.getElementById('activity-unit').value = 'min/week';
+document.getElementById('activity-target').value = '150';
+document.getElementById('goal-description').value = 'Move more each week';
+app.saveGoal();
+assert.equal(journalState.userGoals[0].focus, 'activity');
+assert.equal(journalState.userGoals[0].details.unit, 'min/week');
+assert.equal(journalState.userGoals[0].details.targetValue, 150);
+app.closeGoalProgress();
+
+for (const [focus, details, expectedUnit] of [
+  ['muscle_gain', { targetKg: 2 }, 'kg'],
+  ['strength', { targetKg: 100, exercise: 'Squat' }, 'kg'],
+  ['healthy_eating', { targetDays: 5 }, 'days/week'],
+  ['activity', { targetValue: 150, unit: 'min/week' }, 'min/week']
+]) {
+  const goal = { id: focus, focus, details, description: focus, progressEntries: [] };
+  journalState.userGoals.push(goal);
+  app.openGoalProgress(goal.id);
+  assert.equal(app.goalProgressSpec(goal).unit, expectedUnit);
+  dateInput.value = beforeDate;
+  valueInput.value = focus === 'activity' ? '90' : '1';
+  noteInput.value = 'A useful check-in';
+  app.saveGoalProgressEntry();
+  assert.equal(goal.progressEntries.length, 1, `${focus} journal saves`);
+  assert.ok(document.getElementById('goal-progress-timeline').innerHTML.includes('A useful check-in'));
+  app.closeGoalProgress();
+}
+const healthGoal = { id: 'health', focus: 'health', details: {}, description: 'Feel better' };
+journalState.userGoals.push(healthGoal);
+app.openGoalProgress('health');
+assert.equal(document.getElementById('goal-progress-value-wrap').classList.contains('hidden'), true);
+noteInput.value = 'Slept better this week';
+app.saveGoalProgressEntry();
+assert.equal(healthGoal.progressEntries[0].value, null);
+app.closeGoalProgress();
+
+const mergedJournal = app.mergeStateSnapshots(
+  app.normalizeState({ meta: { updatedAt: '2026-09-20T00:00:00Z' }, userGoals: [{
+    id: 'same', focus: 'weight_loss', progressEntries: [{ id: 'offline', date: '2026-09-19', value: 2 }]
+  }] }),
+  { meta: { updatedAt: '2026-09-21T00:00:00Z' }, userGoals: [{
+    id: 'same', focus: 'weight_loss', progressEntries: [{ id: 'cloud', date: '2026-09-20', value: 3 }]
+  }] }
+);
+assert.deepEqual([...mergedJournal.userGoals[0].progressEntries.map(item => item.id)].sort(), ['cloud', 'offline']);
+const deletedJournal = app.mergeStateSnapshots(mergedJournal, {
+  meta: { updatedAt: '2026-09-22T00:00:00Z' }, userGoals: [{
+    id: 'same', focus: 'weight_loss', progressEntries: [], deletedProgressEntryIds: ['offline']
+  }]
+});
+assert.deepEqual([...deletedJournal.userGoals[0].progressEntries.map(item => item.id)], ['cloud']);
 
 assert.equal(app.defaultState().dailyReadinessEnabled, true);
 assert.equal(app.normalizeState({ dailyReadinessEnabled: false }).dailyReadinessEnabled, false);
