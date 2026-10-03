@@ -4,9 +4,9 @@
 
     const MEMBERSHIP_PLANS = Object.freeze([
         { id: 'free', name: 'Free', price: '£0', note: 'The current beta tracking tools.' },
-        { id: 'basic', name: 'Basic', price: '£10/month', note: 'Progress planning and member tools.' },
-        { id: 'platinum', name: 'Platinum', price: '£50/month', note: 'Advanced coaching insights and priority support.' },
-        { id: 'coaching', name: '1-to-1 Coaching', price: '£250/month', note: 'Personal coach check-ins, programming and feedback.' }
+        { id: 'basic', name: 'Basic', price: '£4.99/month', note: 'Progress planning and member tools.' },
+        { id: 'platinum', name: 'Platinum', price: '£18.99/month', note: 'Advanced coaching insights and priority support.' },
+        { id: 'coaching', name: '1-to-1 Coaching', price: '£97.99/month', note: 'Personal coach check-ins, programming and feedback.' }
     ]);
     let membershipCatalog = null;
     let membershipCatalogStatus = 'idle';

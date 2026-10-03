@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.43` adds a Payments & Billing screen, verified Stripe monthly prices, repeat-safe Checkout Sessions and live subscription status. The dated goal timeline and journal, estimated daily energy expenditure (TDEE), deficit safeguards, Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.44` sets Basic to £4.99, Platinum to £18.99 and 1-to-1 Coaching to £97.99 monthly. The Payments & Billing screen, verified Stripe Checkout, dated goal timeline and journal, estimated daily energy expenditure (TDEE), deficit safeguards, Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
 
 
 ## What is included
@@ -135,9 +135,9 @@ The Firebase web configuration in `index.html` is a public client identifier; re
 
 ## Stripe memberships
 
-VFIT uses Stripe-hosted Checkout for monthly subscriptions; card details never pass through VFIT. Prices are Basic £10, Platinum £50 and 1-to-1 Coaching £250 per month. Existing beta features stay available during setup; this release does not introduce a feature paywall.
+VFIT uses Stripe-hosted Checkout for monthly subscriptions; card details never pass through VFIT. Prices are Basic £4.99, Platinum £18.99 and 1-to-1 Coaching £97.99 per month. Existing beta features stay available during setup; this release does not introduce a feature paywall.
 
-1. Complete the Stripe account's business verification, payout bank, customer support details and relevant tax settings. Create three **active, flat-rate, licensed, GBP monthly** Prices at exactly £10, £50 and £250. The server refuses any different amount, currency or billing interval. Configure a [customer portal](https://docs.stripe.com/customer-management) for payment-method updates, invoices and cancellation. If plan switching is enabled in the portal, allow only these configured products/prices and review the proration settings. In Stripe Checkout settings, enable [one subscription per customer](https://docs.stripe.com/payments/checkout/limit-subscriptions).
+1. Complete the Stripe account's business verification, payout bank, customer support details and relevant tax settings. Create three **new active, flat-rate, licensed, GBP monthly** Prices at exactly £4.99, £18.99 and £97.99; Stripe Prices already used for the old amounts should be replaced with new Price IDs in the Functions configuration. The server refuses any different amount, currency or billing interval. Configure a [customer portal](https://docs.stripe.com/customer-management) for payment-method updates, invoices and cancellation. If plan switching is enabled in the portal, allow only these configured products/prices and review the proration settings. In Stripe Checkout settings, enable [one subscription per customer](https://docs.stripe.com/payments/checkout/limit-subscriptions).
 2. Provide a real HTTPS return page, reachable in an ordinary phone browser, and add its origin to Firebase Authentication's authorized domains. Set `VFIT_APP_URL` to that page in `functions/.env.vfit-app-pro` (copy `functions/.env.example` first). The bundled Android app opens Stripe in the phone's browser; after checkout or portal, the member can reopen VFIT and see the webhook-confirmed status. `appassets.androidplatform.net` and placeholder URLs are deliberately rejected as return pages. Do not put Stripe secrets in the APK or a public config file.
 3. Use a Stripe **test-mode** secret key and test-mode Price IDs first. Store the secret with Firebase Secret Manager:
 

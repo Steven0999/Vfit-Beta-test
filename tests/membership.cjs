@@ -2,6 +2,9 @@
 
 const assert = require('node:assert/strict');
 const { PLANS, validPrice, subscriptionState, blocksNewCheckout } = require('../functions/membership');
+assert.equal(PLANS.basic.amount, 499);
+assert.equal(PLANS.platinum.amount, 1899);
+assert.equal(PLANS.coaching.amount, 9799);
 
 for (const [plan, details] of Object.entries(PLANS)) {
   const price = {

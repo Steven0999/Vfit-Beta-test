@@ -37,11 +37,11 @@ const db = {
   })
 };
 const prices = {
-  price_basic: { id: 'price_basic', active: true, currency: 'gbp', type: 'recurring', unit_amount: 1000,
+  price_basic: { id: 'price_basic', active: true, currency: 'gbp', type: 'recurring', unit_amount: 499,
     recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } },
-  price_platinum: { id: 'price_platinum', active: true, currency: 'gbp', type: 'recurring', unit_amount: 5000,
+  price_platinum: { id: 'price_platinum', active: true, currency: 'gbp', type: 'recurring', unit_amount: 1899,
     recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } },
-  price_coaching: { id: 'price_coaching', active: true, currency: 'gbp', type: 'recurring', unit_amount: 25000,
+  price_coaching: { id: 'price_coaching', active: true, currency: 'gbp', type: 'recurring', unit_amount: 9799,
     recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } }
 };
 const sessions = new Map();
@@ -110,10 +110,10 @@ async function webhook(type, object, signature = 'valid') {
 
 (async () => {
   const catalog = await backend.getMembershipCatalog(request);
-  assert.equal(catalog.plans[0].amount, 1000);
-  prices.price_basic.unit_amount = 1500;
+  assert.equal(catalog.plans[0].amount, 499);
+  prices.price_basic.unit_amount = 500;
   await assert.rejects(backend.createCheckoutSession(request), error => error.code === 'failed-precondition');
-  prices.price_basic.unit_amount = 1000;
+  prices.price_basic.unit_amount = 499;
   await assert.rejects(backend.createCheckoutSession({ ...request, auth: { ...request.auth, token: { email_verified: false } } }),
     error => error.code === 'failed-precondition');
 

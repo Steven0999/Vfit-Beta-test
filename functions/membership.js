@@ -3,9 +3,9 @@
 // The advertised monthly prices are deliberate. Reject a misconfigured Stripe
 // Price instead of silently charging a different amount or billing interval.
 const PLANS = Object.freeze({
-  basic: Object.freeze({ label: 'Basic', amount: 1000 }),
-  platinum: Object.freeze({ label: 'Platinum', amount: 5000 }),
-  coaching: Object.freeze({ label: '1-to-1 Coaching', amount: 25000 })
+  basic: Object.freeze({ label: 'Basic', amount: 499 }),
+  platinum: Object.freeze({ label: 'Platinum', amount: 1899 }),
+  coaching: Object.freeze({ label: '1-to-1 Coaching', amount: 9799 })
 });
 
 function validPrice(price, plan) {
