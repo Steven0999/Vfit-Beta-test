@@ -1,0 +1,37 @@
+name: Publish VFIT beta.42 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-42.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.42 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 37113467515 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '07c66264d2bb3d436208bc99e18c70bd86d1a1733248828edb9f55fbba6e2904  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v2.1.0-beta.42 \
+            'dist/app-debug.apk#VFIT-beta.42-debug.apk' \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 2e9adf7c0e37b5a64eb084a6e3b9e762a0becb1f \
+            --title 'VFIT 2.1.0 beta.42' \
+            --notes 'Adds dated progress timelines and a personal journal to goals. This is an Android debug APK for beta testing.' \
+            --prerelease
