@@ -8,6 +8,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { getFirestore, FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const Stripe = require('stripe');
+const { PLANS, validPrice, subscriptionState, blocksNewCheckout } = require('./membership');
 
 initializeApp();
 const db = getFirestore();
@@ -38,53 +39,117 @@ function nowMillis(value) {
 
 function planConfig(plan) {
   const plans = {
-    basic: { priceId: STRIPE_BASIC_PRICE_ID.value(), label: 'Basic' },
-    platinum: { priceId: STRIPE_PLATINUM_PRICE_ID.value(), label: 'Platinum' },
-    coaching: { priceId: STRIPE_COACHING_PRICE_ID.value(), label: '1-to-1 Coaching' }
+    basic: STRIPE_BASIC_PRICE_ID.value(),
+    platinum: STRIPE_PLATINUM_PRICE_ID.value(),
+    coaching: STRIPE_COACHING_PRICE_ID.value()
   };
-  return plans[plan] || null;
+  return plans[plan] || '';
 }
+
+function appReturnUrl(query) {
+  let url;
+  try { url = new URL(VFIT_APP_URL.value()); }
+  catch (error) { throw new HttpsError('failed-precondition', 'The billing return URL is not configured.'); }
+  if (url.protocol !== 'https:' || ['example.com', 'your-vfit-origin.example', 'appassets.androidplatform.net'].includes(url.hostname)
+    || url.username || url.password) {
+    throw new HttpsError('failed-precondition', 'A public HTTPS billing return URL is required.');
+  }
+  if (query) url.searchParams.set('checkout', query);
+  return url.toString();
+}
+
+async function validatedPlanPrice(stripe, plan) {
+  const priceId = planConfig(plan);
+  if (!priceId || !priceId.startsWith('price_')) {
+    throw new HttpsError('failed-precondition', 'The membership prices have not been configured.');
+  }
+  const price = await stripe.prices.retrieve(priceId);
+  if (!validPrice(price, plan)) {
+    throw new HttpsError('failed-precondition', `The ${PLANS[plan].label} price must be an active monthly GBP price matching the advertised amount.`);
+  }
+  return price;
+}
+
+exports.getMembershipCatalog = onCall({ region: REGION, secrets: [STRIPE_SECRET_KEY], enforceAppCheck: true }, async request => {
+  requireAuth(request);
+  appReturnUrl();
+  const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+  const plans = await Promise.all(Object.keys(PLANS).map(async id => {
+    const price = await validatedPlanPrice(stripe, id);
+    return { id, amount: price.unit_amount, currency: price.currency, interval: price.recurring.interval };
+  }));
+  return { plans };
+});
 
 exports.createCheckoutSession = onCall({ region: REGION, secrets: [STRIPE_SECRET_KEY], enforceAppCheck: true }, async request => {
   const uid = requireAuth(request);
   if (!request.auth.token.email_verified) throw new HttpsError('failed-precondition', 'Verify your email before starting a paid membership.');
   const plan = cleanText(request.data && request.data.plan, 30).toLowerCase();
-  const selected = planConfig(plan);
-  if (!selected || !selected.priceId) throw new HttpsError('failed-precondition', 'That membership plan is not configured.');
+  if (!PLANS[plan]) throw new HttpsError('invalid-argument', 'Choose a valid membership plan.');
 
   const stripe = new Stripe(STRIPE_SECRET_KEY.value());
+  const successUrl = appReturnUrl('success');
+  const cancelUrl = appReturnUrl('cancelled');
+  const price = await validatedPlanPrice(stripe, plan);
   const userRef = db.collection('users').doc(uid);
   const userSnap = await userRef.get();
   const user = userSnap.data() || {};
-  if (user.membership && ['active', 'trialing'].includes(user.membership.status)) {
-    throw new HttpsError('already-exists', 'An active membership already exists. Use the billing portal to manage it.');
-  }
   let customerId = user.membership && user.membership.stripeCustomerId;
   if (!customerId) {
     const customer = await stripe.customers.create({
       email: request.auth.token.email || undefined,
       name: user.name || undefined,
       metadata: { firebaseUid: uid }
-    });
+    }, { idempotencyKey: `vfit-customer-${uid}` });
     customerId = customer.id;
-    await userRef.set({ membership: { stripeCustomerId: customerId, tier: 'free', status: 'inactive' } }, { merge: true });
+    await userRef.set({ membership: { stripeCustomerId: customerId } }, { merge: true });
   }
 
-  const appUrl = new URL(VFIT_APP_URL.value());
-  const successUrl = new URL('?checkout=success', appUrl).toString();
-  const cancelUrl = new URL('?checkout=cancelled', appUrl).toString();
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price: selected.priceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    client_reference_id: uid,
-    metadata: { firebaseUid: uid, plan },
-    subscription_data: { metadata: { firebaseUid: uid, plan } },
-    allow_promotion_codes: true
+  const checkoutRef = userRef.collection('serverMeta').doc('checkout');
+  await db.runTransaction(async transaction => {
+    const snap = await transaction.get(checkoutRef);
+    if (snap.exists && nowMillis(snap.get('lockedUntil')) > Date.now()) {
+      throw new HttpsError('resource-exhausted', 'Another checkout is opening. Try again in a moment.');
+    }
+    transaction.set(checkoutRef, { lockedUntil: Timestamp.fromMillis(Date.now() + 60000) }, { merge: true });
   });
-  return { url: session.url };
+  try {
+    // Check Stripe even if an older Checkout Session is still open. A member
+    // might have completed a different session on another device.
+    const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+    if (subscriptions.has_more || subscriptions.data.some(subscription => blocksNewCheckout(subscription.status))) {
+      throw new HttpsError('already-exists', 'A membership or payment is already in progress. Open billing to manage it.');
+    }
+    const previous = await checkoutRef.get();
+    const previousSessionId = previous.get('sessionId');
+    if (previousSessionId) {
+      const previousSession = await stripe.checkout.sessions.retrieve(previousSessionId);
+      if (previousSession.status === 'open' && previousSession.expires_at > Date.now() / 1000) {
+        if (previous.get('plan') === plan && previous.get('priceId') === price.id) {
+          return { url: previousSession.url };
+        }
+        await stripe.checkout.sessions.expire(previousSessionId);
+      }
+    }
+
+    // The lock and stored open Session make repeat taps reuse one payment page.
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: price.id, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: uid,
+      metadata: { firebaseUid: uid, plan },
+      subscription_data: { metadata: { firebaseUid: uid, plan } },
+      allow_promotion_codes: true,
+      expires_at: Math.floor(Date.now() / 1000) + 31 * 60
+    });
+    await checkoutRef.set({ sessionId: session.id, plan, priceId: price.id }, { merge: true });
+    return { url: session.url };
+  } finally {
+    await checkoutRef.set({ lockedUntil: null }, { merge: true });
+  }
 });
 
 exports.createBillingPortalSession = onCall({ region: REGION, secrets: [STRIPE_SECRET_KEY], enforceAppCheck: true }, async request => {
@@ -95,39 +160,37 @@ exports.createBillingPortalSession = onCall({ region: REGION, secrets: [STRIPE_S
   const stripe = new Stripe(STRIPE_SECRET_KEY.value());
   const session = await stripe.billingPortal.sessions.create({
     customer: customerId,
-    return_url: new URL(VFIT_APP_URL.value()).toString()
+    return_url: appReturnUrl('portal')
   });
   return { url: session.url };
 });
 
-function tierFromPriceId(priceId) {
-  if (priceId === STRIPE_BASIC_PRICE_ID.value()) return 'basic';
-  if (priceId === STRIPE_PLATINUM_PRICE_ID.value()) return 'platinum';
-  if (priceId === STRIPE_COACHING_PRICE_ID.value()) return 'coaching';
-  return 'free';
-}
-
-async function updateMembershipFromSubscription(stripe, subscription) {
+async function updateMembershipFromSubscription(subscription) {
   let uid = subscription.metadata && subscription.metadata.firebaseUid;
-  if (!uid && subscription.customer) {
-    const match = await db.collection('users').where('membership.stripeCustomerId', '==', subscription.customer).limit(1).get();
+  const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer && subscription.customer.id;
+  if (!uid && customerId) {
+    const match = await db.collection('users').where('membership.stripeCustomerId', '==', customerId).limit(1).get();
     if (!match.empty) uid = match.docs[0].id;
   }
   if (!uid) return;
-  const priceId = subscription.items && subscription.items.data[0] && subscription.items.data[0].price.id;
-  const active = ['active', 'trialing'].includes(subscription.status);
-  await db.collection('users').doc(uid).set({
-    membership: {
-      stripeCustomerId: String(subscription.customer || ''),
-      stripeSubscriptionId: subscription.id,
-      tier: active ? tierFromPriceId(priceId) : 'free',
-      status: subscription.status,
-      currentPeriodEnd: subscription.current_period_end
-        ? Timestamp.fromMillis(subscription.current_period_end * 1000)
-        : null,
+  const userRef = db.collection('users').doc(uid);
+  const membership = subscriptionState(subscription, {
+    basic: planConfig('basic'), platinum: planConfig('platinum'), coaching: planConfig('coaching')
+  });
+  await db.runTransaction(async transaction => {
+    const userSnap = await transaction.get(userRef);
+    if (!userSnap.exists || userSnap.get('membership.stripeCustomerId') !== customerId) return;
+    const previous = userSnap.get('membership') || {};
+    // Old subscription events can arrive after a replacement subscription.
+    if (previous.stripeSubscriptionId !== subscription.id
+      && Number(previous.stripeSubscriptionCreated || 0) > membership.stripeSubscriptionCreated) return;
+    const { currentPeriodEndSeconds, ...saved } = membership;
+    transaction.set(userRef, { membership: {
+      ...saved,
+      currentPeriodEnd: currentPeriodEndSeconds ? Timestamp.fromMillis(currentPeriodEndSeconds * 1000) : null,
       updatedAt: FieldValue.serverTimestamp()
-    }
-  }, { merge: true });
+    } }, { merge: true });
+  });
 }
 
 exports.stripeWebhook = onRequest({ region: REGION, secrets: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET] }, async (request, response) => {
@@ -140,14 +203,21 @@ exports.stripeWebhook = onRequest({ region: REGION, secrets: [STRIPE_SECRET_KEY,
     return;
   }
 
-  if (event.type === 'checkout.session.completed') {
+  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
     const session = event.data.object;
     if (session.subscription) {
       const subscription = await stripe.subscriptions.retrieve(session.subscription);
-      await updateMembershipFromSubscription(stripe, subscription);
+      await updateMembershipFromSubscription(subscription);
     }
-  } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-    await updateMembershipFromSubscription(stripe, event.data.object);
+  } else if (['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted'].includes(event.type)) {
+    // Fetch current state to tolerate out-of-order and repeated webhook events.
+    let current;
+    try { current = await stripe.subscriptions.retrieve(event.data.object.id); }
+    catch (error) {
+      if (error.code !== 'resource_missing') throw error;
+      current = event.data.object;
+    }
+    await updateMembershipFromSubscription(current);
   }
   response.status(200).send('ok');
 });

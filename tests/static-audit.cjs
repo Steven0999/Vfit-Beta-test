@@ -325,9 +325,12 @@ assert.ok(runtimeConfig.includes('pushEnabled: false'), 'push must default off u
 assert.ok(!/sk_(?:live|test)_[A-Za-z0-9]+/.test(runtimeConfig), 'Stripe secret keys must never be shipped to the browser');
 
 const functionsSource = fs.readFileSync(path.join(root, 'functions/index.js'), 'utf8');
-for (const backend of ['createCheckoutSession', 'stripeWebhook', 'sendUserPush', 'sendDueReminders', 'deleteMyAccount']) {
+for (const backend of ['getMembershipCatalog', 'createCheckoutSession', 'createBillingPortalSession', 'stripeWebhook', 'sendUserPush', 'sendDueReminders', 'deleteMyAccount']) {
   assert.ok(functionsSource.includes(`exports.${backend}`), `Cloud Function is missing: ${backend}`);
 }
+assert.ok(functionsSource.includes("'customer.subscription.created'"), 'new subscriptions must be tracked');
+assert.ok(functionsSource.includes('stripe.webhooks.constructEvent(request.rawBody'), 'Stripe webhook signatures must be checked against the raw request');
+assert.ok(html.includes('id="coaching-membership-card"') && html.includes('onclick="openMembershipBilling()"'), 'billing must be reachable from the profile');
 for (const deletionTarget of ["collection('coachPlans').where('coachUid'", "collection('coachPlans').where('memberUid'", "collection('feedback').where('uid'"]) {
   assert.ok(functionsSource.includes(deletionTarget), `account deletion must include ${deletionTarget}`);
 }

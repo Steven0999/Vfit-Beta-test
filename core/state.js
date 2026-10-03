@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.42';
+    const VFIT_APP_VERSION = '2.1.0-beta.43';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -5909,7 +5909,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         diet: ['Dietary Plan & Meals', 'Dietary requirements, eating approach and meals adapted to your shift.'],
         coach: ['Coach & Check-ins', 'Coach messages, shared plans and your weekly check-in.'],
         reports: ['Progress Reports', 'Review or download your weekly training and nutrition report.'],
-        membership: ['Membership', 'View your current plan and available membership options.']
+        membership: ['Payments & Billing', 'View your current plan, pricing and billing options.']
     });
     let activeCoachingPage = 'home';
 

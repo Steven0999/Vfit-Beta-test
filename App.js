@@ -8,6 +8,7 @@
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
+            stopMembershipSync();
             closeManualDiaryFood();
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
             if (typeof teardownStepTracking === 'function') teardownStepTracking();
@@ -41,6 +42,7 @@
         }
 
         stopSharedFoodDatabaseSync();
+        stopMembershipSync();
         closeManualDiaryFood();
         currentUser = user;
         currentUserIsOwner = false;
@@ -90,6 +92,7 @@
         safeInvoke('Dashboard', renderDashboard);
         safeInvoke('Coaching hub', renderCoachingHub);
         safeInvoke('Membership return', showMembershipReturnStatus);
+        safeInvoke('Membership updates', startMembershipSync);
         safeInvoke('Diary', renderDiary);
         safeInvoke('Settings', renderSettings);
         safeInvoke('Member coach section', renderMemberCoachSection);

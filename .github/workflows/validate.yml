@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 20
       - run: node tests/static-audit.cjs
+      - run: node tests/membership.cjs
+      - run: node tests/membership-functions.cjs
       - run: node tests/state-smoke.cjs
       - run: node tests/photo-storage.cjs
       - run: node tests/food-catalog.cjs
@@ -23,3 +25,4 @@ jobs:
       - run: node --check App.js
       - run: node --check sw.js
       - run: node --check functions/index.js
+      - run: node --check functions/membership.js

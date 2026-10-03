@@ -314,7 +314,7 @@
                         <button type="button" onclick="openCoachingPage('diet')" class="w-full min-h-[78px] bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-900 border border-orange-500 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="salad" class="w-5 h-5 text-orange-400"></i></span><span><span class="block font-black text-sm">Dietary Plan &amp; Meals</span><span class="block text-xs text-slate-500 mt-1">Requirements, diet style and shift-specific meals</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('coach')" class="w-full min-h-[78px] bg-emerald-50 border-2 border-emerald-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-emerald-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="messages-square" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Coach &amp; Check-ins</span><span class="block text-xs text-slate-500 mt-1">Coach messages and weekly check-in</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                         <button type="button" onclick="openCoachingPage('reports')" class="w-full min-h-[78px] bg-purple-50 border-2 border-purple-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-purple-600 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="file-chart-column" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Progress Reports</span><span class="block text-xs text-slate-500 mt-1">Weekly training, nutrition and adherence report</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
-                        <button type="button" onclick="openCoachingPage('membership')" class="w-full min-h-[78px] bg-slate-50 border-2 border-slate-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-700 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="badge-pound-sterling" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Membership</span><span class="block text-xs text-slate-500 mt-1">View your plan and available options</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
+                        <button type="button" onclick="openCoachingPage('membership')" class="w-full min-h-[78px] bg-slate-50 border-2 border-slate-200 p-4 rounded-2xl flex items-center justify-between gap-3 active:scale-[0.98]"><span class="flex items-center gap-3 text-left"><span class="w-11 h-11 bg-slate-700 rounded-xl flex items-center justify-center flex-shrink-0"><i data-lucide="badge-pound-sterling" class="w-5 h-5 text-white"></i></span><span><span class="block font-black text-sm">Payments &amp; Billing</span><span class="block text-xs text-slate-500 mt-1">View your plan, prices and billing options</span></span></span><i data-lucide="chevron-right" class="w-5 h-5 text-slate-400"></i></button>
                     </div>
                 </div>
 
@@ -502,11 +502,12 @@
                 <div id="coaching-membership-card" data-coaching-page="membership" class="hidden glass-card rounded-[2.5rem] p-6">
                     <div class="flex items-center justify-between mb-4">
                         <div>
-                            <h3 class="text-lg font-black">Membership</h3>
+                            <h3 class="text-lg font-black">Payments &amp; Billing</h3>
                             <p id="membership-status" class="text-xs text-slate-400">Checking your plan…</p>
                         </div>
                         <i data-lucide="badge-pound-sterling" class="w-6 h-6 text-indigo-600"></i>
                     </div>
+                    <p class="text-xs text-slate-500 mb-4">Choose a monthly membership, check your billing status, or manage your subscription and payment method. On Android, Stripe opens in your browser; reopen VFIT after checkout to see your confirmed plan.</p>
                     <div id="membership-plans" class="space-y-2"></div>
                 </div>
             </section>
@@ -521,6 +522,10 @@
                     </div>
                     <h2 id="profile-name" class="text-2xl font-black mb-2">User Name</h2>
                     <p id="profile-email" class="text-sm text-slate-500 mb-6">email@example.com</p>
+
+                    <button type="button" onclick="openMembershipBilling()" class="w-full mb-4 p-4 bg-orange-50 border border-orange-300 text-orange-800 rounded-2xl font-bold flex items-center justify-between">
+                        <span>Payments &amp; Billing</span><i data-lucide="badge-pound-sterling" class="w-5 h-5"></i>
+                    </button>
 
                     <div class="space-y-3">
                         <div class="bg-slate-50 p-4 rounded-2xl">

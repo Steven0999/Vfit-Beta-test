@@ -3,11 +3,15 @@
     // ==========================================================================
 
     const MEMBERSHIP_PLANS = Object.freeze([
-        { id: 'free', name: 'Free', price: '£0', note: 'Core beta tracking on this device and cloud sync.' },
-        { id: 'basic', name: 'Basic', price: '£10/mo', note: 'Progress planning and member tools.' },
-        { id: 'platinum', name: 'Platinum', price: '£50/mo', note: 'Advanced coaching insights and priority support.' },
-        { id: 'coaching', name: '1-to-1 Coaching', price: '£250/mo', note: 'Personal coach check-ins, programming and feedback.' }
+        { id: 'free', name: 'Free', price: '£0', note: 'The current beta tracking tools.' },
+        { id: 'basic', name: 'Basic', price: '£10/month', note: 'Progress planning and member tools.' },
+        { id: 'platinum', name: 'Platinum', price: '£50/month', note: 'Advanced coaching insights and priority support.' },
+        { id: 'coaching', name: '1-to-1 Coaching', price: '£250/month', note: 'Personal coach check-ins, programming and feedback.' }
     ]);
+    let membershipCatalog = null;
+    let membershipCatalogStatus = 'idle';
+    let membershipUnsubscribe = null;
+    let checkoutBusy = false;
 
     function membershipTierLabel(tier) {
         const plan = MEMBERSHIP_PLANS.find(item => item.id === tier);
@@ -17,8 +21,9 @@
     function showMembershipReturnStatus() {
         const params = new URLSearchParams(window.location.search || '');
         const result = params.get('checkout');
-        if (result === 'success') showToast('Payment received — your membership will update shortly ✓', 6500);
+        if (result === 'success') showToast('Checkout returned — checking your membership with Stripe', 6500);
         else if (result === 'cancelled') showToast('Checkout cancelled — no membership change was made', 5000);
+        else if (result === 'portal') showToast('Billing settings returned — your membership will update shortly', 5500);
         if (result) {
             params.delete('checkout');
             const query = params.toString();
@@ -26,31 +31,99 @@
         }
     }
 
+    async function loadMembershipCatalog() {
+        if (!currentUser || !RUNTIME_CONFIG.paymentsEnabled || !appCheckReady || membershipCatalogStatus === 'loading') return;
+        const callable = getBackendCallable('getMembershipCatalog');
+        if (!callable) { membershipCatalogStatus = 'error'; renderMembership(); return; }
+        const uid = currentUser.uid;
+        membershipCatalogStatus = 'loading';
+        try {
+            const result = await callable({});
+            if (!currentUser || currentUser.uid !== uid) return;
+            const items = result && result.data && result.data.plans;
+            if (!Array.isArray(items) || !MEMBERSHIP_PLANS.slice(1).every(plan =>
+                items.some(item => item.id === plan.id && item.currency === 'gbp' && item.interval === 'month'
+                    && Number.isInteger(item.amount) && item.amount > 0))) throw new Error('Invalid Stripe catalog');
+            membershipCatalog = items;
+            membershipCatalogStatus = 'ready';
+        } catch (error) {
+            if (!currentUser || currentUser.uid !== uid) return;
+            console.error('Membership prices unavailable:', error);
+            membershipCatalogStatus = 'error';
+        }
+        renderMembership();
+    }
+
+    function startMembershipSync() {
+        if (membershipUnsubscribe) membershipUnsubscribe();
+        membershipUnsubscribe = null;
+        if (!currentUser) return;
+        const uid = currentUser.uid;
+        membershipUnsubscribe = db.collection('users').doc(uid).onSnapshot(doc => {
+            if (!currentUser || currentUser.uid !== uid) return;
+            const remote = doc.exists ? doc.get('membership') : null;
+            accountMembership = isPlainRecord(remote)
+                ? Object.assign({ tier: 'free', status: 'inactive' }, remote)
+                : { tier: 'free', status: 'inactive' };
+            renderMembership();
+        }, error => console.warn('Membership updates unavailable:', error));
+    }
+
+    function stopMembershipSync() {
+        if (membershipUnsubscribe) membershipUnsubscribe();
+        membershipUnsubscribe = null;
+        membershipCatalog = null;
+        membershipCatalogStatus = 'idle';
+        checkoutBusy = false;
+    }
+
+    function openMembershipBilling() {
+        if (switchTab('coaching')) openCoachingPage('membership');
+    }
+
     function renderMembership() {
         const status = document.getElementById('membership-status');
         const plans = document.getElementById('membership-plans');
         if (!status || !plans) return;
+        if (RUNTIME_CONFIG.paymentsEnabled && appCheckReady && membershipCatalogStatus === 'idle') loadMembershipCatalog();
         const tier = String(accountMembership.tier || 'free').toLowerCase();
-        const active = ['active', 'trialing'].includes(String(accountMembership.status || '').toLowerCase());
+        const rawStatus = String(accountMembership.status || 'inactive').toLowerCase();
+        const active = ['active', 'trialing'].includes(rawStatus) && tier !== 'free' && !accountMembership.priceMismatch;
         const end = valueTime(accountMembership.currentPeriodEnd);
-        status.textContent = active
-            ? `${membershipTierLabel(tier)} active${end ? ' · renews ' + new Date(end).toLocaleDateString('en-GB') : ''}`
-            : `${membershipTierLabel(tier)} plan${RUNTIME_CONFIG.paymentsEnabled ? '' : ' · secure checkout awaiting setup'}`;
+        const date = end ? new Date(end).toLocaleDateString('en-GB') : '';
+        status.textContent = accountMembership.priceMismatch
+            ? 'Plan needs support — use Manage billing or contact VFIT'
+            : active
+                ? `${membershipTierLabel(tier)} ${rawStatus === 'trialing' ? 'trial' : 'active'}${date ? ` · ${accountMembership.cancelAtPeriodEnd ? 'ends' : 'renews'} ${date}` : ''}`
+                : ['past_due', 'unpaid', 'incomplete'].includes(rawStatus)
+                    ? 'Payment needs attention — open Manage billing'
+                    : `Free plan${RUNTIME_CONFIG.paymentsEnabled ? '' : ' · payments are not live yet'}`;
+
+        const ready = RUNTIME_CONFIG.paymentsEnabled && appCheckReady && membershipCatalogStatus === 'ready';
+        const canManage = Boolean(accountMembership.stripeCustomerId) && appCheckReady;
+        const billingInProgress = ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(rawStatus);
 
         plans.innerHTML = MEMBERSHIP_PLANS.map(plan => {
-            const current = plan.id === tier && (plan.id === 'free' || active);
-            const canCheckout = plan.id !== 'free' && RUNTIME_CONFIG.paymentsEnabled;
+            const current = plan.id === tier && (plan.id === 'free' ? !billingInProgress : active);
+            const configured = membershipCatalog && membershipCatalog.find(item => item.id === plan.id);
+            const price = configured ? `£${(configured.amount / 100).toFixed(configured.amount % 100 ? 2 : 0)}/month` : plan.price;
             const button = current
                 ? '<span class="text-[10px] font-black uppercase text-emerald-600">Current plan</span>'
                 : plan.id === 'free'
                     ? '<span class="text-[10px] font-black uppercase text-slate-400">Included</span>'
-                    : `<button onclick="startMembershipCheckout('${escapeJsString(plan.id)}')" class="px-3 py-2 rounded-lg text-[10px] font-black ${canCheckout ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">${canCheckout ? 'Choose' : 'Setup pending'}</button>`;
+                    : billingInProgress && canManage
+                        ? '<button onclick="openBillingPortal()" class="px-3 py-2 rounded-lg text-[10px] font-black bg-slate-900 text-white">Manage plan</button>'
+                        : `<button type="button" onclick="startMembershipCheckout('${escapeJsString(plan.id)}')" ${ready && !checkoutBusy ? '' : 'disabled'} class="px-3 py-2 rounded-lg text-[10px] font-black ${ready && !checkoutBusy ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">${ready ? 'Choose' : 'Unavailable'}</button>`;
             return `<div class="border ${current ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'} rounded-xl p-3 flex items-center justify-between gap-3">
-                <div><p class="font-black text-sm">${escapeHtml(plan.name)} · ${escapeHtml(plan.price)}</p><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(plan.note)}</p></div>${button}
+                <div><p class="font-black text-sm">${escapeHtml(plan.name)} · ${escapeHtml(price)}${!RUNTIME_CONFIG.paymentsEnabled && plan.id !== 'free' ? ' (planned)' : ''}</p><p class="text-[10px] text-slate-500 mt-1">${escapeHtml(plan.note)}</p></div>${button}
             </div>`;
-        }).join('') + ((accountMembership.stripeCustomerId || active)
-            ? '<button onclick="openBillingPortal()" class="w-full mt-2 p-3 bg-slate-900 text-white rounded-xl font-bold text-xs">Manage Billing</button>'
-            : '') + '<p class="text-[10px] text-slate-400 mt-2">Memberships do not restrict existing beta features while payments are being configured.</p>';
+        }).join('') + (canManage
+            ? '<button type="button" onclick="openBillingPortal()" class="w-full mt-2 p-3 bg-slate-900 text-white rounded-xl font-bold text-xs">Manage billing, card &amp; cancellation</button>'
+            : '') + (RUNTIME_CONFIG.paymentsEnabled && membershipCatalogStatus === 'error'
+            ? '<button type="button" onclick="loadMembershipCatalog()" class="text-xs font-bold text-indigo-600 underline">Retry loading secure prices</button>'
+            : '') + `<p class="text-[11px] text-slate-500 mt-3">${RUNTIME_CONFIG.paymentsEnabled
+                ? 'Stripe handles payment details. Review the total and renewal terms before confirming in Checkout. Manage invoices, cards and cancellation in Stripe billing.'
+                : 'Secure Stripe payments are being set up. No payment can be taken yet. Existing beta features remain available.'}</p>`;
     }
 
     async function startMembershipCheckout(plan) {
@@ -59,12 +132,15 @@
             showToast('Verify your email before starting a paid membership', 5500);
             return;
         }
-        if (!RUNTIME_CONFIG.paymentsEnabled) {
-            showToast('Secure payments are not live yet — Stripe setup is still required', 5500);
+        if (!RUNTIME_CONFIG.paymentsEnabled || !appCheckReady || membershipCatalogStatus !== 'ready') {
+            showToast('Secure payments are not ready yet', 5500);
             return;
         }
+        if (checkoutBusy) return;
         const callable = getBackendCallable('createCheckoutSession');
         if (!callable) { showToast('Secure checkout is temporarily unavailable'); return; }
+        checkoutBusy = true;
+        renderMembership();
         try {
             showToast('Opening secure Stripe checkout…');
             const result = await callable({ plan: String(plan || '').toLowerCase() });
@@ -73,12 +149,17 @@
             window.location.assign(target.href);
         } catch (error) {
             console.error('Checkout failed:', error);
-            showToast('Could not start checkout — try again later', 5500);
+            showToast(error && error.code === 'functions/already-exists'
+                ? 'A payment is already in progress. Open Manage billing.'
+                : 'Could not start checkout — try again later', 5500);
+        } finally {
+            checkoutBusy = false;
+            renderMembership();
         }
     }
 
     async function openBillingPortal() {
-        if (!currentUser || !RUNTIME_CONFIG.paymentsEnabled) {
+        if (!currentUser || !appCheckReady) {
             showToast('Billing management is not live yet');
             return;
         }

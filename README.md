@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.42` adds a dated timeline and personal journal to every goal. Fat loss, muscle gain, strength, healthier eating and activity goals can show a progress value against an optional target, while all goals accept notes; entries can be edited or deleted and sync with the member's account. Estimated daily energy expenditure (TDEE), deficit safeguards, Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.43` adds a Payments & Billing screen, verified Stripe monthly prices, repeat-safe Checkout Sessions and live subscription status. The dated goal timeline and journal, estimated daily energy expenditure (TDEE), deficit safeguards, Google Maps run links, experience-based training tools, the UK food catalogue, step charts and Health Connect remain available.
 
 
 ## What is included
@@ -29,7 +29,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, off
 - Smart load progression using recent reps, RIR, estimated 1RM, plateaus and low-readiness deloads.
 - Downloadable weekly member and coach reports covering training, nutrition, steps, habits, weight and readiness.
 - Firebase Cloud Messaging registration for Android/web push and shift-aware reminder schedules.
-- Stripe Checkout, Billing Portal and signed-webhook membership updates for Basic, Platinum and 1-to-1 Coaching plans.
+- A Payments & Billing screen in Profile and Coaching Hub, with Stripe Checkout, Billing Portal, verified monthly prices and signed-webhook membership updates for Basic, Platinum and 1-to-1 Coaching plans. Payments remain disabled until the owner finishes the Stripe and Firebase setup below.
 - Email verification, consent records, cloud-sync choice, full data export and confirmed account deletion.
 - Firebase App Check support, UID-provisioned administrators, server-owned memberships and owner-only device tokens.
 - A larger shift-meal recipe popup that shows every compatible choice together, estimated nutrition, ingredients, preparation steps and an add-to-diary action.
@@ -135,28 +135,33 @@ The Firebase web configuration in `index.html` is a public client identifier; re
 
 ## Stripe memberships
 
-Create three recurring Stripe Prices and copy `functions/.env.example` to `functions/.env.vfit-app-pro`, filling in the Price IDs and final HTTPS app URL. Price IDs are identifiers, not secret keys.
+VFIT uses Stripe-hosted Checkout for monthly subscriptions; card details never pass through VFIT. Prices are Basic £10, Platinum £50 and 1-to-1 Coaching £250 per month. Existing beta features stay available during setup; this release does not introduce a feature paywall.
 
-Store the Stripe API secret with Firebase Secret Manager:
+1. Complete the Stripe account's business verification, payout bank, customer support details and relevant tax settings. Create three **active, flat-rate, licensed, GBP monthly** Prices at exactly £10, £50 and £250. The server refuses any different amount, currency or billing interval. Configure a [customer portal](https://docs.stripe.com/customer-management) for payment-method updates, invoices and cancellation. If plan switching is enabled in the portal, allow only these configured products/prices and review the proration settings. In Stripe Checkout settings, enable [one subscription per customer](https://docs.stripe.com/payments/checkout/limit-subscriptions).
+2. Provide a real HTTPS return page, reachable in an ordinary phone browser, and add its origin to Firebase Authentication's authorized domains. Set `VFIT_APP_URL` to that page in `functions/.env.vfit-app-pro` (copy `functions/.env.example` first). The bundled Android app opens Stripe in the phone's browser; after checkout or portal, the member can reopen VFIT and see the webhook-confirmed status. `appassets.androidplatform.net` and placeholder URLs are deliberately rejected as return pages. Do not put Stripe secrets in the APK or a public config file.
+3. Use a Stripe **test-mode** secret key and test-mode Price IDs first. Store the secret with Firebase Secret Manager:
 
 ```bash
 firebase functions:secrets:set STRIPE_SECRET_KEY
 ```
 
-Create a Stripe webhook pointing to:
+4. Create a Stripe webhook destination for the **same mode** at:
 
 ```text
 https://europe-west2-vfit-app-pro.cloudfunctions.net/stripeWebhook
 ```
 
-Subscribe it to `checkout.session.completed`, `customer.subscription.updated`, and `customer.subscription.deleted`. Copy its signing secret into Firebase Secret Manager, then deploy:
+Subscribe to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`. Copy that endpoint's `whsec_...` signing secret into Firebase Secret Manager and deploy:
 
 ```bash
 firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
-firebase deploy --only functions
+firebase deploy --only functions,firestore:rules
 ```
 
-Once checkout, portal return, webhook updates and account cancellation have all been tested, set `paymentsEnabled: true` in `vfit-config.js`.
+5. Set up Firebase App Check on the actual VFIT client and put the **public** reCAPTCHA Enterprise site key in `vfit-config.js`. All billing callables require valid Firebase Auth and App Check; test an APK on a phone as well as any web origin before turning payments on. An App Check key for an unrelated web origin will not make the Android asset origin work. Review the [Firebase App Check setup](https://firebase.google.com/docs/app-check) for the deployed client.
+6. Test a complete test-mode checkout, repeat taps, cancelled checkout, failed payment, card update, renewal, cancellation at period end and account deletion. Confirm that Firestore `users/{uid}.membership` follows Stripe webhooks and no paid state appears merely because of the return URL. Set `paymentsEnabled: true` in `vfit-config.js` only after those checks. For live charges, replace all three Prices and both secrets with their live-mode counterparts, retest, and publish the enabled build. Test and live webhook signing secrets are different.
+
+The price displayed in the app comes from validated Stripe Prices when payments are enabled. A pending, failed or unrecognized subscription is not treated as an active paid tier. The billing portal handles card changes, invoices and cancellation; the app does not store card numbers. Return from Stripe is only an acknowledgement: signed webhooks update membership state, and the app listens for the change. Stripe events can arrive more than once or out of order; the server retrieves current subscription state and refuses to overwrite a newer subscription with an older one.
 
 Membership state is written only by Cloud Functions. Account deletion cancels/deletes the Stripe customer before deleting Firebase data, so a billing failure stops deletion rather than leaving an unseen subscription active. It also deletes related notes, coach plans and the account’s beta feedback; the browser removes that account’s local progress-photo records only after the server confirms deletion.
 
