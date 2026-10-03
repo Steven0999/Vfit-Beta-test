@@ -1,0 +1,38 @@
+name: Publish VFIT beta.44 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-44.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.44 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 37143151029 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '6bda8a5d13f8c597b887ff7780c61c0a7fe70b009ad85d576a985fe3c4771968  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.44-debug.apk
+          gh release create v2.1.0-beta.44 \
+            dist/VFIT-beta.44-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target f48518d094009af527bcd3e6409332c835accaae \
+            --title 'VFIT 2.1.0 beta.44' \
+            --notes 'Sets Basic to £4.99/month, Platinum to £18.99/month and 1-to-1 Coaching to £97.99/month. Live charging remains disabled until matching Stripe Prices and Firebase configuration are connected. Android debug APK for beta testing.' \
+            --prerelease
