@@ -84,12 +84,24 @@
         return `${clock(start)}–${clock(end)}`;
     }
 
+    function renderDiaryWakeSchedule() {
+        const dateKey = state.viewDate || localDateKey();
+        const plan = mealScheduleForDate(dateKey);
+        const dateInput = document.getElementById('shift-wake-date-picker');
+        if (dateInput) dateInput.value = dateKey;
+        const wakeInput = document.getElementById('shift-wake-time');
+        if (wakeInput) wakeInput.value = `${String(Math.floor(plan.wake / 60)).padStart(2, '0')}:${String(plan.wake % 60).padStart(2, '0')}`;
+        const scheduleText = document.getElementById('shift-meal-schedule');
+        if (scheduleText) scheduleText.textContent = `Breakfast ${mealWindowText(...plan.breakfast)} · Lunch ${mealWindowText(...plan.lunch)} · Dinner ${mealWindowText(...plan.dinner)}`;
+    }
+
     function setDiaryWakeTime(value) {
         if (mealClockMinutes(value) === null) { showToast('Choose a valid wake time'); return; }
         if (!state.mealWakeTimes) state.mealWakeTimes = {};
         state.mealWakeTimes[state.viewDate] = value;
         saveState();
         renderDiary();
+        renderShiftWorker();
     }
 
     function suggestMealSlot(timeId, nextDayId, mealTypeId) {
@@ -125,12 +137,6 @@
         const mealIcons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
         const sections = document.getElementById('meal-sections');
         if (!sections) return;
-        const plan = mealScheduleForDate(state.viewDate);
-        const wakeInput = document.getElementById('diary-wake-time');
-        if (wakeInput) wakeInput.value = `${String(Math.floor(plan.wake / 60)).padStart(2, '0')}:${String(plan.wake % 60).padStart(2, '0')}`;
-        const scheduleText = document.getElementById('diary-meal-schedule');
-        if (scheduleText) scheduleText.textContent = `Breakfast ${mealWindowText(...plan.breakfast)} · Lunch ${mealWindowText(...plan.lunch)} · Dinner ${mealWindowText(...plan.dinner)}`;
-
         sections.innerHTML = mealTypes.map(type => {
             const meals = todayMeals.filter(m => m.mealType === type).sort((a, b) =>
                 (mealDiaryMinute(a.mealTime, a.mealNextDay, state.viewDate) ?? Infinity) -

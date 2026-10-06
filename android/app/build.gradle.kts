@@ -10,8 +10,8 @@ android {
         applicationId = "com.vaughanfitness.vfit"
         minSdk = 28
         targetSdk = 36
-        versionCode = 45
-        versionName = "2.1.0-beta.45"
+        versionCode = 46
+        versionName = "2.1.0-beta.46"
     }
 
     buildTypes {

@@ -199,6 +199,7 @@ const expose = `
   mealScheduleForDate,
   mealSlotForTime,
   setDiaryWakeTime,
+  selectNutritionDate,
   databaseFoodWithServingWeight,
   copiedMealNutritionBases,
   copiedMealNutritionForAmount,
@@ -1075,6 +1076,16 @@ assert.deepEqual(Array.from(daySchedule.lunch), [660, 1020]);
 assert.deepEqual(Array.from(daySchedule.dinner), [1020, 1380]);
 app.setDiaryWakeTime('09:00');
 assert.deepEqual(Array.from(app.mealScheduleForDate('2026-10-05').breakfast), [540, 660]);
+assert.equal(elements.get('shift-wake-time').value, '09:00');
+assert.equal(elements.get('shift-wake-date-picker').value, '2026-10-05');
+assert.match(elements.get('shift-meal-schedule').textContent, /Breakfast 9:00am–11:00am/);
+assert.ok(html.indexOf('id="shift-wake-time"') < html.indexOf('id="nut-view-diary"'),
+  'wake-time control belongs to Nutrition Shift, ahead of the diary');
+assert.ok(!html.includes('id="diary-wake-time"'));
+app.selectNutritionDate('2026-10-06');
+assert.equal(elements.get('shift-wake-date-picker').value, '2026-10-06');
+assert.equal(elements.get('shift-wake-time').value, '07:00', 'a different day shows its own wake time');
+app.selectNutritionDate('2026-10-05');
 copyState.shiftProfile.rota['2026-10-06'] = { type: 'day', start: '16:00', end: '02:00' };
 assert.deepEqual(Array.from(app.mealScheduleForDate('2026-10-06').dinner), [1440, 1800]);
 assert.equal(app.mealSlotForTime('01:00', true, '2026-10-06'), 'dinner');

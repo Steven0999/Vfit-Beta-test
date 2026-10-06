@@ -702,6 +702,16 @@
 
                 <!-- SHIFT WORKER VIEW -->
                 <div id="nut-view-shift" class="space-y-6 hidden">
+                    <div class="glass-card rounded-2xl p-4">
+                        <div class="flex flex-wrap items-center gap-3 mb-3">
+                            <label for="shift-wake-date-picker" class="text-xs font-bold text-slate-500">Diary day</label>
+                            <input id="shift-wake-date-picker" type="date" onchange="selectNutritionDate(this.value)" class="rounded-xl bg-slate-50 p-2 font-bold">
+                            <label for="shift-wake-time" class="text-xs font-bold text-slate-500">Wake time for this diary day</label>
+                            <input id="shift-wake-time" type="time" onchange="setDiaryWakeTime(this.value)" class="rounded-xl bg-slate-50 p-2 font-bold">
+                        </div>
+                        <p id="shift-meal-schedule" class="text-xs text-slate-500"></p>
+                        <p class="text-xs text-slate-400 mt-1">For shifts crossing midnight, keep food on the shift-start diary day and choose “Next day” when entering its time.</p>
+                    </div>
                     <div id="shift-worker-content"></div>
                 </div>
 
@@ -752,12 +762,6 @@
                         <div class="glass-card rounded-2xl p-4"><p class="text-xs font-bold text-slate-400">Fat today</p><p class="text-xl font-black"><span id="total-fat">0.0</span>g</p></div>
                     </div>
 
-                    <div class="glass-card rounded-2xl p-4">
-                        <label for="diary-wake-time" class="text-xs font-bold text-slate-500">Wake time for this diary day</label>
-                        <input id="diary-wake-time" type="time" onchange="setDiaryWakeTime(this.value)" class="ml-2 rounded-xl bg-slate-50 p-2 font-bold">
-                        <p id="diary-meal-schedule" class="text-xs text-slate-500 mt-2"></p>
-                        <p class="text-xs text-slate-400 mt-1">For shifts crossing midnight, keep food on the shift-start diary day and choose “Next day” when entering its time.</p>
-                    </div>
                     <div id="meal-sections"></div>
 
                     <!-- Save Today's Nutrition Button -->
