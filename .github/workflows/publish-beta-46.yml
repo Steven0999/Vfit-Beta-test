@@ -1,0 +1,38 @@
+name: Publish VFIT beta.46 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-46.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.46 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 37488673820 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '1651f84ebfffde9708a195f5c7568a956baa49dc587973252605ffa65abe00d2  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.46-debug.apk
+          gh release create v2.1.0-beta.46 \
+            dist/VFIT-beta.46-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target a574e6ac20b34a111249c49cc79e936343764e0a \
+            --title 'VFIT 2.1.0 beta.46' \
+            --notes 'Moves the date-specific diary wake-time control into Nutrition → Shift, available before shift setup. Meal windows remain tied to the selected diary day. Android debug APK for beta testing.' \
+            --prerelease
