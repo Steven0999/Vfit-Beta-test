@@ -1957,16 +1957,13 @@
         if (clearBtn) clearBtn.classList.add('hidden');
     }
 
-    /**
-     * Build a deduplicated list of every food ever logged, newest first.
-     * Pulls from nutritionHistory (past days) + today's dailyMeals.
-     * Deduped by name (case-insensitive) so repeated foods appear once.
-     */
+    // Each logged portion is selectable: two entries with the same name may have
+    // different amounts, packet figures, or serving sizes.
     function getAllLoggedFoods() {
         const all = [];
         (state.dailyMeals || []).forEach(m => all.push({ meal: m, when: m.id || Date.now() }));
         (state.nutritionHistory || []).forEach(day => {
-            (day.meals || []).forEach(m => all.push({ meal: m, when: day.date }));
+            (day.meals || []).forEach(m => all.push({ meal: { ...m, date: m.date || day.date }, when: day.date }));
         });
         all.sort((a, b) => String(b.when).localeCompare(String(a.when)));
 
@@ -1975,7 +1972,7 @@
         for (const item of all) {
             const m = item.meal;
             if (!m || !m.name) continue;
-            const key = m.name.toLowerCase().trim();
+            const key = `${m.date || ''}:${m.id || m.name}`;
             if (seen.has(key)) continue;
             seen.add(key);
             out.push(m);
@@ -2009,8 +2006,7 @@
         }
 
         results.innerHTML = matches.map((m, i) => {
-            // Is this food already selected? (match by name since these are deduped)
-            const isSel = selectedPreviousMeals.some(s => (s.name || '').toLowerCase() === m.name.toLowerCase());
+            const isSel = selectedPreviousMeals.some(s => copyMealSelectionKey(s) === copyMealSelectionKey(m));
             const safe = safeJsonForInline(m);
             const image = safeImageUrl(m.image);
             return `
@@ -2021,7 +2017,7 @@
                     </div>
                     <div class="flex-1 min-w-0">
                         <p class="font-bold text-sm truncate">${escapeHtml(m.name)}</p>
-                        <p class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} kcal · ${(Number(m.protein) || 0).toFixed(0)}g protein</p>
+                        <p class="text-xs text-slate-400">${escapeHtml(m.date || '')} · ${escapeHtml(m.amount || 1)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving(s)'} · ${Math.round(Number(m.calories) || 0)} kcal</p>
                     </div>
                 </label>`;
         }).join('');
@@ -2029,16 +2025,19 @@
     }
 
     function togglePastFood(checkbox, meal) {
+        const key = copyMealSelectionKey(meal);
         if (checkbox.checked) {
-            // Avoid duplicate entries by name
-            if (!selectedPreviousMeals.some(s => (s.name || '').toLowerCase() === (meal.name || '').toLowerCase())) {
-                // Give it a fresh id so it doesn't collide with an existing logged meal
-                selectedPreviousMeals.push({ ...meal, id: Date.now() + Math.floor(Math.random() * 1000) });
+            if (!selectedPreviousMeals.some(s => copyMealSelectionKey(s) === key)) {
+                selectedPreviousMeals.push({ ...meal });
             }
             showToast('Added — tap "Copy to Today" to confirm');
         } else {
-            selectedPreviousMeals = selectedPreviousMeals.filter(s => (s.name || '').toLowerCase() !== (meal.name || '').toLowerCase());
+            selectedPreviousMeals = selectedPreviousMeals.filter(s => copyMealSelectionKey(s) !== key);
         }
+    }
+
+    function copyMealSelectionKey(meal) {
+        return `${meal.date || ''}:${meal.id || meal.name}`;
     }
 
     function clearPastFoodSearch() {
@@ -2068,7 +2067,7 @@
                 <input type="checkbox" data-idx="${i}" data-meal-id="${escapeHtml(m.id)}" onchange="togglePreviousMeal(this, ${i}, '${escapeJsString(date)}')" class="w-5 h-5 accent-indigo-600">
                 <div class="flex-1">
                     <p class="font-bold text-sm">${escapeHtml(m.name)}</p>
-                    <p class="text-xs text-slate-400">${escapeHtml(m.mealType)} • ${Math.round(Number(m.calories) || 0)} kcal</p>
+                    <p class="text-xs text-slate-400">${escapeHtml(m.mealType)} · ${escapeHtml(m.amount || 1)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving(s)'} · ${Math.round(Number(m.calories) || 0)} kcal</p>
                 </div>
                 <button onclick="editPreviousMealItem(${i}, '${escapeJsString(date)}'); event.preventDefault();" class="text-xs text-indigo-600 font-bold">Edit</button>
             </label>
@@ -2080,9 +2079,11 @@
         if (!entry) return;
         const meal = entry.meals[idx];
         if (checkbox.checked) {
-            selectedPreviousMeals.push({ ...meal });
+            if (!selectedPreviousMeals.some(m => copyMealSelectionKey(m) === copyMealSelectionKey({ ...meal, date }))) {
+                selectedPreviousMeals.push({ ...meal, date });
+            }
         } else {
-            selectedPreviousMeals = selectedPreviousMeals.filter(m => m.id !== meal.id);
+            selectedPreviousMeals = selectedPreviousMeals.filter(m => copyMealSelectionKey(m) !== copyMealSelectionKey({ ...meal, date }));
         }
     }
 
@@ -2121,6 +2122,11 @@
         const per100g = {};
 
         COPIED_MEAL_NUTRIENT_KEYS.forEach(key => {
+            if (meal.per100g && meal.per100g[key] !== undefined) {
+                per100g[key] = copiedMealBaseValue(meal.per100g, key);
+                perServing[key] = per100g[key] * servingGrams / 100;
+                return;
+            }
             if (savedBase) {
                 const value = copiedMealBaseValue(savedBase, key);
                 if (baseIsServing) {
@@ -2167,7 +2173,7 @@
     function editPreviousMealItem(idx, date) {
         const entry = (state.nutritionHistory || []).find(h => h.date === date);
         if (!entry) return;
-        currentEditingMeal = { ...entry.meals[idx] };
+        currentEditingMeal = { ...entry.meals[idx], copiedFromDate: date };
 
         const originalType = currentEditingMeal.amountType === 'grams' ? 'grams' : 'portion';
         const bases = copiedMealNutritionBases(currentEditingMeal);
@@ -2178,7 +2184,12 @@
 
         document.getElementById('edit-meal-name').textContent = currentEditingMeal.name;
         document.getElementById('edit-meal-image').src = currentEditingMeal.image || 'https://via.placeholder.com/100';
-        document.getElementById('edit-meal-original').textContent = `Was: ${Math.round(originalAmount * 100) / 100} ${originalType === 'grams' ? foodAmountUnit(currentEditingMeal) : (originalAmount === 1 ? 'serving' : 'servings')} (${Math.round(currentEditingMeal.calories)} kcal)`;
+        document.getElementById('edit-meal-original').textContent = `${date}: ${Math.round(originalAmount * 100) / 100} ${originalType === 'grams' ? foodAmountUnit(currentEditingMeal) : (originalAmount === 1 ? 'serving' : 'servings')} (${Math.round(currentEditingMeal.calories)} kcal)`;
+        document.getElementById('edit-meal-packet').textContent = currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams)
+            ? 'No packet per-100g figures or serving weight were saved for this food.'
+            : `Per 100${foodAmountUnit(currentEditingMeal)}: ${Math.round(bases.per100g.calories * 10) / 10} kcal, ${Math.round(bases.per100g.protein * 10) / 10}g protein · ${servingLabel} = ${bases.servingGrams}${foodAmountUnit(currentEditingMeal)}`;
+        document.getElementById('edit-meal-time').value = currentEditingMeal.mealTime || '';
+        document.getElementById('edit-meal-next-day').checked = Boolean(currentEditingMeal.mealNextDay);
         const unit = document.getElementById('edit-meal-custom-weight-unit');
         const weightLabel = document.getElementById('edit-meal-custom-weight-label');
         if (unit) unit.textContent = foodAmountUnit(currentEditingMeal);
@@ -2268,6 +2279,8 @@
             serving: editAmountType === 'grams' ? '100' + foodAmountUnit(currentEditingMeal) : servingLabel
         };
         const mealType = document.getElementById('edit-meal-type').value;
+        const mealTime = document.getElementById('edit-meal-time').value;
+        if (mealTime && mealClockMinutes(mealTime) === null) { showToast('Choose a valid meal time'); return; }
 
         const newMeal = {
             ...currentEditingMeal,
@@ -2280,6 +2293,11 @@
             servingGrams: currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams) ? 0 : calculated.bases.servingGrams,
             servingLabel,
             base,
+            per100g: currentEditingMeal.manualEntry && !copiedMealNumber(currentEditingMeal.servingGrams)
+                ? null : calculated.bases.per100g,
+            mealTime,
+            mealNextDay: Boolean(mealTime && (document.getElementById('edit-meal-next-day').checked ||
+                mealClockMinutes(mealTime) < mealScheduleForDate(state.viewDate).wake)),
             calories: calculated.totals.calories,
             protein: calculated.totals.protein,
             carbs: calculated.totals.carbs,
@@ -2307,7 +2325,9 @@
             state.dailyMeals.push({
                 ...m,
                 id: Date.now() + Math.random(),
-                date: state.viewDate
+                date: state.viewDate,
+                copiedFromDate: m.copiedFromDate || m.date,
+                per100g: m.manualEntry && !copiedMealNumber(m.servingGrams) ? null : copiedMealNutritionBases(m).per100g
             });
         });
         saveState();

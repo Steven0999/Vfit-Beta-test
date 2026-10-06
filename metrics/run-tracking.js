@@ -119,6 +119,7 @@
             input.classList.toggle('opacity-60', isOutdoor);
             if (isOutdoor && !outdoorRunSession) input.value = '';
         });
+        updateSportEstimate();
         renderOutdoorRunUI();
     }
 
@@ -454,7 +455,8 @@
 
     function openCardioDetails(workout) {
         const name = workout.type === 'outdoor-running' ? 'Normal Running' :
-            workout.type === 'treadmill' ? 'Treadmill' : String(workout.type || 'Cardio');
+            workout.type === 'treadmill' ? 'Treadmill' :
+            String(workout.type || 'Cardio').replace(/^sport-/, '').replace(/(^|-)\w/g, match => match.replace('-', ' ').toUpperCase());
         document.getElementById('cardio-details-title').textContent = name;
         const content = document.getElementById('cardio-details-content');
         const stat = (label, value) => `<div class="rounded-xl bg-slate-50 p-3"><p class="text-[10px] font-black uppercase text-slate-500">${label}</p><p class="font-black">${value}</p></div>`;
@@ -463,8 +465,12 @@
         const speed = Number(workout.avgSpeedKmh) || (duration > 0 ? distance / (duration / 60) : 0);
         const route = Array.isArray(workout.route) ? workout.route : [];
         const mapUrl = googleMapsRunUrl(route, false);
+        const isSport = Boolean(sportMetFor(workout.type, workout.intensity));
         content.innerHTML = `<p class="mb-4 text-xs text-slate-500">${escapeHtml(new Date(workout.date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>
-            <div class="grid grid-cols-2 gap-3 mb-4">${stat('Distance', distance.toFixed(2) + ' km')}${stat('Duration', duration + ' min')}${stat('Average speed', speed.toFixed(1) + ' km/h')}${stat('Top speed', (Number(workout.maxSpeedKmh) || 0).toFixed(1) + ' km/h')}</div>
+            <div class="grid grid-cols-2 gap-3 mb-4">${isSport
+                ? stat('Duration', duration + ' min') + stat('Intensity', escapeHtml(workout.intensity)) + stat('Estimated extra calories', workout.calories ? Math.round(workout.calories) + ' kcal' : 'Weight needed') + stat('Activity value', sportMetFor(workout.type, workout.intensity) + ' MET')
+                : stat('Distance', distance.toFixed(2) + ' km') + stat('Duration', duration + ' min') + stat('Average speed', speed.toFixed(1) + ' km/h') + stat('Top speed', (Number(workout.maxSpeedKmh) || 0).toFixed(1) + ' km/h')}</div>
+            ${isSport ? '<p class="mb-3 text-xs text-slate-500">Compendium based estimate; actual expenditure varies. TDEE uses the activity and duration.</p>' : ''}
             ${workout.trackingSource === 'manual-distance' ? '<p class="mb-3 text-xs text-slate-500">Distance entered manually · average speed calculated from time · no GPS route recorded.</p>' : ''}
             ${route.length ? `<h4 class="font-black mb-2">GPS route</h4><div class="mb-3">${runRouteSvg(route)}</div><div class="flex flex-wrap gap-2 mb-3"><button onclick="exportRunGpx('${escapeJsString(workout.id)}')" class="rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white">Export route (GPX)</button>${mapUrl ? `<a href="${escapeHtml(mapUrl)}" target="${googleMapsLinkTarget()}" rel="noopener noreferrer" class="rounded-xl border border-amber-500 px-4 py-3 text-xs font-black text-amber-800">View references in Google Maps</a>` : ''}</div>${mapUrl ? '<p class="mb-4 text-[11px] text-slate-500">Maps shows an approximate walking route through recorded points. VFIT retains the measured GPS route. Opening Maps shares those points with Google.</p>' : ''}` : ''}
             ${workout.notes ? `<p class="text-sm text-slate-600">${escapeHtml(workout.notes)}</p>` : ''}`;

@@ -524,6 +524,51 @@
     // CARDIO MODAL
     // ==========================================================================
 
+    // 2024 Adult Compendium, sports: https://pacompendium.com/sports/
+    // Values match the listed activity descriptions (practice/casual/match play).
+    const SPORT_ACTIVITY_METS = Object.freeze({
+        'sport-soccer': Object.freeze({ easy: 3.5, moderate: 7, hard: 9.5 }),
+        'sport-basketball': Object.freeze({ easy: 5, moderate: 7.5, hard: 8 }),
+        'sport-tennis': Object.freeze({ easy: 5, moderate: 6.8, hard: 8 }),
+        'sport-badminton': Object.freeze({ easy: 5.5, moderate: 7, hard: 9 }),
+        'sport-volleyball': Object.freeze({ easy: 3, moderate: 4, hard: 6 }),
+        'sport-boxing': Object.freeze({ easy: 5.8, moderate: 7.8, hard: 12.3 })
+    });
+
+    function sportMetFor(type, intensity) {
+        return SPORT_ACTIVITY_METS[type] && SPORT_ACTIVITY_METS[type][intensity] || null;
+    }
+
+    function sportNetCalories(type, intensity, minutes, weightKg) {
+        const met = sportMetFor(type, intensity);
+        return met && Number.isFinite(Number(minutes)) && minutes > 0 &&
+            Number.isFinite(Number(weightKg)) && weightKg > 0
+            ? Math.round((met - 1) * weightKg * minutes / 60) : null;
+    }
+
+    function updateSportEstimate() {
+        const type = document.getElementById('cardio-type').value;
+        const calories = document.getElementById('cardio-calories');
+        const note = document.getElementById('cardio-sport-estimate-note');
+        const sport = Boolean(SPORT_ACTIVITY_METS[type]);
+        document.getElementById('cardio-sport-intensity-wrap').classList.toggle('hidden', !sport);
+        note.classList.toggle('hidden', !sport);
+        if (!sport) {
+            if (calories.dataset.sportEstimate) calories.value = '';
+            calories.dataset.sportEstimate = '';
+            calories.readOnly = false;
+            return;
+        }
+        const intensity = document.getElementById('cardio-sport-intensity').value;
+        const minutes = Number(document.getElementById('cardio-duration').value);
+        const estimate = sportNetCalories(type, intensity, minutes, Number(getLatestWeightKg()));
+        calories.readOnly = true;
+        calories.dataset.sportEstimate = 'true';
+        calories.value = estimate === null ? '' : String(estimate);
+        note.textContent = estimate === null ? 'Add a duration and body weight for an estimate.'
+            : `About ${estimate} extra kcal · ${sportMetFor(type, intensity)} MET · estimate includes active time only.`;
+    }
+
     function openCardioModal() {
         document.getElementById('cardio-modal').style.display = 'flex';
         document.getElementById('cardio-type').value = outdoorRunSession ? 'outdoor-running' : 'treadmill';
@@ -531,6 +576,7 @@
         document.getElementById('cardio-distance').value = '';
         document.getElementById('cardio-calories').value = '';
         document.getElementById('cardio-notes').value = '';
+        document.getElementById('cardio-sport-intensity').value = 'moderate';
         updateCardioMode();
         if (nativeRunTrackingAvailable()) sendRunCommand('status');
     }
@@ -569,7 +615,11 @@
         }
         const duration = gpsRun ? gpsRun.duration : Number(document.getElementById('cardio-duration').value);
         const distance = gpsRun ? gpsRun.distance : Number(document.getElementById('cardio-distance').value || 0);
-        const calories = parseInt(document.getElementById('cardio-calories').value) || 0;
+        const sportIntensity = SPORT_ACTIVITY_METS[type] ? document.getElementById('cardio-sport-intensity').value : null;
+        const sportMet = sportMetFor(type, sportIntensity);
+        const weightKg = Number(getLatestWeightKg());
+        const estimate = sportMet ? sportNetCalories(type, sportIntensity, duration, weightKg) : null;
+        const calories = sportMet ? (estimate || 0) : (parseInt(document.getElementById('cardio-calories').value) || 0);
         const notes = document.getElementById('cardio-notes').value.trim();
 
         if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(distance) || distance < 0) {
@@ -585,6 +635,10 @@
             distance: distance,
             avgSpeedKmh: gpsRun ? gpsRun.avgSpeedKmh : (distance ? Math.round(distance / (duration / 60) * 10) / 10 : 0),
             calories: calories,
+            intensity: sportIntensity,
+            met: sportMet,
+            weightKgAtLog: sportMet && Number.isFinite(weightKg) && weightKg > 0 ? weightKg : null,
+            calorieSource: sportMet ? 'compendium-net-estimate' : null,
             notes: notes
         }, gpsRun || {}));
         saveState();
@@ -1290,14 +1344,19 @@
             const distance = Math.min(80, Math.max(0, Number(log.distance) || 0));
             const speed = distance / hours;
             const type = String(log.type || '').toLowerCase();
-            const met = type === 'outdoor-running' || type === 'treadmill'
+            const sportMet = sportMetFor(type, log.intensity);
+            const met = sportMet || (type === 'outdoor-running' || type === 'treadmill'
                 ? (speed >= 7 ? Math.min(13, 6.5 + (speed - 7) * 0.8) : 3.5)
                 : type === 'walking' ? 3.5 : type === 'hiking' ? 5.5
                 : type === 'cycling' ? 6.8 : type === 'swimming' ? 6
-                : type === 'rowing' ? 5 : type === 'elliptical' ? 5 : 4;
+                : type === 'rowing' ? 5 : type === 'elliptical' ? 5 : 4);
             cardio += Math.max(0, met - 1) * weight * hours;
             if (['outdoor-running', 'treadmill', 'walking', 'hiking'].includes(type)) {
                 cardioDistanceByDay[log.date] = (cardioDistanceByDay[log.date] || 0) + distance;
+            } else if (sportMet) {
+                // Field/court sports often contribute to phone steps. Allow a
+                // modest walking-equivalent overlap rather than counting both.
+                cardioDistanceByDay[log.date] = (cardioDistanceByDay[log.date] || 0) + hours * 3.6;
             }
         });
         (state.workoutHistory || []).forEach(workout => {

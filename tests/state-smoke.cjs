@@ -196,9 +196,15 @@ const expose = `
   normaliseBarcode,
   foodNutrientsPer100g,
   foodNutrientsPerServing,
+  mealScheduleForDate,
+  mealSlotForTime,
+  setDiaryWakeTime,
   databaseFoodWithServingWeight,
   copiedMealNutritionBases,
   copiedMealNutritionForAmount,
+  getAllLoggedFoods,
+  togglePreviousMeal,
+  copySelectedMeals,
   isPlausibleFoodBarcode,
   hasValidGtinCheckDigit,
   barcodeLookupCandidates,
@@ -269,6 +275,8 @@ const expose = `
   runPointDistanceMetres,
   compactSavedRoute,
   saveCardio,
+  sportMetFor,
+  sportNetCalories,
   viewWorkoutDetails,
   setOutdoorRunSession: value => { outdoorRunSession = value; },
   handleNativeStepMessage,
@@ -545,6 +553,21 @@ energyState.userProfile = { gender: 'male', age: 30, heightCm: 180, activityLeve
 energyState.metricsHistory = [{ date: '2026-10-01', weight: 100 }];
 app.setState(energyState);
 app.setUser({ uid: 'energy-test-user' });
+document.getElementById('cardio-type').value = 'sport-soccer';
+document.getElementById('cardio-sport-intensity').value = 'moderate';
+document.getElementById('cardio-duration').value = '60';
+document.getElementById('cardio-distance').value = '';
+document.getElementById('filter-cardio').checked = true;
+app.updateCardioMode();
+assert.equal(document.getElementById('cardio-calories').value, '600');
+app.saveCardio();
+assert.equal(energyState.cardioLogs[0].intensity, 'moderate');
+assert.equal(energyState.cardioLogs[0].met, 7);
+assert.equal(energyState.cardioLogs[0].calories, 600);
+assert.match(elements.get('training-logs-list').innerHTML, /Soccer/);
+app.viewWorkoutDetails(energyState.cardioLogs[0].id);
+assert.match(elements.get('cardio-details-content').innerHTML, /Estimated extra calories/);
+energyState.cardioLogs = [];
 const energyToday = app.localDateKey();
 const energyYesterday = app.offsetLocalDateKey(energyToday, -1);
 const fallbackTdee = app.calculateMaintenanceCalories();
@@ -559,6 +582,10 @@ assert.equal(activeTdee.averageSteps, 22000);
 assert.equal(activeTdee.averageRir, 1);
 assert.ok(activeTdee.walking > 0 && activeTdee.strength > 0 && activeTdee.cardio > 0);
 assert.ok(activeTdee.maintenance !== fallbackTdee);
+energyState.cardioLogs.push({ date: energyYesterday, type: 'sport-soccer', intensity: 'moderate', duration: 60, distance: 0 });
+assert.ok(app.calculateEnergyExpenditure(energyToday).cardio > activeTdee.cardio,
+  'sport MET and duration must contribute to TDEE');
+energyState.cardioLogs.pop();
 energyState.workoutHistory[0].exercises[0].sets[0].rir = '8';
 assert.ok(app.calculateEnergyExpenditure(energyToday).strength < activeTdee.strength);
 energyState.workoutHistory[0].exercises[0].sets[0].rir = '1';
@@ -1017,6 +1044,46 @@ const loggedWeightMeal = {
 const weightAsOneAndHalfServings = app.copiedMealNutritionForAmount(loggedWeightMeal, 'portion', 1.5);
 assert.equal(weightAsOneAndHalfServings.totals.calories, 300);
 assert.equal(weightAsOneAndHalfServings.totals.protein, 15);
+
+// Packet values survive copying even when the food database or serving basis
+// has changed since the original day; identical names retain separate entries.
+const packetDay = '2026-10-01';
+const packetMeal = { id: 901, date: packetDay, name: 'Protein bar', mealType: 'lunch',
+  amount: 2, amountType: 'portion', servingGrams: 40, servingLabel: '1 bar',
+  calories: 400, protein: 20, base: { calories: 999, protein: 999, isCustom: true },
+  per100g: { calories: 500, protein: 25 } };
+assert.equal(app.copiedMealNutritionForAmount(packetMeal, 'portion', 2).totals.calories, 400);
+assert.equal(app.copiedMealNutritionForAmount(packetMeal, 'grams', 60).totals.calories, 300);
+const copyState = app.defaultState();
+copyState.viewDate = '2026-10-05';
+copyState.nutritionHistory = [{ date: packetDay, meals: [packetMeal] }];
+copyState.dailyMeals = [{ ...packetMeal, id: 902, date: '2026-10-02', amount: 1 }];
+app.setState(copyState);
+assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 2);
+app.togglePreviousMeal({ checked: true }, 0, packetDay);
+app.copySelectedMeals();
+const copiedPacketMeal = copyState.dailyMeals.at(-1);
+assert.equal(copiedPacketMeal.date, copyState.viewDate);
+assert.equal(copiedPacketMeal.copiedFromDate, packetDay);
+assert.equal(copiedPacketMeal.amount, 2);
+assert.equal(copiedPacketMeal.servingGrams, 40);
+assert.equal(copiedPacketMeal.per100g.calories, 500);
+
+const daySchedule = app.mealScheduleForDate('2026-10-05');
+assert.deepEqual(Array.from(daySchedule.breakfast), [420, 660]);
+assert.deepEqual(Array.from(daySchedule.lunch), [660, 1020]);
+assert.deepEqual(Array.from(daySchedule.dinner), [1020, 1380]);
+app.setDiaryWakeTime('09:00');
+assert.deepEqual(Array.from(app.mealScheduleForDate('2026-10-05').breakfast), [540, 660]);
+copyState.shiftProfile.rota['2026-10-06'] = { type: 'day', start: '16:00', end: '02:00' };
+assert.deepEqual(Array.from(app.mealScheduleForDate('2026-10-06').dinner), [1440, 1800]);
+assert.equal(app.mealSlotForTime('01:00', true, '2026-10-06'), 'dinner');
+copyState.shiftProfile.rota['2026-10-07'] = { type: 'night', start: '20:00', end: '08:00' };
+assert.deepEqual(Array.from(app.mealScheduleForDate('2026-10-07').lunch), [1320, 1680]);
+assert.equal(app.sportMetFor('sport-soccer', 'hard'), 9.5);
+assert.equal(app.sportNetCalories('sport-soccer', 'moderate', 60, 80), 480);
+assert.equal(app.sportNetCalories('sport-tennis', 'easy', 30, 80), 160);
+assert.equal(app.sportNetCalories('sport-tennis', 'easy', 30, 0), null);
 
 // User/imported strings are safe in HTML and inline-event contexts.
 assert.equal(app.escapeHtml('<img src=x onerror=1>\'"&'), '&lt;img src=x onerror=1&gt;&#039;&quot;&amp;');

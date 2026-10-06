@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.44';
+    const VFIT_APP_VERSION = '2.1.0-beta.45';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -970,6 +970,7 @@
             });
         });
         merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
+        merged.mealWakeTimes = Object.assign({}, local.mealWakeTimes || {}, remote.mealWakeTimes || {});
         merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
         merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
         merged.coachConversations = mergeUniqueItems(local.coachConversations, remote.coachConversations, itemKey, preferRemote);
@@ -5230,6 +5231,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             updatedAt: null
         },
         cardioLogs: [],
+        mealWakeTimes: {}, // date-keyed wake times for the nutrition diary
         hydrationLogs: {},
         aiCoachEnabled: true,
         proteinGoal: 150,
@@ -5426,6 +5428,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         normalized.shiftProfile.rota = isPlainRecord(raw.shiftProfile && raw.shiftProfile.rota)
             ? deepClone(raw.shiftProfile.rota)
             : {};
+        normalized.mealWakeTimes = isPlainRecord(raw.mealWakeTimes) ? deepClone(raw.mealWakeTimes) : {};
         normalized.coachingTargets = Object.assign({}, DEFAULT_STATE.coachingTargets, isPlainRecord(raw.coachingTargets) ? raw.coachingTargets : {});
         normalized.progressionSettings = Object.assign({}, DEFAULT_STATE.progressionSettings, isPlainRecord(raw.progressionSettings) ? raw.progressionSettings : {});
         normalized.deloadPlan = Object.assign({}, DEFAULT_STATE.deloadPlan, isPlainRecord(raw.deloadPlan) ? raw.deloadPlan : {});

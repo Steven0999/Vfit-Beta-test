@@ -752,6 +752,12 @@
                         <div class="glass-card rounded-2xl p-4"><p class="text-xs font-bold text-slate-400">Fat today</p><p class="text-xl font-black"><span id="total-fat">0.0</span>g</p></div>
                     </div>
 
+                    <div class="glass-card rounded-2xl p-4">
+                        <label for="diary-wake-time" class="text-xs font-bold text-slate-500">Wake time for this diary day</label>
+                        <input id="diary-wake-time" type="time" onchange="setDiaryWakeTime(this.value)" class="ml-2 rounded-xl bg-slate-50 p-2 font-bold">
+                        <p id="diary-meal-schedule" class="text-xs text-slate-500 mt-2"></p>
+                        <p class="text-xs text-slate-400 mt-1">For shifts crossing midnight, keep food on the shift-start diary day and choose “Next day” when entering its time.</p>
+                    </div>
                     <div id="meal-sections"></div>
 
                     <!-- Save Today's Nutrition Button -->
@@ -1603,6 +1609,7 @@
                 <div><label for="diary-food-protein" class="text-xs font-bold text-slate-400 uppercase block mb-2">Protein (g)</label><input id="diary-food-protein" type="number" inputmode="decimal" required min="0" max="1000000" step="any" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
             </div>
             <div class="mb-4"><label for="diary-food-meal-type" class="text-xs font-bold text-slate-400 uppercase block mb-2">Meal</label><select id="diary-food-meal-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snack">Snack</option></select></div>
+            <div class="mb-4 flex items-end gap-3"><label for="diary-food-time" class="flex-1 text-xs font-bold text-slate-500">Time eaten<input id="diary-food-time" type="time" oninput="suggestMealSlot('diary-food-time', 'diary-food-next-day', 'diary-food-meal-type')" class="mt-2 w-full p-3 bg-slate-50 rounded-xl font-bold"></label><label class="flex items-center gap-2 text-xs font-bold text-slate-500 pb-3"><input id="diary-food-next-day" type="checkbox" onchange="suggestMealSlot('diary-food-time', 'diary-food-next-day', 'diary-food-meal-type')"> Next day</label></div>
             <details id="diary-food-extra-details" class="mb-5">
                 <summary class="text-sm font-bold text-orange-600 cursor-pointer">More details (optional)</summary>
                 <div class="grid grid-cols-2 gap-3 mt-3">
@@ -2192,7 +2199,20 @@
                     <option value="hiking">⛰️ Hiking</option>
                     <option value="rowing">🚣 Rowing</option>
                     <option value="elliptical">⚡ Elliptical</option>
+                    <optgroup label="Sports">
+                        <option value="sport-soccer">⚽ Football / Soccer</option>
+                        <option value="sport-basketball">🏀 Basketball</option>
+                        <option value="sport-tennis">🎾 Tennis</option>
+                        <option value="sport-badminton">🏸 Badminton</option>
+                        <option value="sport-volleyball">🏐 Volleyball</option>
+                        <option value="sport-boxing">🥊 Boxing</option>
+                    </optgroup>
                 </select>
+            </div>
+            <div id="cardio-sport-intensity-wrap" class="hidden mb-4">
+                <label for="cardio-sport-intensity" class="text-xs font-bold text-slate-400 uppercase mb-2 block">Intensity while playing</label>
+                <select id="cardio-sport-intensity" onchange="updateSportEstimate()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold"><option value="easy">Easy / practice</option><option value="moderate" selected>Moderate / casual play</option><option value="hard">Hard / competitive play</option></select>
+                <p class="text-xs text-slate-500 mt-2">Estimated extra calories use the sport, intensity, duration and your latest weight. They are an estimate, not a measurement.</p>
             </div>
             <div id="outdoor-run-panel" class="hidden mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
                 <p class="font-black text-sm text-amber-900">Outdoor run tracker</p>
@@ -2222,7 +2242,7 @@
             <div class="grid grid-cols-2 gap-4 mb-4">
                 <div>
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Duration (min)</label>
-                    <input type="number" id="cardio-duration" min="0.1" step="0.1" placeholder="30" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
+                    <input type="number" id="cardio-duration" min="0.1" step="0.1" placeholder="30" oninput="updateSportEstimate()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
                 </div>
                 <div>
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Distance (km)</label>
@@ -2232,6 +2252,7 @@
             <div class="mb-4">
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Calories Burned (optional)</label>
                 <input type="number" id="cardio-calories" min="0" placeholder="300" class="w-full p-4 bg-slate-50 rounded-2xl font-bold text-center outline-none">
+                <p id="cardio-sport-estimate-note" class="hidden text-xs text-slate-500 mt-2"></p>
             </div>
             <div class="mb-6">
                 <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Notes (optional)</label>
@@ -2398,6 +2419,12 @@
                     <option value="dinner">Dinner</option>
                     <option value="snack">Snack</option>
                 </select>
+            </div>
+            <div class="mb-4 flex items-end gap-3">
+                <label class="flex-1 text-xs font-bold text-slate-500">Time eaten
+                    <input id="popup-meal-time" type="time" oninput="suggestMealSlot('popup-meal-time', 'popup-meal-next-day', 'popup-meal-type')" class="mt-2 w-full p-3 bg-slate-50 rounded-xl font-bold">
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-slate-500 pb-3"><input id="popup-meal-next-day" type="checkbox" onchange="suggestMealSlot('popup-meal-time', 'popup-meal-next-day', 'popup-meal-type')"> Next day</label>
             </div>
             <div class="mb-4">
                 <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Choose Amount</label>
@@ -2582,6 +2609,7 @@
                 <img id="edit-meal-image" src="" class="w-24 h-24 object-contain mx-auto mb-4 rounded-xl bg-slate-50 p-2" onerror="this.src='https://via.placeholder.com/100'">
                 <h4 id="edit-meal-name" class="text-lg font-bold"></h4>
                 <p id="edit-meal-original" class="text-sm text-slate-500"></p>
+                <p id="edit-meal-packet" class="text-xs text-slate-500 mt-1"></p>
             </div>
 
             <div class="mb-4">
@@ -2633,6 +2661,12 @@
                     <option value="dinner">Dinner</option>
                     <option value="snack">Snack</option>
                 </select>
+            </div>
+            <div class="mb-4 flex items-end gap-3">
+                <label class="flex-1 text-xs font-bold text-slate-500">Time eaten
+                    <input id="edit-meal-time" type="time" oninput="suggestMealSlot('edit-meal-time', 'edit-meal-next-day', 'edit-meal-type')" class="mt-2 w-full p-3 bg-slate-50 rounded-xl font-bold">
+                </label>
+                <label class="flex items-center gap-2 text-xs font-bold text-slate-500 pb-3"><input id="edit-meal-next-day" type="checkbox" onchange="suggestMealSlot('edit-meal-time', 'edit-meal-next-day', 'edit-meal-type')"> Next day</label>
             </div>
 
             <button onclick="saveEditedMeal()" class="w-full bg-emerald-600 text-white py-5 rounded-[24px] font-black hover:bg-emerald-700">

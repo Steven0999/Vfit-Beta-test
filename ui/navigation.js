@@ -249,6 +249,7 @@
                 id: c.id,
                 date: c.date,
                 focus: cardioType === 'outdoor-running' ? 'Normal Running' :
+                    cardioType.startsWith('sport-') ? cardioType.slice(6).replace(/(^|-)\w/g, part => part.replace('-', ' ').toUpperCase()) :
                     cardioType.charAt(0).toUpperCase() + cardioType.slice(1),
                 duration: c.duration + ' min',
                 category: cardioType === 'walking' ? 'walking' : 'cardio',
@@ -256,7 +257,9 @@
                 distance: c.distance,
                 avgSpeedKmh: c.avgSpeedKmh,
                 cardioCalories: c.calories,
-                notes: c.notes
+                notes: c.notes,
+                intensity: c.intensity,
+                met: c.met
             });
         });
 
@@ -294,6 +297,8 @@
                 summary = `${exerciseCount} exercise${exerciseCount > 1 ? 's' : ''}`;
             } else if (w.distance) {
                 summary = `${w.distance} km${w.avgSpeedKmh ? ` · ${w.avgSpeedKmh} km/h` : ''}`;
+            } else if (w.intensity) {
+                summary = `${w.intensity} intensity${w.cardioCalories ? ` · ~${Math.round(w.cardioCalories)} kcal` : ''}`;
             }
 
             return `

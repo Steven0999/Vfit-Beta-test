@@ -37,6 +37,68 @@
         refreshIcons();
     }
 
+    function mealClockMinutes(value) {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''))) return null;
+        const [hours, minutes] = value.split(':').map(Number);
+        return hours * 60 + minutes;
+    }
+
+    function mealScheduleForDate(dateKey) {
+        const shift = typeof getShiftForDate === 'function' ? getShiftForDate(dateKey) : { type: 'off' };
+        const savedWake = state.mealWakeTimes && mealClockMinutes(state.mealWakeTimes[dateKey]);
+        const shiftStart = shift.type !== 'off' ? mealClockMinutes(shift.start || (state.shiftProfile && state.shiftProfile.shiftStart)) : null;
+        // If the member has not supplied a wake time, assume two hours before work.
+        const wake = savedWake !== null && savedWake !== undefined ? savedWake
+            : shiftStart === null ? 7 * 60 : (shiftStart - 120 + 1440) % 1440;
+        const standardDay = wake < 660 && shift.type !== 'night' && (shiftStart === null || shiftStart < 720);
+        const breakfastEnd = standardDay ? 660 : wake + 240;
+        const lunchEnd = standardDay ? 1020 : wake + 600;
+        const dinnerEnd = standardDay ? 1380 : wake + 960;
+        return { wake, breakfast: [wake, breakfastEnd], lunch: [breakfastEnd, lunchEnd],
+            dinner: [lunchEnd, dinnerEnd] };
+    }
+
+    function mealDiaryMinute(time, nextDay, dateKey) {
+        const minute = mealClockMinutes(time);
+        if (minute === null) return null;
+        const wake = mealScheduleForDate(dateKey).wake;
+        return minute + (nextDay || minute < wake ? 1440 : 0);
+    }
+
+    function mealSlotForTime(time, nextDay, dateKey) {
+        const minute = mealDiaryMinute(time, nextDay, dateKey);
+        const plan = mealScheduleForDate(dateKey);
+        if (minute === null || minute < plan.breakfast[0]) return 'snack';
+        if (minute < plan.breakfast[1]) return 'breakfast';
+        if (minute < plan.lunch[1]) return 'lunch';
+        if (minute < plan.dinner[1]) return 'dinner';
+        return 'snack';
+    }
+
+    function mealWindowText(start, end) {
+        const clock = minute => {
+            const hour = Math.floor((minute % 1440) / 60);
+            const label = `${hour % 12 || 12}:${String(minute % 60).padStart(2, '0')}${hour < 12 ? 'am' : 'pm'}`;
+            return label + (minute >= 1440 ? ' +1 day' : '');
+        };
+        return `${clock(start)}–${clock(end)}`;
+    }
+
+    function setDiaryWakeTime(value) {
+        if (mealClockMinutes(value) === null) { showToast('Choose a valid wake time'); return; }
+        if (!state.mealWakeTimes) state.mealWakeTimes = {};
+        state.mealWakeTimes[state.viewDate] = value;
+        saveState();
+        renderDiary();
+    }
+
+    function suggestMealSlot(timeId, nextDayId, mealTypeId) {
+        const time = document.getElementById(timeId);
+        const nextDay = document.getElementById(nextDayId);
+        const select = document.getElementById(mealTypeId);
+        if (time && nextDay && select) select.value = mealSlotForTime(time.value, nextDay.checked, state.viewDate);
+    }
+
     function renderDiary() {
         const dateInput = document.getElementById('nutrition-date-picker');
         if (dateInput && !dateInput.value) dateInput.value = state.viewDate;
@@ -63,9 +125,16 @@
         const mealIcons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
         const sections = document.getElementById('meal-sections');
         if (!sections) return;
+        const plan = mealScheduleForDate(state.viewDate);
+        const wakeInput = document.getElementById('diary-wake-time');
+        if (wakeInput) wakeInput.value = `${String(Math.floor(plan.wake / 60)).padStart(2, '0')}:${String(plan.wake % 60).padStart(2, '0')}`;
+        const scheduleText = document.getElementById('diary-meal-schedule');
+        if (scheduleText) scheduleText.textContent = `Breakfast ${mealWindowText(...plan.breakfast)} · Lunch ${mealWindowText(...plan.lunch)} · Dinner ${mealWindowText(...plan.dinner)}`;
 
         sections.innerHTML = mealTypes.map(type => {
-            const meals = todayMeals.filter(m => m.mealType === type);
+            const meals = todayMeals.filter(m => m.mealType === type).sort((a, b) =>
+                (mealDiaryMinute(a.mealTime, a.mealNextDay, state.viewDate) ?? Infinity) -
+                (mealDiaryMinute(b.mealTime, b.mealNextDay, state.viewDate) ?? Infinity));
             const totalCal = meals.reduce((s, m) => s + (m.calories || 0), 0);
 
             return `
@@ -90,7 +159,7 @@
                                     ${image ? `<img src="${escapeHtml(image)}" alt="" loading="lazy" class="w-10 h-10 object-contain rounded-lg bg-slate-50 p-1" onerror="this.style.display='none'">` : ''}
                                     <div class="flex-1 min-w-0">
                                         <div class="font-bold text-sm truncate flex items-center gap-1">${escapeHtml(m.name)} <i data-lucide="pencil" class="w-3 h-3 text-slate-300"></i></div>
-                                        <div class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} cal • ${(Number(m.protein) || 0).toFixed(1)}g protein${amountLabel}</div>
+                                        <div class="text-xs text-slate-400">${m.mealTime ? escapeHtml(m.mealTime) + (m.mealNextDay ? ' next day · ' : ' · ') : ''}${Math.round(Number(m.calories) || 0)} cal • ${(Number(m.protein) || 0).toFixed(1)}g protein${amountLabel}</div>
                                         <div class="text-xs text-slate-400">${(Number(m.carbs) || 0).toFixed(1)}g carbs • ${(Number(m.fat) || 0).toFixed(1)}g fat</div>
                                     </div>
                                 </div>
@@ -145,7 +214,8 @@
 
         const databaseFood = (state.customFoods || []).find(food => m.databaseFoodId && String(food.id) === String(m.databaseFoodId));
         const servingGrams = nutritionNumber(m.servingGrams || (databaseFood && databaseFood.servingGrams)) || 100;
-        const restoredPer100g = databaseFood && isPlainRecord(databaseFood.per100g)
+        const restoredPer100g = isPlainRecord(m.per100g) ? Object.assign({}, m.per100g)
+            : databaseFood && isPlainRecord(databaseFood.per100g)
             ? Object.assign({}, databaseFood.per100g)
             : (base.isCustom ? scaleFoodNutrients({
                 calories: base.calories || 0,
@@ -194,6 +264,8 @@
         if (amtInput) amtInput.value = m.amount || (currentAmountType === 'grams' ? 100 : 1);
         const mtSel = document.getElementById('popup-meal-type');
         if (mtSel) mtSel.value = m.mealType || m.type || 'lunch';
+        document.getElementById('popup-meal-time').value = m.mealTime || '';
+        document.getElementById('popup-meal-next-day').checked = Boolean(m.mealNextDay);
         updatePopupTotals();
 
         // Relabel the add button to reflect editing
@@ -1325,6 +1397,12 @@
         document.getElementById('popup-amount').value = 1;
         const customWeight = document.getElementById('popup-custom-weight');
         if (customWeight) customWeight.value = nutritionNumber(currentFoodItem.servingGrams) || 100;
+        const timeInput = document.getElementById('popup-meal-time');
+        if (timeInput) timeInput.value = typeof localDateKey === 'function' && state.viewDate === localDateKey()
+            ? `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}` : '';
+        const nextDayInput = document.getElementById('popup-meal-next-day');
+        if (nextDayInput) nextDayInput.checked = false;
+        if (timeInput && timeInput.value) suggestMealSlot('popup-meal-time', 'popup-meal-next-day', 'popup-meal-type');
         currentAmountType = 'portion';
         setAmountType('portion');
         updatePopupTotals();
@@ -1370,7 +1448,9 @@
         currentFoodItem.fat = num('edit-fat');
         currentFoodItem.fiber = num('edit-fiber');
         currentFoodItem.sugar = num('edit-sugar');
-        if (currentFoodItem.isCustom) currentFoodItem.per100g = null;
+        // A correction to the packet figures replaces the previously saved
+        // per-100g snapshot; future copies use this corrected value.
+        currentFoodItem.per100g = null;
         currentFoodItem.edited = true; // mark as user-corrected
 
         // Re-render the display numbers, keep the current amount, recalc totals
@@ -1579,6 +1659,7 @@
             amount,
             amountType: currentAmountType,
             base,
+            per100g: foodNutrientsPer100g(currentFoodItem),
             databaseFoodId: currentFoodItem.databaseId || '',
             catalogId: currentFoodItem.catalogId || '',
             basisUnit: foodAmountUnit(currentFoodItem),
@@ -1586,6 +1667,11 @@
             manualEntry: Boolean(currentFoodItem.manualEntry),
             servingLabel: foodServingLabel(currentFoodItem.serving)
         };
+        const mealTime = document.getElementById('popup-meal-time').value;
+        if (mealTime && mealClockMinutes(mealTime) === null) { showToast('Choose a valid meal time'); return; }
+        computed.mealTime = mealTime;
+        computed.mealNextDay = Boolean(mealTime && (document.getElementById('popup-meal-next-day').checked ||
+            mealClockMinutes(mealTime) < mealScheduleForDate(state.viewDate).wake));
 
         const wasEditing = editingLoggedMealId != null;
         if (wasEditing) {
@@ -1644,6 +1730,8 @@
             ? (existing.amountType === 'grams' ? existing.amount : existing.servingGrams * (existing.amount || 1)) : '';
         document.getElementById('diary-food-weight').value = weight;
         document.getElementById('diary-food-meal-type').value = existing ? existing.mealType || existing.type || 'snack' : 'snack';
+        document.getElementById('diary-food-time').value = existing ? existing.mealTime || '' : '';
+        document.getElementById('diary-food-next-day').checked = Boolean(existing && existing.mealNextDay);
         document.getElementById('diary-food-extra-details').open = Boolean(existing && (existing.carbs || existing.fat || weight));
         document.getElementById('manual-diary-food-title').textContent = existing ? 'Edit Your Food' : 'Add Your Own Food';
         document.getElementById('diary-food-save-button').textContent = existing ? 'Save Changes' : 'Add to Diary';
@@ -1686,6 +1774,8 @@
         }
         const mealType = document.getElementById('diary-food-meal-type').value;
         if (!['breakfast', 'lunch', 'dinner', 'snack'].includes(mealType)) { showToast('Choose a meal'); return; }
+        const mealTime = document.getElementById('diary-food-time').value;
+        if (mealTime && mealClockMinutes(mealTime) === null) { showToast('Choose a valid meal time'); return; }
         const index = session.id == null ? -1 : state.dailyMeals.findIndex(meal => String(meal.id) === String(session.id));
         if (session.id != null && index < 0) { showToast('This food entry no longer exists'); return; }
         const existing = index < 0 ? {} : state.dailyMeals[index];
@@ -1696,6 +1786,9 @@
             id: existing.id || Date.now() + Math.random(),
             date: session.date, name: name.slice(0, 160), type: mealType, mealType,
             amount: 1, amountType: 'portion', servingGrams, servingLabel: '1 serving',
+            mealTime,
+            mealNextDay: Boolean(mealTime && (document.getElementById('diary-food-next-day').checked ||
+                mealClockMinutes(mealTime) < mealScheduleForDate(session.date).wake)),
             manualEntry: true,
             base: Object.assign({}, totals, { isCustom: true, serving: '1 serving' })
         });
