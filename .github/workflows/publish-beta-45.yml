@@ -1,0 +1,38 @@
+name: Publish VFIT beta.45 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-45.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.45 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 37485464554 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '08bba9c876bdb4782a928c839c86ff376369b763da22a69267d929c80faafd86  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.45-debug.apk
+          gh release create v2.1.0-beta.45 \
+            dist/VFIT-beta.45-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target fc1b90578d519170d5ccbf9c0f25593a150205d8 \
+            --title 'VFIT 2.1.0 beta.45' \
+            --notes 'Preserves copied food amounts, source dates, serving sizes and saved per-100g nutrition; adds wake-time meal windows for day, late and night shifts; logs sports by intensity and duration with estimated active calories. Android debug APK for beta testing.' \
+            --prerelease
