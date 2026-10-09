@@ -1,0 +1,38 @@
+name: Publish VFIT beta.47 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-47.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.47 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 37984582532 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '1afbf292f0225767b27f58d1fcde3993676cc57b3f1675972d616a7f3e7fda97  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.47-debug.apk
+          gh release create v2.1.0-beta.47 \
+            dist/VFIT-beta.47-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target ac778b183d06997b056d904afb24a6c0d935a7f3 \
+            --title 'VFIT 2.1.0 beta.47' \
+            --notes 'Adds an owner-only photo food estimate review flow in Nutrition Search. The signed-in verified owner can estimate calories and protein, edit the draft, then choose to add it to the diary. The OpenAI API key and Firebase function must be configured separately before live estimates work; manual food entry remains available. Android debug APK for beta testing.' \
+            --prerelease
