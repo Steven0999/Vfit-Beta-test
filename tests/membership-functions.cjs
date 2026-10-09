@@ -96,7 +96,8 @@ const mocks = {
   },
   'firebase-admin/messaging': { getMessaging() {} },
   stripe: function Stripe() { return stripe; },
-  './membership': require('../functions/membership')
+  './membership': require('../functions/membership'),
+  './food-photo': require('../functions/food-photo')
 };
 const code = fs.readFileSync(new URL('../functions/index.js', `file://${__filename}`), 'utf8');
 vm.runInNewContext(code, { exports: backend, require: name => mocks[name], URL, console }, { filename: 'functions/index.js' });

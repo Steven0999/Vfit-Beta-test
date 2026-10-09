@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.46` places the date-specific diary wake-time control in Nutrition → Shift. Meal windows still follow that wake time and can cross midnight for late and night shifts. Food copying preserves the original logged amount, serving size and saved per-100g values. Sports cardio logs include intensity, duration, estimated active calories and TDEE integration. Basic (£4.99/month), Platinum (£18.99/month), 1-to-1 Coaching (£97.99/month), and the existing payment setup remain available.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.47` adds a reviewed photo-based food estimate for the verified owner account. Meal windows follow the diary wake time and can cross midnight for late and night shifts. Food copying preserves the original logged amount, serving size and saved per-100g values. Sports cardio logs include intensity, duration, estimated active calories and TDEE integration. Basic (£4.99/month), Platinum (£18.99/month), 1-to-1 Coaching (£97.99/month), and the existing payment setup remain available.
 
 
 ## What is included
@@ -18,6 +18,7 @@ VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, off
 - Training years in About You tailor the Training and Training Basics screens. Members with 0–2 years (or no years set) can start a four-movement full-body session with two sets per exercise, log reps and weight, and keep cardio and workout history. Above 2 years, splits and weekly volume appear; at 4+ years specialist muscle focus and smart progression are also available. The home starter session uses no equipment and prefills 0 kg so bodyweight sets can be logged.
 - A dedicated “Add Your Own Food” section for saving a food name, calories, protein and compressed phone photo to the VFIT Food Database.
 - “Add Your Own Food” in Search (and the database view), with the Diary shortcut removed. Enter the food name, total calories and protein for the amount eaten, choose a meal, and add it directly to the private diary. Carbs, fat and food weight are optional. Logging works offline without database editor access; shared food database editing keeps its existing owner/editor protection.
+- The verified owner at `steven.vaughanrr@hotmail.co.uk` can choose **Nutrition → Search → Estimate Takeaway from Photo**, take/choose one photo, and add portion details. OpenAI returns an approximate calorie and protein draft; the owner checks and edits it in the personal food form before separately adding it to the diary. The diary labels photo-based values as estimates. The image is never saved in the meal entry or shared database. This online feature requires the server setup below.
 - Estimated TDEE in Diary and Personal Details uses Mifflin-St Jeor BMR plus recent logged walking and exercise, with an RIR adjustment for lifting. When activity logs are unavailable, About You activity level provides a fallback. Logged running and walking distance is deducted from overlapping step distance. A goal at least 1,000 kcal below estimated maintenance starts an eight-week planned-deficit counter, then a seven-day maintenance goal and temporary lock. The target stays at maintenance after the week until the member chooses another goal. The estimated BMR is the app's minimum target, but neither BMR nor TDEE is a personalised safety threshold.
 - A one-question-at-a-time “How are you feeling?” AI Coach conversation with quick replies, optional notes, follow-up questions, shift-specific advice and a conditional deload-week offer for severe fatigue.
 - First-session dietary questions covering requirements, exact food notes, vegan, vegetarian, ketogenic, intermittent-fasting and calorie-deficit choices; answers are saved to the member plan and can be edited in their own Coaching Hub section.
@@ -53,6 +54,7 @@ The conversational coach uses structured logic on the device and the member’s 
 - `core/state.js` — configuration, sign-in helpers, shared state, settings and common utilities.
 - `training/training.js` — exercise catalogue, workouts, volume and progression.
 - `nutrition/meal-planner.js` — nutrition diary, shift meals and recipe details.
+- `functions/food-photo.js` — photo validation and structured estimate parsing for the owner-only callable.
 - `nutrition/food-catalog.js` — owned food storage, local search, catalogue import and export.
 - `nutrition/data/uk-foods-2021.json` — the bundled UK food database and source/license metadata.
 - `nutrition/scanner.js` — camera/photo/manual barcode scanning and Open Food Facts lookup.
@@ -88,10 +90,12 @@ Then open `http://localhost:8080`. Camera, push and App Check should be tested o
 node tests/static-audit.cjs
 node tests/state-smoke.cjs
 node tests/photo-storage.cjs
+node tests/food-photo.cjs
 node tests/food-catalog.cjs
 find core training nutrition ui metrics coaching firebase feedback -name '*.js' -print0 | xargs -0 -n1 node --check
 node --check sw.js
 node --check functions/index.js
+node --check functions/food-photo.js
 git diff --check
 ```
 
@@ -122,6 +126,20 @@ Deploying Cloud Functions and the scheduled reminder job requires a Firebase pro
 `firestore.rules` is deny-by-default. It prevents browser clients from granting themselves paid membership, isolates push tokens under `users/{uid}/devices`, limits self-updates to approved profile/sync fields, keeps feedback owner-scoped, and restricts coach plans to the linked coach/member pair. Members may change only plan status, their request message and day-completion flags.
 
 Provision the app owner with the Firebase Console or Admin SDK by creating `admins/{OWNER_UID}` with `active: true`. Never create admin records from the browser. Approved coach email addresses remain in `config/coachEmails`.
+
+### Owner food photo estimates
+
+The VFIT photo button is visible only when the signed-in Firebase account is the verified owner with the exact address `steven.vaughanrr@hotmail.co.uk` and an active `admins/{uid}` record. The callable checks the current Firebase Auth user and private admin record again on the server, validates the compressed image, and permits at most 25 requests per UTC day. Photos and descriptions are sent to the OpenAI Responses API only after tapping **Estimate**; the request uses `store: false`. Only the edited diary entry and a short estimate note are saved when the owner taps **Add to Diary**. Estimates are approximate, especially for hidden oils, sauces and portion sizes.
+
+ChatGPT subscriptions do not supply a key to this app. Create an OpenAI API project with API billing and store its secret as a Firebase Functions secret through the interactive prompt; never put it in GitHub, an APK or `vfit-config.js`:
+
+```bash
+firebase use vfit-app-pro
+firebase functions:secrets:set OPENAI_API_KEY
+firebase deploy --only functions:estimateFoodPhoto
+```
+
+The Firebase project needs billing enabled for Cloud Functions and Secret Manager. Confirm that the owner address is verified in Firebase Authentication and its UID has the active admin record before testing the photo flow. If the callable or secret has not been deployed, the app shows a setup or service error and normal manual diary entry remains available. This callable uses verified Firebase Auth, the private owner record and a daily limit; other existing callables have their own App Check requirements.
 
 ### App Check and push
 

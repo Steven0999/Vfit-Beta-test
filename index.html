@@ -856,6 +856,10 @@
                         <i data-lucide="plus-circle" class="w-5 h-5"></i>
                         Add Your Own Food
                     </button>
+                    <button id="search-estimate-food-photo" onclick="openFoodPhotoEstimate()" class="hidden w-full rounded-2xl border-2 border-orange-600 bg-slate-900 p-4 font-black text-orange-400 flex items-center justify-center gap-2">
+                        <i data-lucide="camera" class="w-5 h-5"></i>
+                        Estimate Takeaway from Photo (Owner)
+                    </button>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <button onclick="openCopyPreviousDay()" class="bg-purple-600 text-white p-3 rounded-xl font-bold text-sm hover:bg-purple-700 flex items-center justify-center gap-2">
                             <i data-lucide="copy" class="w-4 h-4"></i>
@@ -1599,6 +1603,22 @@
     <!-- ========================================== -->
 
     <!-- MANUAL FOOD ENTRY MODAL -->
+    <div id="food-photo-estimate-modal" class="modal-overlay" style="z-index:235;" role="dialog" aria-modal="true" aria-labelledby="food-photo-estimate-title">
+        <div class="bg-white w-full max-w-lg rounded-[32px] p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <div><h3 id="food-photo-estimate-title" class="text-xl font-black">Estimate Food from Photo</h3><p class="text-xs text-slate-500 mt-2">For a takeaway or a meal you cannot weigh. The result is approximate.</p></div>
+                <button onclick="closeFoodPhotoEstimate()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl flex-shrink-0" aria-label="Close food photo estimate">×</button>
+            </div>
+            <label for="food-photo-estimate-input" class="block cursor-pointer rounded-2xl border-2 border-dashed border-orange-400 p-4 text-center font-bold text-orange-700">Take or choose a food photo</label>
+            <input id="food-photo-estimate-input" type="file" accept="image/*" capture="environment" onchange="previewFoodPhotoEstimate(event)" class="sr-only">
+            <img id="food-photo-estimate-preview" class="hidden w-full max-h-64 mt-3 rounded-2xl object-contain bg-slate-100" alt="Food selected for estimation">
+            <label for="food-photo-estimate-context" class="block mt-4 text-xs font-bold text-slate-600">What is in it? Portion size, sauces or shared items (optional)</label>
+            <textarea id="food-photo-estimate-context" maxlength="300" rows="2" placeholder="e.g. Large chicken kebab, garlic sauce, half the chips" class="w-full mt-2 p-3 rounded-xl bg-slate-50 border border-slate-200"></textarea>
+            <p class="text-xs text-slate-500 mt-3">Send the photo to OpenAI only when you tap Estimate. The photo is not saved in your diary. Review and edit the estimate before adding it.</p>
+            <p id="food-photo-estimate-status" class="text-xs font-bold text-slate-500 mt-3" role="status"></p>
+            <button id="food-photo-estimate-submit" onclick="requestFoodPhotoEstimate()" class="w-full bg-orange-600 text-white p-4 rounded-2xl font-black mt-4 disabled:opacity-50" disabled>Estimate Calories &amp; Protein</button>
+        </div>
+    </div>
     <!-- PERSONAL MANUAL FOOD LOG -->
     <div id="manual-diary-food-modal" class="modal-overlay" style="z-index:230;" role="dialog" aria-modal="true" aria-labelledby="manual-diary-food-title">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
@@ -1612,6 +1632,7 @@
                 <div><label for="diary-food-calories" class="text-xs font-bold text-slate-400 uppercase block mb-2">Calories (kcal)</label><input id="diary-food-calories" type="number" inputmode="decimal" required min="0" max="1000000" step="any" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
                 <div><label for="diary-food-protein" class="text-xs font-bold text-slate-400 uppercase block mb-2">Protein (g)</label><input id="diary-food-protein" type="number" inputmode="decimal" required min="0" max="1000000" step="any" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"></div>
             </div>
+            <p id="diary-food-photo-estimate-note" class="hidden text-xs text-orange-800 bg-orange-50 rounded-xl p-3 mb-4"></p>
             <div class="mb-4"><label for="diary-food-meal-type" class="text-xs font-bold text-slate-400 uppercase block mb-2">Meal</label><select id="diary-food-meal-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snack">Snack</option></select></div>
             <div class="mb-4 flex items-end gap-3"><label for="diary-food-time" class="flex-1 text-xs font-bold text-slate-500">Time eaten<input id="diary-food-time" type="time" oninput="suggestMealSlot('diary-food-time', 'diary-food-next-day', 'diary-food-meal-type')" class="mt-2 w-full p-3 bg-slate-50 rounded-xl font-bold"></label><label class="flex items-center gap-2 text-xs font-bold text-slate-500 pb-3"><input id="diary-food-next-day" type="checkbox" onchange="suggestMealSlot('diary-food-time', 'diary-food-next-day', 'diary-food-meal-type')"> Next day</label></div>
             <details id="diary-food-extra-details" class="mb-5">
@@ -3868,6 +3889,7 @@
                 <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total and keep your daily totals in Exercise Logs. It does not write to or alter your phone's health records.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
+                <p><b>Owner photo estimates:</b> If the verified owner chooses to estimate food from a photo, VFIT sends the photo and optional description to OpenAI. The photo is not saved in the diary. Only the reviewed nutrition values and estimate note are saved when the owner taps Add to Diary.</p>
             </div>
             <label class="flex items-center justify-between p-4 bg-slate-50 rounded-xl mb-3">
                 <span><b class="text-sm">Cloud health-data sync</b><span class="block text-[10px] text-slate-400">Turn off to keep future changes on this device</span></span>

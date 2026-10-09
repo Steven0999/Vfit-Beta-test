@@ -166,7 +166,7 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="font-bold text-sm truncate flex items-center gap-1">${escapeHtml(m.name)} <i data-lucide="pencil" class="w-3 h-3 text-slate-300"></i></div>
                                         <div class="text-xs text-slate-400">${m.mealTime ? escapeHtml(m.mealTime) + (m.mealNextDay ? ' next day · ' : ' · ') : ''}${Math.round(Number(m.calories) || 0)} cal • ${(Number(m.protein) || 0).toFixed(1)}g protein${amountLabel}</div>
-                                        <div class="text-xs text-slate-400">${(Number(m.carbs) || 0).toFixed(1)}g carbs • ${(Number(m.fat) || 0).toFixed(1)}g fat</div>
+                                        <div class="text-xs text-slate-400">${(Number(m.carbs) || 0).toFixed(1)}g carbs • ${(Number(m.fat) || 0).toFixed(1)}g fat${m.photoEstimated ? ' • Photo estimate' : ''}</div>
                                     </div>
                                 </div>
                                 <button onclick="removeMeal('${safeId}')" class="w-8 h-8 bg-red-50 text-red-500 rounded-lg text-sm flex-shrink-0 ml-2" aria-label="Remove ${escapeHtml(m.name || 'meal')}">×</button>
@@ -1721,6 +1721,121 @@
     // ==========================================================================
 
     let manualDiaryFoodSession = null;
+    let foodPhotoEstimateData = null;
+    let foodPhotoEstimateGeneration = 0;
+    let foodPhotoEstimateBusy = false;
+
+    function canEstimateFoodPhoto() {
+        return Boolean(isOwner() && currentUser.emailVerified &&
+            String(currentUser.email || '').trim().toLowerCase() === 'steven.vaughanrr@hotmail.co.uk');
+    }
+
+    function openFoodPhotoEstimate() {
+        if (!canEstimateFoodPhoto()) { showToast('Photo estimates are for the verified owner account only'); return; }
+        closeFoodPhotoEstimate();
+        document.getElementById('food-photo-estimate-modal').style.display = 'flex';
+    }
+
+    function closeFoodPhotoEstimate() {
+        foodPhotoEstimateGeneration += 1;
+        foodPhotoEstimateBusy = false;
+        foodPhotoEstimateData = null;
+        const modal = document.getElementById('food-photo-estimate-modal');
+        if (modal) modal.style.display = 'none';
+        const input = document.getElementById('food-photo-estimate-input');
+        if (input) input.value = '';
+        const context = document.getElementById('food-photo-estimate-context');
+        if (context) context.value = '';
+        const preview = document.getElementById('food-photo-estimate-preview');
+        if (preview) { preview.removeAttribute('src'); preview.classList.add('hidden'); }
+        const button = document.getElementById('food-photo-estimate-submit');
+        if (button) button.disabled = true;
+        const status = document.getElementById('food-photo-estimate-status');
+        if (status) status.textContent = '';
+    }
+
+    async function previewFoodPhotoEstimate(event) {
+        if (!canEstimateFoodPhoto()) return;
+        const file = event.target.files[0];
+        if (!file) return;
+        const generation = ++foodPhotoEstimateGeneration;
+        foodPhotoEstimateData = null;
+        document.getElementById('food-photo-estimate-submit').disabled = true;
+        const status = document.getElementById('food-photo-estimate-status');
+        status.textContent = 'Preparing photo…';
+        try {
+            if (!/^image\//i.test(file.type || '') || file.size > 20 * 1024 * 1024) {
+                throw new Error('Choose an image under 20 MB');
+            }
+            const photo = await compressImage(file, 1200, 550 * 1024);
+            if (generation !== foodPhotoEstimateGeneration || !canEstimateFoodPhoto()) return;
+            if (photo.length > 1300000) throw new Error('The compressed photo is too large. Choose a smaller image.');
+            foodPhotoEstimateData = photo;
+            const preview = document.getElementById('food-photo-estimate-preview');
+            preview.src = photo;
+            preview.classList.remove('hidden');
+            status.textContent = 'Photo ready. Add details if useful, then estimate.';
+            document.getElementById('food-photo-estimate-submit').disabled = false;
+        } catch (error) {
+            if (generation !== foodPhotoEstimateGeneration) return;
+            status.textContent = error.message || 'Could not prepare the photo.';
+            event.target.value = '';
+        }
+    }
+
+    async function requestFoodPhotoEstimate() {
+        if (!canEstimateFoodPhoto() || !foodPhotoEstimateData || foodPhotoEstimateBusy) return;
+        const callable = getBackendCallable('estimateFoodPhoto');
+        const status = document.getElementById('food-photo-estimate-status');
+        if (!callable || !navigator.onLine) {
+            status.textContent = 'An internet connection and the photo estimate service are required.';
+            return;
+        }
+        const generation = foodPhotoEstimateGeneration;
+        const uid = currentUser.uid;
+        const date = state.viewDate;
+        foodPhotoEstimateBusy = true;
+        const button = document.getElementById('food-photo-estimate-submit');
+        button.disabled = true;
+        status.textContent = 'Estimating the portion…';
+        try {
+            const response = await callable({
+                photo: foodPhotoEstimateData,
+                context: document.getElementById('food-photo-estimate-context').value.trim().slice(0, 300)
+            });
+            if (generation !== foodPhotoEstimateGeneration || !currentUser || currentUser.uid !== uid) return;
+            if (state.viewDate !== date) { status.textContent = 'The diary date changed. Open the photo again.'; return; }
+            const estimate = response && response.data;
+            if (!estimate || !estimate.foodName || !Number.isFinite(estimate.calories) || !Number.isFinite(estimate.proteinGrams)) {
+                throw new Error('The service did not return a usable estimate.');
+            }
+            closeFoodPhotoEstimate();
+            openManualDiaryFood();
+            document.getElementById('diary-food-name').value = estimate.foodName;
+            document.getElementById('diary-food-calories').value = estimate.calories;
+            document.getElementById('diary-food-protein').value = estimate.proteinGrams;
+            manualDiaryFoodSession.photoEstimate = {
+                portion: String(estimate.portionDescription || '').slice(0, 160),
+                uncertainty: String(estimate.uncertainty || '').slice(0, 300)
+            };
+            const note = document.getElementById('diary-food-photo-estimate-note');
+            note.textContent = `Photo estimate for ${manualDiaryFoodSession.photoEstimate.portion || 'this portion'}. ${manualDiaryFoodSession.photoEstimate.uncertainty} Check the calories and protein before adding.`;
+            note.classList.remove('hidden');
+            document.getElementById('manual-diary-food-title').textContent = 'Review Photo Estimate';
+        } catch (error) {
+            if (generation !== foodPhotoEstimateGeneration) return;
+            const code = String(error && error.code || '');
+            status.textContent = code.includes('failed-precondition') ? (error.message || 'Photo estimates are not configured yet.')
+                : code.includes('permission-denied') ? 'This feature is available only for the verified owner.'
+                : code.includes('resource-exhausted') ? 'Daily estimate limit reached. Try again tomorrow.'
+                : 'Could not estimate this food. Try again or enter it manually.';
+        } finally {
+            if (generation === foodPhotoEstimateGeneration) {
+                foodPhotoEstimateBusy = false;
+                button.disabled = !foodPhotoEstimateData;
+            }
+        }
+    }
 
     // Personal diary entries do not write to the shared food database, so they
     // work offline and do not depend on owner/editor permission resolution.
@@ -1741,6 +1856,12 @@
         document.getElementById('diary-food-extra-details').open = Boolean(existing && (existing.carbs || existing.fat || weight));
         document.getElementById('manual-diary-food-title').textContent = existing ? 'Edit Your Food' : 'Add Your Own Food';
         document.getElementById('diary-food-save-button').textContent = existing ? 'Save Changes' : 'Add to Diary';
+        const estimateNote = document.getElementById('diary-food-photo-estimate-note');
+        if (estimateNote) {
+            estimateNote.textContent = existing && existing.photoEstimated
+                ? `Photo estimate for ${existing.photoEstimatePortion || 'this portion'}. ${existing.photoEstimateUncertainty || ''} Review values before saving.` : '';
+            estimateNote.classList.toggle('hidden', !existing || !existing.photoEstimated);
+        }
         closeFoodDatabase();
         document.getElementById('manual-diary-food-modal').style.display = 'flex';
         document.getElementById('diary-food-name').focus();
@@ -1785,18 +1906,23 @@
         const index = session.id == null ? -1 : state.dailyMeals.findIndex(meal => String(meal.id) === String(session.id));
         if (session.id != null && index < 0) { showToast('This food entry no longer exists'); return; }
         const existing = index < 0 ? {} : state.dailyMeals[index];
+        const estimate = session.photoEstimate;
         const extraNutrients = {};
         ['fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol'].forEach(key => { extraNutrients[key] = nutritionNumber(existing[key]); });
         const totals = Object.assign({}, extraNutrients, nutrients);
         const meal = Object.assign({}, existing, totals, {
             id: existing.id || Date.now() + Math.random(),
             date: session.date, name: name.slice(0, 160), type: mealType, mealType,
-            amount: 1, amountType: 'portion', servingGrams, servingLabel: '1 serving',
+            amount: 1, amountType: 'portion', servingGrams,
+            servingLabel: estimate || existing.photoEstimated ? '1 estimated portion' : '1 serving',
             mealTime,
             mealNextDay: Boolean(mealTime && (document.getElementById('diary-food-next-day').checked ||
                 mealClockMinutes(mealTime) < mealScheduleForDate(session.date).wake)),
             manualEntry: true,
-            base: Object.assign({}, totals, { isCustom: true, serving: '1 serving' })
+            photoEstimated: Boolean(estimate || existing.photoEstimated),
+            photoEstimatePortion: estimate ? estimate.portion : (existing.photoEstimatePortion || ''),
+            photoEstimateUncertainty: estimate ? estimate.uncertainty : (existing.photoEstimateUncertainty || ''),
+            base: Object.assign({}, totals, { isCustom: true, serving: estimate || existing.photoEstimated ? '1 estimated portion' : '1 serving' })
         });
         if (index < 0) state.dailyMeals.push(meal);
         else state.dailyMeals[index] = meal;

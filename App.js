@@ -10,6 +10,7 @@
         if (!user) {
             stopMembershipSync();
             closeManualDiaryFood();
+            closeFoodPhotoEstimate();
             if (typeof teardownDailyReadinessPrompt === 'function') teardownDailyReadinessPrompt();
             if (typeof teardownStepTracking === 'function') teardownStepTracking();
             if (typeof finishRunOnSignOut === 'function') finishRunOnSignOut();
@@ -44,6 +45,7 @@
         stopSharedFoodDatabaseSync();
         stopMembershipSync();
         closeManualDiaryFood();
+        closeFoodPhotoEstimate();
         currentUser = user;
         currentUserIsOwner = false;
         currentUserCanManageFoodDatabase = false;

@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.46';
+    const VFIT_APP_VERSION = '2.1.0-beta.47';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -273,6 +273,11 @@
 
     function updateFoodDatabasePermissionUI() {
         const canManage = canManageFoodDatabase();
+        const photoEstimateButton = document.getElementById('search-estimate-food-photo');
+        if (photoEstimateButton) photoEstimateButton.classList.toggle('hidden', !(
+            isOwner() && currentUser.emailVerified &&
+            String(currentUser.email || '').trim().toLowerCase() === 'steven.vaughanrr@hotmail.co.uk'
+        ));
         const addButton = document.getElementById('food-database-add-button');
         if (addButton) addButton.classList.toggle('hidden', !canManage);
         const manualSection = document.getElementById('food-manual-entry-section');
