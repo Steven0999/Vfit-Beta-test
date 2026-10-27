@@ -205,7 +205,16 @@ const expose = `
   copiedMealNutritionForAmount,
   getAllLoggedFoods,
   copiedFoodIdentityKey,
+  copyMealsForDate,
   loadPreviousDayMeals,
+  searchPastFoods,
+  togglePastFood,
+  confirmCopyFoodStep,
+  skipCopyFoodStep,
+  cancelCopyFoodSteps,
+  closeCopyPreviousDay,
+  copyFoodStepDebug: () => copyFoodSteps && ({ index: copyFoodSteps.index, added: copyFoodSteps.added, total: copyFoodSteps.products.length, targetDate: copyFoodSteps.targetDate }),
+  selectedCopyCount: () => selectedPreviousMeals.length,
   createdMealFoodModel,
   readCreatedMealWeights,
   addCreatedMealToDiary,
@@ -1153,7 +1162,8 @@ assert.equal(weightAsOneAndHalfServings.totals.calories, 300);
 assert.equal(weightAsOneAndHalfServings.totals.protein, 15);
 
 // Packet values survive copying even when the food database or serving basis
-// has changed since the original day; identical names retain separate entries.
+// has changed since the original day. Product choices ignore old portions;
+// each selected product is then given a fresh amount and meal slot.
 const packetDay = '2026-10-01';
 const packetMeal = { id: 901, date: packetDay, name: 'Protein bar', mealType: 'lunch',
   amount: 2, amountType: 'portion', servingGrams: 40, servingLabel: '1 bar',
@@ -1166,26 +1176,130 @@ copyState.viewDate = '2026-10-05';
 copyState.nutritionHistory = [{ date: packetDay, meals: [packetMeal] }];
 copyState.dailyMeals = [{ ...packetMeal, id: 902, date: '2026-10-02', amount: 1 }];
 app.setState(copyState);
-assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 2);
+assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 1);
 copyState.dailyMeals.push({ ...packetMeal, id: 903, date: '2026-10-03', mealType: 'snack', mealTime: '18:00' });
 copyState.nutritionHistory[0].meals.push({ ...packetMeal, id: 904 });
-assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 2, 'identical food/weight/nutrition should be listed once across dates');
+assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 1, 'different historical weights share one product choice');
 document.getElementById('copy-date-select').value = packetDay;
 app.loadPreviousDayMeals();
 assert.equal((document.getElementById('previous-meals-list').innerHTML.match(/data-idx=/g) || []).length, 1, 'identical entries on one day share one choice');
-assert.notEqual(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, amount: 3 }), 'different consumed weights stay separate');
-assert.notEqual(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, per100g: { calories: 510, protein: 25 } }), 'different packet figures stay separate');
+assert.equal(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, amount: 3 }), 'amounts are entered after product selection');
+assert.equal(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, per100g: { calories: 510, protein: 25 } }), 'a product has one choice even if older label data differs');
+assert.notEqual(app.copiedFoodIdentityKey({ ...packetMeal, brand: 'Brand A' }), app.copiedFoodIdentityKey({ ...packetMeal, brand: 'Brand B' }));
+app.searchPastFoods('protein');
+assert.ok(!document.getElementById('past-food-results').innerHTML.replace(/<[^>]*>/g, '').includes('kcal'), 'product choices should not display the old portion nutrition');
 app.togglePreviousMeal({ checked: true }, 0, packetDay);
 app.togglePreviousMeal({ checked: true }, 1, packetDay);
 const beforeCopiedCount = copyState.dailyMeals.length;
+document.getElementById('copy-target-date').value = copyState.viewDate;
 app.copySelectedMeals();
-assert.equal(copyState.dailyMeals.length, beforeCopiedCount + 1, 'the same food cannot be selected twice through duplicate history entries');
+assert.equal(copyState.dailyMeals.length, beforeCopiedCount, 'selection must not add any product before its amount is confirmed');
+assert.equal(document.getElementById('copy-food-step-amount').value, '');
+assert.equal(document.getElementById('copy-food-step-meal-type').value, '');
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.length, beforeCopiedCount, 'an empty amount must not advance');
+for (const value of ['0', '-5', 'Infinity', '100001']) {
+  document.getElementById('copy-food-step-amount').value = value;
+  document.getElementById('copy-food-step-meal-type').value = 'breakfast';
+  app.confirmCopyFoodStep();
+  assert.equal(copyState.dailyMeals.length, beforeCopiedCount, 'invalid gram amounts must not add foods');
+}
+document.getElementById('copy-food-step-amount').value = '60';
+document.getElementById('copy-food-step-meal-type').value = '';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.length, beforeCopiedCount, 'a meal slot is required for each product');
+document.getElementById('copy-food-step-meal-type').value = 'breakfast';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.length, beforeCopiedCount + 1);
 const copiedPacketMeal = copyState.dailyMeals.at(-1);
 assert.equal(copiedPacketMeal.date, copyState.viewDate);
 assert.equal(copiedPacketMeal.copiedFromDate, packetDay);
-assert.equal(copiedPacketMeal.amount, 2);
+assert.equal(copiedPacketMeal.amount, 60);
+assert.equal(copiedPacketMeal.amountType, 'grams');
+assert.equal(copiedPacketMeal.mealType, 'breakfast');
+assert.equal(copiedPacketMeal.calories, 300);
+assert.equal(copiedPacketMeal.protein, 15);
 assert.equal(copiedPacketMeal.servingGrams, 40);
 assert.equal(copiedPacketMeal.per100g.calories, 500);
+
+const bananaProduct = { id: 910, date: packetDay, name: 'Banana', amount: 100, amountType: 'grams',
+  calories: 90, protein: 1, carbs: 20, fat: 0.2, servingGrams: 100, per100g: { calories: 90, protein: 1, carbs: 20, fat: 0.2 } };
+app.togglePastFood({ checked: true }, packetMeal);
+app.togglePastFood({ checked: true }, bananaProduct);
+document.getElementById('copy-target-date').value = '2026-10-08';
+app.copySelectedMeals();
+assert.equal(app.copyFoodStepDebug().total, 2);
+document.getElementById('copy-food-step-amount').value = '80';
+document.getElementById('copy-food-step-meal-type').value = 'lunch';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.at(-1).date, '2026-10-08');
+assert.equal(copyState.dailyMeals.at(-1).calories, 400);
+assert.equal(app.copyFoodStepDebug().index, 1);
+assert.equal(document.getElementById('copy-food-step-name').textContent, 'Banana');
+assert.equal(document.getElementById('copy-food-step-amount').value, '', 'the next product must not inherit the previous amount');
+assert.equal(document.getElementById('copy-food-step-meal-type').value, '', 'the next product requires its own meal slot');
+const countAfterFirstStep = copyState.dailyMeals.length;
+app.cancelCopyFoodSteps();
+assert.equal(app.selectedCopyCount(), 1);
+assert.equal(copyState.dailyMeals.length, countAfterFirstStep, 'returning to products keeps already confirmed diary entries');
+app.copySelectedMeals();
+copyState.viewDate = '2026-10-09';
+document.getElementById('copy-food-step-amount').value = '120';
+document.getElementById('copy-food-step-meal-type').value = 'dinner';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.at(-1).name, 'Banana');
+assert.equal(copyState.dailyMeals.at(-1).date, '2026-10-08', 'the selected target date stays fixed through the steps');
+assert.equal(copyState.dailyMeals.at(-1).calories, 108);
+assert.equal(copyState.dailyMeals.at(-1).mealType, 'dinner');
+assert.equal(app.copyFoodStepDebug(), null);
+assert.equal(packetMeal.amount, 2, 'the source portion remains unchanged');
+
+app.togglePastFood({ checked: true }, { id: 911, date: packetDay, name: 'Manual cake', manualEntry: true,
+  calories: 300, protein: 10, amount: 1, amountType: 'portion', servingGrams: 0 });
+app.copySelectedMeals();
+document.getElementById('copy-food-step-amount').value = '150';
+document.getElementById('copy-food-step-meal-type').value = 'snack';
+const beforeReference = copyState.dailyMeals.length;
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.length, beforeReference, 'missing source weight must not be guessed as 100g');
+document.getElementById('copy-food-reference-weight').value = '100';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.at(-1).calories, 450);
+assert.equal(copyState.dailyMeals.at(-1).protein, 15);
+
+app.togglePastFood({ checked: true }, { id: 912, date: packetDay, name: 'Drink', basisUnit: 'ml', amount: 150, amountType: 'grams',
+  servingGrams: 100, calories: 60, protein: 0, per100g: { calories: 40, protein: 0 } });
+app.copySelectedMeals();
+assert.equal(document.getElementById('copy-food-step-unit').textContent, 'ml');
+document.getElementById('copy-food-step-amount').value = '250';
+document.getElementById('copy-food-step-meal-type').value = 'snack';
+app.confirmCopyFoodStep();
+assert.equal(copyState.dailyMeals.at(-1).calories, 100);
+assert.equal(copyState.dailyMeals.at(-1).basisUnit, 'ml');
+app.togglePastFood({ checked: true }, bananaProduct); app.copySelectedMeals();
+const beforeSkip = copyState.dailyMeals.length;
+app.skipCopyFoodStep();
+assert.equal(copyState.dailyMeals.length, beforeSkip);
+assert.equal(app.copyFoodStepDebug(), null);
+
+const archiveCopyState = app.defaultState(); archiveCopyState.viewDate = '2026-10-05';
+archiveCopyState.nutritionHistory = [{ date: '2026-10-02', meals: [{ id: 'archive-food', name: 'Original saved food', calories: 120, protein: 6 }] }];
+app.setState(archiveCopyState);
+app.togglePastFood({ checked: true }, bananaProduct);
+document.getElementById('copy-target-date').value = '2026-10-02';
+app.copySelectedMeals();
+document.getElementById('copy-food-step-amount').value = '100'; document.getElementById('copy-food-step-meal-type').value = 'breakfast';
+app.confirmCopyFoodStep();
+assert.equal(archiveCopyState.nutritionHistory.find(day => day.date === '2026-10-02').meals.length, 2, 'adding to an archived date must preserve its existing foods');
+app.togglePastFood({ checked: true }, bananaProduct); app.copySelectedMeals();
+const beforeSwitchAccount = archiveCopyState.dailyMeals.length;
+app.setUser({ uid: 'different-copy-account' });
+document.getElementById('copy-food-step-amount').value = '100'; document.getElementById('copy-food-step-meal-type').value = 'snack';
+app.confirmCopyFoodStep();
+assert.equal(archiveCopyState.dailyMeals.length, beforeSwitchAccount, 'queued foods cannot cross account boundaries');
+assert.equal(app.copyFoodStepDebug(), null);
+app.setUser(null);
+app.setState(copyState); app.selectNutritionDate('2026-10-05');
 
 const daySchedule = app.mealScheduleForDate('2026-10-05');
 assert.deepEqual(Array.from(daySchedule.breakfast), [420, 660]);

@@ -1982,11 +1982,13 @@
     // COPY FROM PREVIOUS DAY
     // ==========================================================================
 
+    let copyFoodSteps = null;
+
     function openCopyPreviousDay() {
         const sel = document.getElementById('copy-date-select');
         if (!sel) return;
 
-        const datesWithMeals = [...new Set((state.nutritionHistory || []).map(h => h.date))].sort().reverse();
+        const datesWithMeals = [...new Set([...(state.nutritionHistory || []).map(h => h.date), ...(state.dailyMeals || []).map(m => m.date)].filter(Boolean))].sort().reverse();
 
         if (datesWithMeals.length === 0) {
             showToast('No previous nutrition history found');
@@ -2001,12 +2003,17 @@
 
         document.getElementById('previous-meals-list').innerHTML = '';
         selectedPreviousMeals = [];
+        document.getElementById('copy-target-date').value = state.viewDate || localDateKey();
+        clearPastFoodSearch();
+        updateCopyFoodSelection();
         document.getElementById('copy-previous-day-modal').style.display = 'flex';
     }
 
     function closeCopyPreviousDay() {
         document.getElementById('copy-previous-day-modal').style.display = 'none';
         selectedPreviousMeals = [];
+        copyFoodSteps = null;
+        document.getElementById('copy-food-step-modal').style.display = 'none';
         // Reset the search box
         const input = document.getElementById('copy-search-input');
         if (input) input.value = '';
@@ -2018,30 +2025,24 @@
 
     function copiedFoodIdentityKey(meal) {
         const normalText = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
-        const normalNumber = value => Math.round(copiedMealNumber(value) * 1e8) / 1e8;
-        const bases = copiedMealNutritionBases(meal);
-        const knownWeight = copiedMealNumber(meal.servingGrams);
-        const amount = copiedMealNumber(meal.amount) || 1;
-        const weight = meal.amountType === 'grams' ? amount : knownWeight ? amount * knownWeight : null;
-        return JSON.stringify([
-            normalText(meal.name), normalText(meal.brand), String(meal.barcode || ''),
-            String(meal.createdMealId || ''), foodAmountUnit(meal),
-            weight === null ? [meal.amountType || 'portion', amount] : normalNumber(weight),
-            knownWeight, normalText(copiedMealServingLabel(meal.servingLabel || (meal.base && meal.base.serving))),
-            COPIED_MEAL_NUTRIENT_KEYS.map(key => normalNumber(copiedMealBaseValue(meal, key))),
-            COPIED_MEAL_NUTRIENT_KEYS.map(key => normalNumber(bases.per100g[key]))
-        ]);
+        if (meal.createdMealId) return JSON.stringify(['recipe', String(meal.createdMealId)]);
+        const linked = meal.databaseFoodId && (state.customFoods || []).find(food => String(food.id) === String(meal.databaseFoodId));
+        const barcode = normaliseBarcode(meal.barcode || linked && linked.barcode);
+        if (barcode) return JSON.stringify(['barcode', openFoodFactsBarcodeKey(barcode)]);
+        if (meal.databaseFoodId) return JSON.stringify(['database', String(meal.databaseFoodId)]);
+        if (meal.catalogId) return JSON.stringify(['catalogue', String(meal.catalogId)]);
+        return JSON.stringify(['product', normalText(meal.name), normalText(meal.brand)]);
     }
 
-    // Repeated identical foods share one choice, while different weights,
-    // serving definitions, brands and saved nutrition remain separate choices.
+    // One representative per product. A new amount and meal slot are chosen
+    // after selection; the newest saved product data supplies the nutrition.
     function getAllLoggedFoods() {
         const all = [];
         (state.dailyMeals || []).forEach(m => all.push({ meal: m, when: m.id || Date.now() }));
         (state.nutritionHistory || []).forEach(day => {
             (day.meals || []).forEach(m => all.push({ meal: { ...m, date: m.date || day.date }, when: day.date }));
         });
-        all.sort((a, b) => String(b.meal.date || '').localeCompare(String(a.meal.date || '')) || String(b.when).localeCompare(String(a.when)));
+        all.sort((a, b) => String(b.meal.date || '').localeCompare(String(a.meal.date || '')) || (Number(b.meal.id) || 0) - (Number(a.meal.id) || 0));
 
         const seen = new Set();
         const out = [];
@@ -2059,7 +2060,7 @@
     /**
      * Search the user's previously-logged foods by name and show matches with
      * checkboxes. Selecting one adds it to the same selectedPreviousMeals list
-     * that "Copy to Today" reads from.
+     * reviewed one at a time after the member chooses their products.
      */
     function searchPastFoods(query) {
         const results = document.getElementById('past-food-results');
@@ -2068,6 +2069,7 @@
 
         const q = query.trim().toLowerCase();
         if (clearBtn) clearBtn.classList.toggle('hidden', q.length === 0);
+        document.getElementById('previous-meals-list').classList.toggle('hidden', q.length > 0);
 
         if (q.length === 0) {
             results.innerHTML = '';
@@ -2087,13 +2089,13 @@
             const image = safeImageUrl(m.image);
             return `
                 <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100">
-                    <input type="checkbox" ${isSel ? 'checked' : ''} onchange='togglePastFood(this, ${safe})' class="w-5 h-5 accent-indigo-600 flex-shrink-0">
+                    <input type="checkbox" data-copy-product="${escapeHtml(copyMealSelectionKey(m))}" ${isSel ? 'checked' : ''} onchange='togglePastFood(this, ${safe})' class="w-5 h-5 accent-indigo-600 flex-shrink-0">
                     <div class="w-10 h-10 bg-white rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center">
                         ${image ? `<img src="${escapeHtml(image)}" alt="" loading="lazy" class="w-full h-full object-contain" onerror="this.style.display='none'">` : '<i data-lucide="utensils" class="w-5 h-5 text-slate-300"></i>'}
                     </div>
                     <div class="flex-1 min-w-0">
                         <p class="font-bold text-sm truncate">${escapeHtml(m.name)}</p>
-                        <p class="text-xs text-slate-400">${escapeHtml(m.date || '')} · ${escapeHtml(m.amount || 1)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving(s)'} · ${Math.round(Number(m.calories) || 0)} kcal</p>
+                        ${m.brand ? `<p class="text-xs text-slate-400">${escapeHtml(m.brand)}</p>` : ''}
                     </div>
                 </label>`;
         }).join('');
@@ -2106,14 +2108,30 @@
             if (!selectedPreviousMeals.some(s => copyMealSelectionKey(s) === key)) {
                 selectedPreviousMeals.push({ ...meal });
             }
-            showToast('Added — tap "Copy to Today" to confirm');
         } else {
             selectedPreviousMeals = selectedPreviousMeals.filter(s => copyMealSelectionKey(s) !== key);
         }
+        updateCopyFoodSelection();
     }
 
     function copyMealSelectionKey(meal) {
         return copiedFoodIdentityKey(meal);
+    }
+
+    function updateCopyFoodSelection() {
+        const keys = new Set(selectedPreviousMeals.map(copyMealSelectionKey));
+        const count = document.getElementById('copy-selection-count');
+        const button = document.getElementById('copy-review-button');
+        if (count) count.textContent = `${keys.size} product${keys.size === 1 ? '' : 's'} selected`;
+        if (button) { button.disabled = !keys.size; button.textContent = 'Review selected foods'; }
+        document.querySelectorAll('[data-copy-product]').forEach(input => { input.checked = keys.has(input.dataset.copyProduct); });
+    }
+
+    function copyMealsForDate(date) {
+        const entry = (state.nutritionHistory || []).find(h => h.date === date);
+        return [...(state.dailyMeals || []).filter(meal => meal.date === date), ...(entry && entry.meals || [])]
+            .map(meal => ({ ...meal, date: meal.date || date }))
+            .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
     }
 
     function clearPastFoodSearch() {
@@ -2123,14 +2141,14 @@
         if (clearBtn) clearBtn.classList.add('hidden');
         const results = document.getElementById('past-food-results');
         if (results) results.innerHTML = '';
+        document.getElementById('previous-meals-list').classList.remove('hidden');
     }
 
     function loadPreviousDayMeals() {
         const date = document.getElementById('copy-date-select').value;
-        if (!date) return;
+        if (!date) { document.getElementById('previous-meals-list').innerHTML = ''; return; }
 
-        const entry = (state.nutritionHistory || []).find(h => h.date === date);
-        const meals = entry ? entry.meals : [];
+        const meals = copyMealsForDate(date);
 
         const container = document.getElementById('previous-meals-list');
         if (meals.length === 0) {
@@ -2145,20 +2163,18 @@
             seen.add(key); return true;
         }).map(({ m, i }) => `
             <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100">
-                <input type="checkbox" data-idx="${i}" data-meal-id="${escapeHtml(m.id)}" ${selectedPreviousMeals.some(item => copyMealSelectionKey(item) === copyMealSelectionKey(m)) ? 'checked' : ''} onchange="togglePreviousMeal(this, ${i}, '${escapeJsString(date)}')" class="w-5 h-5 accent-indigo-600">
+                <input type="checkbox" data-copy-product="${escapeHtml(copyMealSelectionKey(m))}" data-idx="${i}" data-meal-id="${escapeHtml(m.id)}" ${selectedPreviousMeals.some(item => copyMealSelectionKey(item) === copyMealSelectionKey(m)) ? 'checked' : ''} onchange="togglePreviousMeal(this, ${i}, '${escapeJsString(date)}')" class="w-5 h-5 accent-indigo-600">
                 <div class="flex-1">
                     <p class="font-bold text-sm">${escapeHtml(m.name)}</p>
-                    <p class="text-xs text-slate-400">${escapeHtml(m.mealType)} · ${escapeHtml(m.amount || 1)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving(s)'} · ${Math.round(Number(m.calories) || 0)} kcal</p>
+                    ${m.brand ? `<p class="text-xs text-slate-400">${escapeHtml(m.brand)}</p>` : ''}
                 </div>
-                <button onclick="editPreviousMealItem(${i}, '${escapeJsString(date)}'); event.preventDefault();" class="text-xs text-indigo-600 font-bold">Edit</button>
             </label>
         `).join('');
     }
 
     function togglePreviousMeal(checkbox, idx, date) {
-        const entry = (state.nutritionHistory || []).find(h => h.date === date);
-        if (!entry) return;
-        const meal = entry.meals[idx];
+        const meal = copyMealsForDate(date)[idx];
+        if (!meal) return;
         if (checkbox.checked) {
             if (!selectedPreviousMeals.some(m => copyMealSelectionKey(m) === copyMealSelectionKey({ ...meal, date }))) {
                 selectedPreviousMeals.push({ ...meal, date });
@@ -2166,6 +2182,7 @@
         } else {
             selectedPreviousMeals = selectedPreviousMeals.filter(m => copyMealSelectionKey(m) !== copyMealSelectionKey({ ...meal, date }));
         }
+        updateCopyFoodSelection();
     }
 
     const COPIED_MEAL_NUTRIENT_KEYS = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol'];
@@ -2401,23 +2418,138 @@
     }
 
     function copySelectedMeals() {
-        if (selectedPreviousMeals.length === 0) { showToast('Pick at least one meal'); return; }
-        const count = selectedPreviousMeals.length;
-        selectedPreviousMeals.forEach(m => {
-            state.dailyMeals.push({
-                ...m,
-                id: Date.now() + Math.random(),
-                date: state.viewDate,
-                copiedFromDate: m.copiedFromDate || m.date,
-                per100g: m.manualEntry && !copiedMealNumber(m.servingGrams) ? null : copiedMealNutritionBases(m).per100g
-            });
+        if (!selectedPreviousMeals.length) { showToast('Pick at least one product'); return; }
+        const targetDate = document.getElementById('copy-target-date').value || state.viewDate || localDateKey();
+        const parsedDate = new Date(targetDate + 'T12:00:00Z');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== targetDate) { showToast('Choose a valid diary date'); return; }
+        const seen = new Set();
+        const products = selectedPreviousMeals.filter(meal => {
+            const key = copyMealSelectionKey(meal);
+            if (seen.has(key)) return false;
+            seen.add(key); return true;
+        }).map(meal => JSON.parse(JSON.stringify(meal)));
+        copyFoodSteps = { products, targetDate, index: 0, added: 0, ownerUid: currentUser && currentUser.uid || '' };
+        document.getElementById('copy-previous-day-modal').style.display = 'none';
+        renderCopyFoodStep();
+    }
+
+    function copiedProductHasWeightBasis(meal) {
+        return Boolean(copiedMealNumber(meal.servingGrams)
+            || (meal.amountType === 'grams' && copiedMealNumber(meal.amount))
+            || (meal.per100g && Number.isFinite(Number(meal.per100g.calories)) && Number(meal.per100g.calories) >= 0 && meal.per100g.calories !== null && meal.per100g.calories !== '')
+            || (meal.base && meal.base.isCustom === false));
+    }
+
+    function copyFoodStepAccountMatches() {
+        if (!copyFoodSteps) return false;
+        if (copyFoodSteps.ownerUid === (currentUser && currentUser.uid || '')) return true;
+        closeCopyPreviousDay();
+        showToast('Reopen Copy Food for this account');
+        return false;
+    }
+
+    function renderCopyFoodStep() {
+        if (!copyFoodStepAccountMatches()) return;
+        const flow = copyFoodSteps;
+        if (flow.index >= flow.products.length) {
+            const count = flow.added, date = flow.targetDate;
+            closeCopyPreviousDay();
+            showToast(`${count} food${count === 1 ? '' : 's'} added to ${date}`);
+            return;
+        }
+        const meal = flow.products[flow.index], unit = foodAmountUnit(meal);
+        document.getElementById('copy-food-step-progress').textContent = `Food ${flow.index + 1} of ${flow.products.length} · ${flow.targetDate}`;
+        document.getElementById('copy-food-step-name').textContent = meal.name;
+        document.getElementById('copy-food-step-brand').textContent = meal.brand || '';
+        document.getElementById('copy-food-step-amount').value = '';
+        document.getElementById('copy-food-step-unit').textContent = unit;
+        document.getElementById('copy-food-step-amount-label').textContent = unit === 'ml' ? 'How much did you have? (ml)' : 'How much did you have? (grams)';
+        document.getElementById('copy-food-step-meal-type').value = '';
+        document.getElementById('copy-food-reference-field').classList.toggle('hidden', copiedProductHasWeightBasis(meal));
+        document.getElementById('copy-food-reference-weight').value = '';
+        document.getElementById('copy-food-reference-label').textContent = `Weight of the saved portion (${unit})`;
+        document.getElementById('copy-food-reference-help').textContent = `This food was saved without a weight. Enter the ${unit} for its original ${Math.round(copiedMealNumber(meal.calories))} kcal portion so the new amount can be calculated.`;
+        document.getElementById('copy-food-step-confirm').textContent = flow.index === flow.products.length - 1 ? 'Add to diary and finish' : 'Add to diary and next food';
+        document.getElementById('copy-food-step-modal').style.display = 'flex';
+        updateCopyFoodStepPreview();
+        document.getElementById('copy-food-step-amount').focus();
+    }
+
+    function copyFoodStepPer100g(meal) {
+        if (copiedProductHasWeightBasis(meal)) return copiedMealNutritionBases(meal).per100g;
+        const referenceWeight = Number(document.getElementById('copy-food-reference-weight').value);
+        if (!Number.isFinite(referenceWeight) || referenceWeight <= 0 || referenceWeight > 100000) return null;
+        const values = {};
+        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { values[key] = copiedMealBaseValue(meal, key) * 100 / referenceWeight; });
+        return values;
+    }
+
+    function updateCopyFoodStepPreview() {
+        if (!copyFoodSteps) return;
+        const meal = copyFoodSteps.products[copyFoodSteps.index];
+        const amount = Number(document.getElementById('copy-food-step-amount').value);
+        const values = meal && copyFoodStepPer100g(meal);
+        const valid = values && Number.isFinite(amount) && amount > 0 && amount <= 100000;
+        ['calories', 'protein', 'carbs', 'fat'].forEach(key => {
+            document.getElementById('copy-food-preview-' + key).textContent = valid
+                ? (key === 'calories' ? Math.round(values[key] * amount / 100) : (values[key] * amount / 100).toFixed(1) + 'g') : '—';
         });
+    }
+
+    function confirmCopyFoodStep() {
+        if (!copyFoodStepAccountMatches()) return;
+        const flow = copyFoodSteps, meal = flow.products[flow.index];
+        const amount = Number(document.getElementById('copy-food-step-amount').value);
+        const mealType = document.getElementById('copy-food-step-meal-type').value;
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) { showToast('Enter the amount you ate'); document.getElementById('copy-food-step-amount').focus(); return; }
+        if (!['breakfast', 'lunch', 'dinner', 'snack'].includes(mealType)) { showToast('Choose breakfast, lunch, dinner or snack'); document.getElementById('copy-food-step-meal-type').focus(); return; }
+        const per100g = copyFoodStepPer100g(meal);
+        if (!per100g) { showToast('Enter the weight of the saved portion first'); document.getElementById('copy-food-reference-weight').focus(); return; }
+        const totals = {};
+        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { totals[key] = copiedMealNumber(per100g[key]) * amount / 100; });
+        const referenceWeight = copiedMealNumber(document.getElementById('copy-food-reference-weight').value);
+        const servingGrams = copiedMealNumber(meal.servingGrams) || (referenceWeight ? referenceWeight / (meal.amountType === 'grams' ? 1 : copiedMealNumber(meal.amount) || 1) : 100);
+        // Older diary days may exist only in the archive. Restore that day's
+        // records before appending so auto-save does not replace them.
+        if (!(state.dailyMeals || []).some(item => item.date === flow.targetDate)) {
+            const archived = (state.nutritionHistory || []).find(day => day.date === flow.targetDate);
+            (archived && archived.meals || []).forEach(item => state.dailyMeals.push({ ...item, date: flow.targetDate }));
+        }
+        state.dailyMeals.push({ ...meal, ...totals, id: Date.now() + Math.random(),
+            date: flow.targetDate, type: mealType, mealType, amount, amountType: 'grams',
+            basisUnit: foodAmountUnit(meal), servingGrams,
+            servingLabel: copiedMealServingLabel(meal.servingLabel || (meal.base && meal.base.serving)),
+            base: { ...per100g, isCustom: false, serving: '100' + foodAmountUnit(meal) }, per100g: { ...per100g },
+            sodium: totals.sodiumMg / 1000, mealTime: '', mealNextDay: false,
+            copiedFromDate: meal.copiedFromDate || meal.date,
+            createdAt: new Date().toISOString()
+        });
+        if (state.viewDate !== flow.targetDate) selectNutritionDate(flow.targetDate);
         saveState();
         autoSaveNutrition();
-        closeCopyPreviousDay();
         renderDiary();
         renderDashboard();
-        showToast(`Copied ${count} meals to today!`);
+        flow.added += 1; flow.index += 1;
+        renderCopyFoodStep();
+    }
+
+    function skipCopyFoodStep() {
+        if (!copyFoodStepAccountMatches()) return;
+        copyFoodSteps.index += 1;
+        renderCopyFoodStep();
+    }
+
+    function cancelCopyFoodSteps() {
+        if (!copyFoodStepAccountMatches()) return;
+        const flow = copyFoodSteps;
+        selectedPreviousMeals = flow.products.slice(flow.index);
+        copyFoodSteps = null;
+        document.getElementById('copy-food-step-modal').style.display = 'none';
+        document.getElementById('copy-target-date').value = flow.targetDate;
+        document.getElementById('copy-previous-day-modal').style.display = 'flex';
+        loadPreviousDayMeals();
+        searchPastFoods(document.getElementById('copy-search-input').value || '');
+        updateCopyFoodSelection();
     }
 
     // ==========================================================================
