@@ -1,0 +1,38 @@
+name: Publish VFIT beta.49 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-49.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.49 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 40436599307 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo '0fe0afa4039eac41933f1b8254eb78314c1c66061aeac261eb7e7248b4b757ab  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.49-debug.apk
+          gh release create v2.1.0-beta.49 \
+            dist/VFIT-beta.49-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target f84250b2506c770693aa490873affdacaa726f3e \
+            --title 'VFIT 2.1.0 beta.49' \
+            --notes 'Copy Food now lists each product once and reviews grams and meal slot one product at a time for the chosen diary date. Confirmed foods are saved before the next product. Created meal weights and servings, and home bodyweight reps and RIR, remain available. Android debug APK for beta testing.' \
+            --prerelease
