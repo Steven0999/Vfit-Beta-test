@@ -1,6 +1,6 @@
 # VFIT Beta
 
-VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.47` adds a reviewed photo-based food estimate for the verified owner account. Meal windows follow the diary wake time and can cross midnight for late and night shifts. Food copying preserves the original logged amount, serving size and saved per-100g values. Sports cardio logs include intensity, duration, estimated active calories and TDEE integration. Basic (£4.99/month), Platinum (£18.99/month), 1-to-1 Coaching (£97.99/month), and the existing payment setup remain available.
+VFIT is a mobile-first, shift-aware workout and nutrition app with coaching, offline storage and Firebase account sync. Version `2.1.0-beta.48` adds diary actions and cooked weight/optional serving sizes for created meals, hides identical entries in food-copy choices, removes training experience banner wording, and shows reps/RIR without a weight field for home bodyweight exercises. The reviewed owner photo-estimate flow, shift-aware meal windows, sports cardio, Basic (£4.99/month), Platinum (£18.99/month), 1-to-1 Coaching (£97.99/month) and payment setup remain available.
 
 
 ## What is included
@@ -102,6 +102,10 @@ git diff --check
 The checks cover module order/compilation, unique IDs/functions, inline handlers, pinned browser libraries, PWA assets, network-only private APIs, account-isolated local data, cloud/device reconciliation, all 124 safety records, seven-day planning, embedded scanner placement, durable photo references, coaching calculations and security-rule guardrails.
 
 ## Owned food database
+
+Create Meal requires the full finished meal weight, excluding its container, and accepts an optional serving size in grams. The recipe keeps its whole-meal nutrition totals. Its food popup, diary and planner calculate servings and custom grams from those totals and the saved cooked weight. Leaving serving size blank uses the whole meal as one serving. Older recipes ask for their finished weight on first diary use; their existing diary logs remain unchanged. Each saved recipe has **Add to Diary** and **Weight / serving** actions.
+
+Copy-food choices collapse records with the same food identity, consumed weight, serving definition and nutrition, ignoring log dates/IDs/times. Different weights, brands or saved packet values remain separate choices. Source history is retained. Home bodyweight exercises display reps and RIR at every training experience level; they store zero added load for compatibility with workout history and restoration. Resistance-band, weighted and gym exercises keep their weight controls. The training experience controls still tailor available functions without displaying the removed experience banner.
 
 The catalogue ships inside the Android APK and the PWA shell. Its 2,853 records come from the official Public Health England CoFID 2021 workbook, with all four required macros present. The importer excludes 34 records without a calorie or carbohydrate value rather than inventing those values. CoFID’s duplicate code `13-669` is kept as two separate food identities; mineral rows are joined by code and name. Source trace values are treated as zero, optional missing nutrients are labelled “Not reported”, and alcoholic drinks retain their per-100ml basis. The source URL, workbook SHA-256, licence and excluded record list are in the bundled JSON.
 

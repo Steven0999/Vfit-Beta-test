@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.47';
+    const VFIT_APP_VERSION = '2.1.0-beta.48';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -4838,9 +4838,10 @@ function fastingGuidanceHTML(onShift, shiftType) {
                     <div class="flex items-start justify-between gap-3 mb-3"><div><p class="text-[10px] font-black uppercase text-orange-600">My created shift meals</p><p class="text-xs text-slate-400 mt-1">Only meals you selected in Create Meal appear here.</p></div><span class="text-[10px] font-black text-orange-600 bg-orange-100 px-2 py-1 rounded-lg">${customMeals.length} saved</span></div>
                     <div class="space-y-2">
                         ${customMeals.map(meal => {
+                            const food = createdMealFoodModel(meal) || meal;
                             const mealType = validSlots.includes(meal.defaultMealType) ? meal.defaultMealType : (validSlots.includes(meal.plannedMealType) ? meal.plannedMealType : 'snack');
                             const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
-                            return `<div class="bg-orange-50 border border-orange-100 rounded-2xl p-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="font-bold text-sm truncate">${escapeHtml(meal.name || 'Created meal')}</p><p class="text-[11px] text-slate-500 mt-1">${Math.round(Number(meal.calories) || 0)} kcal · ${(Number(meal.protein) || 0).toFixed(1)}g protein · ${mealLabel}</p></div><button onclick="addCreatedMealToDiary('${escapeJsString(meal.id)}', '${targetDate}', '${mealType}')" class="flex-shrink-0 bg-slate-900 text-white px-3 py-2 rounded-xl font-bold text-[11px]">+ Add to diary</button></div></div>`;
+                            return `<div class="bg-orange-50 border border-orange-100 rounded-2xl p-3"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="font-bold text-sm truncate">${escapeHtml(meal.name || 'Created meal')}</p><p class="text-[11px] text-slate-500 mt-1">${Math.round(Number(food.calories) || 0)} kcal · ${(Number(food.protein) || 0).toFixed(1)}g protein · ${mealLabel}</p></div><button onclick="addCreatedMealToDiary('${escapeJsString(meal.id)}', '${targetDate}', '${mealType}')" class="flex-shrink-0 bg-slate-900 text-white px-3 py-2 rounded-xl font-bold text-[11px]">+ Add to diary</button></div></div>`;
                         }).join('')}
                     </div>
                 </div>`;

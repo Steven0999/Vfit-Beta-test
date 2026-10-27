@@ -1392,7 +1392,7 @@
         if (isSpecific) {
             title = selectedMuscles.length === 1 ? selectedMuscles[0] : selectedMuscles.join(' + ');
         } else {
-            title = mode === 'basic' ? 'Full Body Basics' : tier === 'beginner' ? 'Full Body' : focus;
+            title = mode === 'basic' || tier === 'beginner' ? 'Full Body' : focus;
         }
         title = envLabel + ' · ' + title;
 
@@ -1770,7 +1770,7 @@
                 // Capture partially-filled sets too (so nothing typed is lost)
                 sets.push({
                     reps: repsEl ? repsEl.value : '',
-                    weight: weightEl ? weightEl.value : '',
+                    weight: isHomeBodyweightExercise(name) ? '0' : weightEl ? weightEl.value : '',
                     rir: rirEl ? rirEl.value : ''
                 });
             });
@@ -1873,7 +1873,7 @@
                     const w = row.querySelector('.set-weight');
                     const rir = row.querySelector('.set-rir');
                     if (r) r.value = s.reps || '';
-                    if (w) w.value = s.weight || '';
+                    if (w) w.value = isHomeBodyweightExercise(ex.name) ? '0' : s.weight || '';
                     if (rir) rir.value = s.rir || '';
                 }
             });
@@ -2012,13 +2012,14 @@
         const setsContainer = document.createElement('div');
         setsContainer.id = `sets-${id}`;
         setsContainer.className = "bg-slate-50 p-3 sm:p-4 rounded-xl mb-3 sm:mb-4 min-h-[100px] w-full";
+        setsContainer.dataset.bodyweight = String(isHomeBodyweightExercise(name));
 
         const header = document.createElement('div');
         header.className = "flex gap-2 sm:gap-3 mb-2 sm:mb-3";
         const weightHeaderLabel = isAssistanceExercise(name) ? 'Assist (kg)' : 'Weight (kg)';
         header.innerHTML = `
             <div class="flex-1 text-center"><span class="text-xs sm:text-sm font-black text-slate-600 uppercase">Reps</span></div>
-            <div class="flex-1 text-center"><span class="text-xs sm:text-sm font-black text-slate-600 uppercase" id="weight-header-${id}">${weightHeaderLabel}</span></div>
+            <div class="flex-1 text-center ${isHomeBodyweightExercise(name) ? 'hidden' : ''}"><span class="text-xs sm:text-sm font-black text-slate-600 uppercase" id="weight-header-${id}">${weightHeaderLabel}</span></div>
             <div class="set-rir-label w-16 sm:w-20 text-center"><span class="text-xs sm:text-sm font-black text-amber-600 uppercase" title="Reps In Reserve">RIR</span></div>
             <div class="w-9 sm:w-10"></div>`;
         setsContainer.appendChild(header);
@@ -2191,8 +2192,11 @@
     function refreshExercisePB(id) {
         const input = document.getElementById(`ex-name-${id}`);
         const line = document.getElementById(`pb-line-${id}`);
-        if (!input || !line) return;
+        if (!input) return;
         const name = input.value.trim();
+        refreshExerciseLoadFields(id, name);
+        if (!line) return;
+        if (isHomeBodyweightExercise(name)) { line.innerHTML = ''; return; }
         if (!name) { line.textContent = ''; return; }
 
         const pr = getPersonalRecord(name);
@@ -2236,6 +2240,35 @@
     // Helper so refreshSetBadges works whether given the raw id or not
     function exerciseId(id) { return id; }
 
+    function isHomeBodyweightExercise(name) {
+        const environment = currentWorkoutContext && currentWorkoutContext.env || state.workoutEnv;
+        if (environment !== 'home') return false;
+        const normalise = value => String(value || '').toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+        const normal = normalise(name);
+        if (!normal || /\b(?:resistan\w*|bands?|weighted|dumbbells?|barbells?|kettlebells?|cables?|machines?|assisted|assist)\b/.test(normal)) return false;
+        if (/\bbodyweight\b/.test(normal)) return true;
+        return Object.values(EXERCISE_DB.home).some(group => [...(group.compound || []), ...(group.isolation || [])].some(exercise => normalise(exercise) === normal));
+    }
+
+    function refreshExerciseLoadFields(id, name) {
+        const container = document.getElementById(`sets-${id}`);
+        if (!container) return;
+        const bodyweight = isHomeBodyweightExercise(name);
+        container.dataset.bodyweight = String(bodyweight);
+        const header = document.getElementById(`weight-header-${id}`);
+        if (header && header.parentElement) header.parentElement.classList.toggle('hidden', bodyweight);
+        container.querySelectorAll('.set-row').forEach(row => {
+            const input = row.querySelector('.set-weight');
+            if (!input) return;
+            const wasBodyweight = row.dataset.bodyweight === 'true';
+            row.dataset.bodyweight = String(bodyweight);
+            if (input.parentElement) input.parentElement.classList.toggle('hidden', bodyweight);
+            input.type = bodyweight ? 'hidden' : 'number';
+            if (bodyweight) input.value = '0';
+            else if (wasBodyweight) input.value = '';
+        });
+    }
+
     function addSetToExercise(exerciseId, pr, exerciseName, options) {
         const container = document.getElementById(`sets-${exerciseId}`);
         if (!container) return;
@@ -2243,9 +2276,12 @@
         // Figure out how many sets already exist (for the suggested-weight hint on set 3)
         const existingSets = container.querySelectorAll('.set-row').length;
         const isAssist = isAssistanceExercise(exerciseName || '');
+        const bodyweight = isHomeBodyweightExercise(exerciseName);
+        container.dataset.bodyweight = String(bodyweight);
 
         const setRow = document.createElement('div');
         setRow.className = "set-row flex gap-2 sm:gap-3 items-center mb-2 bg-white p-2 sm:p-3 rounded-lg border border-slate-200";
+        setRow.dataset.bodyweight = String(bodyweight);
 
         const repsInput = document.createElement('input');
         repsInput.type = "number";
@@ -2254,22 +2290,25 @@
         repsInput.className = "set-reps flex-1 p-3 sm:p-4 bg-slate-50 rounded-lg text-center font-bold text-base sm:text-lg border-2 border-transparent focus:border-indigo-500";
 
         const weightDiv = document.createElement('div');
-        weightDiv.className = "flex-1 relative";
+        weightDiv.className = "set-weight-field flex-1 relative";
+        weightDiv.classList.toggle('hidden', bodyweight);
 
         const weightInput = document.createElement('input');
-        weightInput.type = "number";
+        weightInput.type = bodyweight ? 'hidden' : 'number';
         weightInput.placeholder = isAssist ? "Assist" : "Weight";
         weightInput.min = "0";
         weightInput.step = "0.5";
         weightInput.className = "set-weight w-full p-3 sm:p-4 bg-slate-50 rounded-lg text-center font-bold text-base sm:text-lg border-2 border-transparent focus:border-indigo-500";
-        if (options && options.initialWeight !== null && options.initialWeight !== undefined) {
+        if (bodyweight) {
+            weightInput.value = '0';
+        } else if (options && options.initialWeight !== null && options.initialWeight !== undefined) {
             weightInput.value = String(options.initialWeight);
         } else if (trainingExperienceTier() === 'beginner' && state.workoutEnv === 'home' && !isAssist) {
             weightInput.value = '0';
         }
 
         // Pre-fill / hint with suggested weight from last performance
-        const suggestion = exerciseName && trainingExperienceTier() !== 'beginner' ? getSuggestedWeight(exerciseName) : null;
+        const suggestion = !bodyweight && exerciseName && trainingExperienceTier() !== 'beginner' ? getSuggestedWeight(exerciseName) : null;
         if (suggestion) {
             weightInput.placeholder = (isAssist ? 'Assist ' : '') + suggestion.suggested + 'kg';
             const hint = document.createElement('span');
@@ -2445,7 +2484,7 @@
                 const weightEl = row.querySelector('.set-weight');
                 const rirEl = row.querySelector('.set-rir');
                 const reps = repsEl ? repsEl.value : '';
-                const weight = weightEl ? weightEl.value : '';
+                const weight = isHomeBodyweightExercise(name) ? '0' : weightEl ? weightEl.value : '';
                 if (reps && weight) {
                     const setObj = { reps: reps, weight: weight };
                     // RIR is optional — only store it if entered

@@ -602,17 +602,6 @@
 
                 <!-- Workout Setup -->
                 <div id="workout-setup" class="glass-card p-6 rounded-[2.5rem] space-y-4">
-                    <div class="bg-orange-50 border border-orange-200 rounded-2xl p-4">
-                        <div class="flex items-center justify-between gap-2">
-                            <p id="training-level-status" class="text-sm font-black text-orange-700">Training basics</p>
-                            <button type="button" onclick="openAboutYouModal()" class="text-xs font-bold text-orange-700 underline underline-offset-2">Edit years</button>
-                        </div>
-                        <p id="training-level-description" class="text-xs text-slate-600 mt-1">Full-body sessions, reps and weight. Set your years of training to tailor the tools.</p>
-                    </div>
-                    <div id="beginner-workout-guide" class="bg-slate-50 rounded-2xl p-4">
-                        <p class="font-black text-sm">A simple place to start</p>
-                        <p class="text-xs text-slate-600 mt-1">Aim for two full-body workouts a week. Try two sets of 8–12 reps per exercise, with comfortable form. Rest between sessions. For bodyweight moves, 0 kg is fine.</p>
-                    </div>
                     <div class="flex bg-slate-100 p-1 rounded-2xl mb-4">
                         <button onclick="setWorkoutEnv('gym')" id="env-tab-gym" class="flex-1 py-2 text-[10px] font-black uppercase rounded-xl bg-white text-indigo-600 shadow-sm">Gym</button>
                         <button onclick="setWorkoutEnv('home')" id="env-tab-home" class="flex-1 py-2 text-[10px] font-black uppercase rounded-xl text-slate-400">Home</button>
@@ -659,7 +648,7 @@
                     </div>
 
                     <div id="beginner-workout-start" class="grid grid-cols-1 gap-3 mt-6">
-                        <button onclick="startWorkout('basic')" class="p-5 bg-slate-900 text-white rounded-[1.5rem] font-bold text-base min-h-[60px]">Start Basic Workout</button>
+                        <button onclick="startWorkout('basic')" class="p-5 bg-slate-900 text-white rounded-[1.5rem] font-bold text-base min-h-[60px]">Start Workout</button>
                         <button onclick="startWorkout('manual')" class="p-4 border-2 border-orange-500 text-orange-600 rounded-[1.5rem] font-bold text-sm">Choose My Exercises</button>
                     </div>
 
@@ -2765,6 +2754,11 @@
 
             <!-- Optional destinations are kept inside Create Meal so saved meals are
                  never added to a plan or Shift Food Ideas without an explicit choice. -->
+            <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4 space-y-3">
+                <label class="block text-xs font-bold text-slate-600" for="create-meal-total-weight">Full finished meal weight (g) *<input id="create-meal-total-weight" type="number" inputmode="decimal" min="0.1" max="100000" step="any" required placeholder="e.g. 1000" class="mt-2 w-full bg-white border border-slate-200 rounded-xl p-3 font-bold"></label>
+                <p class="text-xs text-slate-400">Weigh the full cooked meal, excluding the container. This weight is used to calculate portions.</p>
+                <label class="block text-xs font-bold text-slate-600" for="create-meal-serving-size">Serving size (g, optional)<input id="create-meal-serving-size" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="Leave blank to use the whole meal" class="mt-2 w-full bg-white border border-slate-200 rounded-xl p-3 font-bold"></label>
+            </div>
             <div class="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 mb-4">
                 <p class="text-[10px] font-black uppercase text-indigo-700 mb-1">Personal plan (optional)</p>
                 <p class="text-xs text-slate-500 mb-3">Add one serving to your diary on a specific day and meal slot.</p>
@@ -2790,6 +2784,15 @@
     </div>
 
     <!-- METRICS CHART MODAL -->
+    <div id="created-meal-weight-modal" class="modal-overlay" style="z-index:230;" role="dialog" aria-modal="true" aria-labelledby="created-meal-weight-title">
+        <div class="bg-white w-full max-w-lg rounded-[32px] p-6 space-y-4">
+            <div class="flex items-start justify-between gap-3"><div><h3 id="created-meal-weight-title" class="text-xl font-black">Meal weight and serving</h3><p id="created-meal-weight-name" class="text-sm text-slate-500 mt-1"></p></div><button onclick="closeCreatedMealWeightEditor()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Close meal weights">×</button></div>
+            <label class="block text-xs font-bold text-slate-600" for="created-meal-total-weight">Full finished meal weight (g) *<input id="created-meal-total-weight" type="number" inputmode="decimal" min="0.1" max="100000" step="any" required placeholder="e.g. 1000" class="mt-2 w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold"></label>
+            <p class="text-xs text-slate-400">Use the full cooked weight, excluding the container. The meal's total nutrition stays the same.</p>
+            <label class="block text-xs font-bold text-slate-600" for="created-meal-serving-size">Serving size (g, optional)<input id="created-meal-serving-size" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="Leave blank to use the whole meal" class="mt-2 w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold"></label>
+            <button onclick="saveCreatedMealWeights()" class="w-full p-4 bg-orange-600 text-white rounded-2xl font-black">Save and continue</button>
+        </div>
+    </div>
     <!-- RECORD WEIGHT MODAL -->
     <div id="record-weight-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">

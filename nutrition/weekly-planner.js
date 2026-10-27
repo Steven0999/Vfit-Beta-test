@@ -192,17 +192,20 @@
             const savedTypes = [meal.defaultMealType, meal.plannedMealType].filter(type => WEEKLY_MEAL_TYPES.includes(type));
             return !savedTypes.length || savedTypes.includes(validType);
         }).map(meal => {
+            const food = createdMealFoodModel(meal) || meal;
+            const servingFactor = food.totalWeightGrams ? food.servingGrams / food.totalWeightGrams : 1;
             const ingredientLabels = (Array.isArray(meal.ingredients) ? meal.ingredients : [])
+                .map(ingredient => ingredient && typeof ingredient === 'object' && ingredient.grams ? { ...ingredient, grams: ingredient.grams * servingFactor } : ingredient)
                 .map(plannerIngredientLabel)
                 .filter(Boolean);
             return {
                 id: `created-${String(meal.id)}`,
                 name: String(meal.name || 'Created meal').trim(),
-                calories: Math.round(Number(meal.calories) || 0),
-                protein: Math.round((Number(meal.protein) || 0) * 10) / 10,
-                carbs: Math.round((Number(meal.carbs) || 0) * 10) / 10,
-                fat: Math.round((Number(meal.fat) || 0) * 10) / 10,
-                fiber: Math.round((Number(meal.fiber) || 0) * 10) / 10,
+                calories: Math.round(Number(food.calories) || 0),
+                protein: Math.round((Number(food.protein) || 0) * 10) / 10,
+                carbs: Math.round((Number(food.carbs) || 0) * 10) / 10,
+                fat: Math.round((Number(food.fat) || 0) * 10) / 10,
+                fiber: Math.round((Number(food.fiber) || 0) * 10) / 10,
                 note: 'A meal you previously saved in Create Meal.',
                 ingredients: ingredientLabels,
                 allergens: [],

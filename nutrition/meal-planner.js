@@ -239,9 +239,11 @@
             id: databaseFood ? databaseFood.id : Date.now(),
             databaseId: m.databaseFoodId || '',
             databaseItem: Boolean(databaseFood),
+            createdMealId: m.createdMealId || '', totalWeightGrams: m.totalWeightGrams || 0,
+            source: m.source || '',
             basisUnit: foodAmountUnit(m),
             name: m.name,
-            brand: databaseFood ? (databaseFood.brand || databaseFood.store || '') : '',
+            brand: databaseFood ? (databaseFood.brand || databaseFood.store || '') : (m.brand || ''),
             image: m.image || null,
             calories: base.calories,
             protein: base.protein,
@@ -585,6 +587,8 @@
             }
             out.push({
                 name: m.name,
+                brand: m.brand || '', createdMealId: m.createdMealId || '',
+                totalWeightGrams: m.totalWeightGrams || 0, source: m.source || '',
                 calories: m.calories || 0,
                 protein: m.protein || 0,
                 carbs: m.carbs || 0,
@@ -657,6 +661,8 @@
                     databaseId: item.catalogFood || item.savedBarcodeFood ? '' : (item.databaseId || (item._source === 'custom' ? item.id || '' : '')),
                     databaseItem: Boolean(item.databaseItem || item._source === 'custom'),
                     catalogFood: Boolean(item.catalogFood), savedBarcodeFood: Boolean(item.savedBarcodeFood),
+                    createdMealId: item.createdMealId || '', totalWeightGrams: item.totalWeightGrams || 0,
+                    source: item.source || '',
                     catalogId: item.catalogId || '', basisUnit: foodAmountUnit(item),
                     missingNutrients: item.missingNutrients || [], traceNutrients: item.traceNutrients || [],
                     name, brand, image, calories: cals, protein, carbs, fat,
@@ -1265,8 +1271,10 @@
         if (!food || typeof food !== 'object') return;
         currentFoodItem = {
             id: food.id || Date.now(),
-            databaseId: food.catalogFood || food.savedBarcodeFood ? '' : (food.databaseId || food.id || ''),
-            databaseItem: !food.catalogFood && !food.savedBarcodeFood && Boolean(food.databaseItem || food.databaseId || food.id),
+            databaseId: food.catalogFood || food.savedBarcodeFood || food.createdMealId ? '' : (food.databaseId || food.id || ''),
+            databaseItem: !food.catalogFood && !food.savedBarcodeFood && !food.createdMealId && Boolean(food.databaseItem || food.databaseId || food.id),
+            createdMealId: food.createdMealId || '', source: food.source || '',
+            totalWeightGrams: nutritionNumber(food.totalWeightGrams),
             catalogId: food.catalogId || '', catalogFood: Boolean(food.catalogFood),
             basisUnit: foodAmountUnit(food),
             missingNutrients: food.missingNutrients || [], traceNutrients: food.traceNutrients || [],
@@ -1626,7 +1634,7 @@
         }
     }
 
-    function addFoodItem() {
+    function addFoodItem(options) {
         if (!currentFoodItem) return;
         const amount = selectedFoodAmount();
         const mealType = document.getElementById('popup-meal-type').value;
@@ -1652,6 +1660,8 @@
             type: mealType,
             mealType: mealType,
             name: currentFoodItem.name,
+            brand: currentFoodItem.brand || '',
+            barcode: currentFoodItem.barcode || '',
             image: currentFoodItem.image,
             calories: base.calories * mult,
             protein: base.protein * mult,
@@ -1668,6 +1678,9 @@
             per100g: foodNutrientsPer100g(currentFoodItem),
             databaseFoodId: currentFoodItem.databaseId || '',
             catalogId: currentFoodItem.catalogId || '',
+            createdMealId: currentFoodItem.createdMealId || '',
+            source: currentFoodItem.createdMealId ? 'created-meal' : (currentFoodItem.source || ''),
+            totalWeightGrams: currentFoodItem.totalWeightGrams || 0,
             basisUnit: foodAmountUnit(currentFoodItem),
             servingGrams: currentFoodItem.servingGrams || 0,
             manualEntry: Boolean(currentFoodItem.manualEntry),
@@ -1697,7 +1710,7 @@
         closeFoodPopup();
         renderDiary();
         renderDashboard();
-        showToast(wasEditing ? 'Updated' : 'Added to ' + mealType);
+        if (!(options && options.silent)) showToast(wasEditing ? 'Updated' : 'Added to ' + mealType);
     }
 
     function closeFoodPopup() {

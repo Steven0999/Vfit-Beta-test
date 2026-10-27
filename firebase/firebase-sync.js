@@ -1276,15 +1276,6 @@
                 toggleSpecificMuscle();
             }
         }
-        const years = state.userProfile && state.userProfile.yearsTraining;
-        const status = document.getElementById('training-level-status');
-        const description = document.getElementById('training-level-description');
-        if (status) status.textContent = tier === 'beginner' ? 'Training basics' : tier === 'intermediate' ? 'Intermediate training' : 'Full training tools';
-        if (description) description.textContent = getExperienceLevel() === null
-            ? 'Set your years of training to tailor the tools. For now, start with the basics.'
-            : tier === 'beginner' ? `${years} year${Number(years) === 1 ? '' : 's'} training · full-body workouts, reps and weight.`
-            : tier === 'intermediate' ? 'Workout splits and weekly volume are ready. Specialist muscle goals unlock at 4 years.'
-            : 'All workout focuses, weekly volume and progression tools are available.';
         const menuTitle = document.getElementById('coaching-training-menu-title');
         const menuDescription = document.getElementById('coaching-training-menu-description');
         if (menuTitle) menuTitle.textContent = tier === 'beginner' ? 'Training Basics' : 'Training & Goals';

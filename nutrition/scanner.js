@@ -1337,6 +1337,76 @@
     // CREATED MEALS
     // ==========================================================================
 
+    let pendingCreatedMealLog = null;
+
+    function createdMealFoodModel(meal) {
+        const totalWeight = nutritionNumber(meal && meal.totalWeightGrams);
+        if (!meal || !totalWeight) return null;
+        const servingGrams = nutritionNumber(meal.servingGrams) || totalWeight;
+        const totals = {};
+        ['calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'satFat', 'sodiumMg', 'cholesterol'].forEach(key => { totals[key] = nutritionNumber(meal[key]); });
+        return {
+            id: 'created-meal-' + meal.id, createdMealId: meal.id, source: 'created-meal',
+            name: meal.name || 'Created meal', brand: 'Created meal', image: meal.image || '',
+            ...scaleFoodNutrients(totals, servingGrams / totalWeight),
+            servingGrams, totalWeightGrams: totalWeight, basisUnit: 'g',
+            serving: servingGrams === totalWeight ? `Whole meal (${totalWeight}g)` : `${servingGrams}g serving`,
+            per100g: scaleFoodNutrients(totals, 100 / totalWeight),
+            isCustom: true, databaseItem: false
+        };
+    }
+
+    function readCreatedMealWeights(totalId, servingId) {
+        const totalInput = document.getElementById(totalId);
+        const servingInput = document.getElementById(servingId);
+        const totalWeightGrams = Number(totalInput && totalInput.value);
+        const rawServing = String(servingInput && servingInput.value || '').trim();
+        const servingGrams = rawServing ? Number(rawServing) : totalWeightGrams;
+        if (!Number.isFinite(totalWeightGrams) || totalWeightGrams <= 0 || totalWeightGrams > 100000) {
+            showToast('Enter the full finished meal weight in grams');
+            if (totalInput) totalInput.focus();
+            return null;
+        }
+        if (!Number.isFinite(servingGrams) || servingGrams <= 0 || servingGrams > totalWeightGrams) {
+            showToast('Serving size must be greater than 0 and no more than the full meal weight');
+            if (servingInput) servingInput.focus();
+            return null;
+        }
+        return { totalWeightGrams, servingGrams };
+    }
+
+    function openCreatedMealWeightEditor(mealId, dateKey, mealType, options) {
+        const meal = (state.createdMeals || []).find(item => String(item.id) === String(mealId));
+        if (!meal) { showToast('Created meal unavailable'); return false; }
+        pendingCreatedMealLog = { mealId, dateKey, mealType, options: options || {} };
+        document.getElementById('created-meal-weight-name').textContent = meal.name || 'Created meal';
+        document.getElementById('created-meal-total-weight').value = nutritionNumber(meal.totalWeightGrams) || '';
+        document.getElementById('created-meal-serving-size').value = meal.servingGrams && meal.servingGrams !== meal.totalWeightGrams ? meal.servingGrams : '';
+        document.getElementById('created-meal-weight-modal').style.display = 'flex';
+        document.getElementById('created-meal-total-weight').focus();
+        return true;
+    }
+
+    function closeCreatedMealWeightEditor() {
+        document.getElementById('created-meal-weight-modal').style.display = 'none';
+        pendingCreatedMealLog = null;
+    }
+
+    function saveCreatedMealWeights() {
+        if (!pendingCreatedMealLog) return;
+        const weights = readCreatedMealWeights('created-meal-total-weight', 'created-meal-serving-size');
+        if (!weights) return;
+        const request = pendingCreatedMealLog;
+        const meal = (state.createdMeals || []).find(item => String(item.id) === String(request.mealId));
+        if (!meal) { showToast('Created meal unavailable'); return; }
+        Object.assign(meal, weights, { updatedAt: new Date().toISOString() });
+        saveState();
+        closeCreatedMealWeightEditor();
+        renderCreatedMeals();
+        if (!request.options.editOnly) addCreatedMealToDiary(request.mealId, request.dateKey, request.mealType, request.options);
+        else showToast('Meal weight and serving saved');
+    }
+
     function renderCreatedMeals() {
         const container = document.getElementById('created-meals-list');
         if (!container) return;
@@ -1367,6 +1437,7 @@
         if (list.length > 0) {
             html += '<h4 class="text-xs font-black text-slate-400 uppercase mb-2 mt-4">My Meals</h4>';
             html += list.map(m => {
+                const food = createdMealFoodModel(m);
                 const badges = [];
                 if (/^\d{4}-\d{2}-\d{2}$/.test(String(m.plannedDate || ''))) {
                     const plannedSlot = ['breakfast', 'lunch', 'dinner', 'snack'].includes(m.plannedMealType) ? m.plannedMealType : 'meal';
@@ -1377,7 +1448,8 @@
                 <div class="glass-card p-3 rounded-2xl mb-2 flex items-center gap-3">
                     <div class="flex-1 min-w-0">
                         <p class="font-bold text-sm truncate">${escapeHtml(m.name)}</p>
-                        <p class="text-xs text-slate-400">${Math.round(Number(m.calories) || 0)} kcal · ${(Number(m.protein) || 0).toFixed(1)}g protein</p>
+                        <p class="text-xs text-slate-400">${Math.round(Number((food || m).calories) || 0)} kcal · ${(Number((food || m).protein) || 0).toFixed(1)}g protein${food ? ' · per ' + escapeHtml(food.serving) : ' · whole meal'}</p>
+                        <div class="flex flex-wrap gap-2 mt-2"><button onclick="addCreatedMealToDiary('${escapeJsString(m.id)}')" class="bg-orange-600 text-white px-3 py-2 rounded-xl text-xs font-black">Add to Diary</button><button onclick="openCreatedMealWeightEditor('${escapeJsString(m.id)}', null, null, {editOnly:true})" class="bg-slate-100 text-slate-600 px-3 py-2 rounded-xl text-xs font-bold">Weight / serving</button></div>
                         ${badges.length ? `<div class="flex flex-wrap gap-1 mt-1">${badges.map(badge => `<span class="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">${escapeHtml(badge)}</span>`).join('')}</div>` : ''}
                     </div>
                     <button onclick="deleteCreatedMeal('${escapeJsString(m.id)}')" class="w-7 h-7 bg-red-50 text-red-500 rounded-lg text-sm flex-shrink-0" aria-label="Remove ${escapeHtml(m.name || 'meal')}">×</button>
@@ -1407,6 +1479,8 @@
         document.getElementById('create-meal-modal').style.display = 'flex';
         mealIngredients = [];
         document.getElementById('meal-name-input').value = '';
+        document.getElementById('create-meal-total-weight').value = '';
+        document.getElementById('create-meal-serving-size').value = '';
         const barcodeResult = document.getElementById('meal-barcode-result');
         if (barcodeResult) barcodeResult.classList.add('hidden');
         const barcodeProduct = document.getElementById('meal-barcode-product');
@@ -1740,6 +1814,8 @@
             showToast('Created meal unavailable');
             return false;
         }
+        const food = createdMealFoodModel(meal);
+        if (!food) return openCreatedMealWeightEditor(mealId, targetDate, targetSlot, options);
 
         // The chosen plan date becomes the active diary date, so the nutrition
         // history and the visible diary stay aligned with the serving just added.
@@ -1751,29 +1827,9 @@
         const dateWarning = document.getElementById('nutrition-date-warning');
         if (dateWarning) dateWarning.classList.toggle('hidden', targetDate === localDateKey());
 
-        const calories = Number(meal.calories) || 0;
-        const protein = Number(meal.protein) || 0;
-        const carbs = Number(meal.carbs) || 0;
-        const fat = Number(meal.fat) || 0;
-        const fiber = Number(meal.fiber) || 0;
-        const sugar = Number(meal.sugar) || 0;
-        const base = { calories, protein, carbs, fat, fiber, sugar, isCustom: true, serving: '1 portion' };
-        const entry = {
-            id: Date.now() + Math.random(), date: targetDate, type: targetSlot, mealType: targetSlot,
-            name: meal.name || 'Created meal', image: null, calories, protein, carbs, fat, fiber, sugar,
-            amount: 1, amountType: 'portion', base, source: 'created-meal', createdMealId: meal.id,
-            createdAt: new Date().toISOString()
-        };
-        if (!Array.isArray(state.dailyMeals)) state.dailyMeals = [];
-        state.dailyMeals.push(entry);
-        saveState();
-        autoSaveNutrition();
-        renderDiary();
-        renderDashboard();
-        if (!(options && options.silent)) {
-            const label = new Date(targetDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-            showToast(`${meal.name || 'Created meal'} added to ${label} · ${targetSlot}`);
-        }
+        openFoodPopupCustom(food);
+        document.getElementById('popup-meal-type').value = targetSlot;
+        if (options && options.immediate) addFoodItem({ silent: Boolean(options.silent) });
         return true;
     }
 
@@ -1781,6 +1837,8 @@
         const name = document.getElementById('meal-name-input').value.trim();
         if (!name) { showToast('Enter a meal name'); return; }
         if (mealIngredients.length === 0) { showToast('Add at least one ingredient'); return; }
+        const weights = readCreatedMealWeights('create-meal-total-weight', 'create-meal-serving-size');
+        if (!weights) return;
 
         const totalCal = mealIngredients.reduce((s, i) => s + i.calories, 0);
         const totalProt = mealIngredients.reduce((s, i) => s + i.protein, 0);
@@ -1803,6 +1861,7 @@
         const createdMeal = {
             id: Date.now() + Math.random(),
             name,
+            ...weights,
             calories: totalCal,
             protein: totalProt,
             carbs: totalCarbs,
@@ -1818,7 +1877,7 @@
         };
         if (!Array.isArray(state.createdMeals)) state.createdMeals = [];
         state.createdMeals.unshift(createdMeal);
-        if (addToPlan) addCreatedMealToDiary(createdMeal.id, planDate, planSlot, { silent: true });
+        if (addToPlan) addCreatedMealToDiary(createdMeal.id, planDate, planSlot, { silent: true, immediate: true });
         else saveState();
         closeCreateMeal();
         renderCreatedMeals();
@@ -1957,22 +2016,39 @@
         if (clearBtn) clearBtn.classList.add('hidden');
     }
 
-    // Each logged portion is selectable: two entries with the same name may have
-    // different amounts, packet figures, or serving sizes.
+    function copiedFoodIdentityKey(meal) {
+        const normalText = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+        const normalNumber = value => Math.round(copiedMealNumber(value) * 1e8) / 1e8;
+        const bases = copiedMealNutritionBases(meal);
+        const knownWeight = copiedMealNumber(meal.servingGrams);
+        const amount = copiedMealNumber(meal.amount) || 1;
+        const weight = meal.amountType === 'grams' ? amount : knownWeight ? amount * knownWeight : null;
+        return JSON.stringify([
+            normalText(meal.name), normalText(meal.brand), String(meal.barcode || ''),
+            String(meal.createdMealId || ''), foodAmountUnit(meal),
+            weight === null ? [meal.amountType || 'portion', amount] : normalNumber(weight),
+            knownWeight, normalText(copiedMealServingLabel(meal.servingLabel || (meal.base && meal.base.serving))),
+            COPIED_MEAL_NUTRIENT_KEYS.map(key => normalNumber(copiedMealBaseValue(meal, key))),
+            COPIED_MEAL_NUTRIENT_KEYS.map(key => normalNumber(bases.per100g[key]))
+        ]);
+    }
+
+    // Repeated identical foods share one choice, while different weights,
+    // serving definitions, brands and saved nutrition remain separate choices.
     function getAllLoggedFoods() {
         const all = [];
         (state.dailyMeals || []).forEach(m => all.push({ meal: m, when: m.id || Date.now() }));
         (state.nutritionHistory || []).forEach(day => {
             (day.meals || []).forEach(m => all.push({ meal: { ...m, date: m.date || day.date }, when: day.date }));
         });
-        all.sort((a, b) => String(b.when).localeCompare(String(a.when)));
+        all.sort((a, b) => String(b.meal.date || '').localeCompare(String(a.meal.date || '')) || String(b.when).localeCompare(String(a.when)));
 
         const seen = new Set();
         const out = [];
         for (const item of all) {
             const m = item.meal;
             if (!m || !m.name) continue;
-            const key = `${m.date || ''}:${m.id || m.name}`;
+            const key = copiedFoodIdentityKey(m);
             if (seen.has(key)) continue;
             seen.add(key);
             out.push(m);
@@ -2037,7 +2113,7 @@
     }
 
     function copyMealSelectionKey(meal) {
-        return `${meal.date || ''}:${meal.id || meal.name}`;
+        return copiedFoodIdentityKey(meal);
     }
 
     function clearPastFoodSearch() {
@@ -2062,9 +2138,14 @@
             return;
         }
 
-        container.innerHTML = meals.map((m, i) => `
+        const seen = new Set();
+        container.innerHTML = meals.map((m, i) => ({ m, i })).filter(({ m }) => {
+            const key = copiedFoodIdentityKey(m);
+            if (seen.has(key)) return false;
+            seen.add(key); return true;
+        }).map(({ m, i }) => `
             <label class="flex items-center gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100">
-                <input type="checkbox" data-idx="${i}" data-meal-id="${escapeHtml(m.id)}" onchange="togglePreviousMeal(this, ${i}, '${escapeJsString(date)}')" class="w-5 h-5 accent-indigo-600">
+                <input type="checkbox" data-idx="${i}" data-meal-id="${escapeHtml(m.id)}" ${selectedPreviousMeals.some(item => copyMealSelectionKey(item) === copyMealSelectionKey(m)) ? 'checked' : ''} onchange="togglePreviousMeal(this, ${i}, '${escapeJsString(date)}')" class="w-5 h-5 accent-indigo-600">
                 <div class="flex-1">
                     <p class="font-bold text-sm">${escapeHtml(m.name)}</p>
                     <p class="text-xs text-slate-400">${escapeHtml(m.mealType)} · ${escapeHtml(m.amount || 1)}${m.amountType === 'grams' ? foodAmountUnit(m) : ' serving(s)'} · ${Math.round(Number(m.calories) || 0)} kcal</p>
@@ -2321,6 +2402,7 @@
 
     function copySelectedMeals() {
         if (selectedPreviousMeals.length === 0) { showToast('Pick at least one meal'); return; }
+        const count = selectedPreviousMeals.length;
         selectedPreviousMeals.forEach(m => {
             state.dailyMeals.push({
                 ...m,
@@ -2335,7 +2417,7 @@
         closeCopyPreviousDay();
         renderDiary();
         renderDashboard();
-        showToast(`Copied ${selectedPreviousMeals.length} meals to today!`);
+        showToast(`Copied ${count} meals to today!`);
     }
 
     // ==========================================================================

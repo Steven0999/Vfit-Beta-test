@@ -204,6 +204,19 @@ const expose = `
   copiedMealNutritionBases,
   copiedMealNutritionForAmount,
   getAllLoggedFoods,
+  copiedFoodIdentityKey,
+  loadPreviousDayMeals,
+  createdMealFoodModel,
+  readCreatedMealWeights,
+  addCreatedMealToDiary,
+  saveCreatedMealWeights,
+  closeCreatedMealWeightEditor,
+  saveMeal,
+  addFoodItem,
+  isHomeBodyweightExercise,
+  refreshExerciseLoadFields,
+  setMealIngredients: items => { mealIngredients = items; },
+  setWorkoutContext: value => { currentWorkoutContext = value; },
   togglePreviousMeal,
   copySelectedMeals,
   isPlausibleFoodBarcode,
@@ -700,6 +713,99 @@ trainingState.workoutEnv = 'home';
 app.addSetToExercise('bodyweight-smoke', null, 'Push Ups');
 const bodyweightRow = document.getElementById('sets-bodyweight-smoke').children[0];
 assert.equal(bodyweightRow.children[1].children[0].value, '0', 'home bodyweight sets must save a 0 kg load');
+assert.equal(bodyweightRow.children[1].children[0].type, 'hidden', 'bodyweight load must not be an editable field');
+assert.equal(bodyweightRow.children[1].classList.contains('hidden'), true);
+assert.equal(bodyweightRow.children[2].placeholder, 'RIR');
+assert.ok(fs.readFileSync(new URL('../Styles.css', `file://${__filename}`), 'utf8').includes('[data-bodyweight="true"] .set-rir-label'), 'bodyweight RIR must remain visible in the beginner interface');
+assert.ok(!html.includes('id="training-level-status"') && !html.includes('id="training-level-description"'));
+app.setWorkoutContext(null);
+for (const years of [1, 6]) {
+  trainingState.userProfile.yearsTraining = years;
+  assert.equal(app.isHomeBodyweightExercise('Push Ups'), true);
+  assert.equal(app.isHomeBodyweightExercise('Bodyweight Squat'), true);
+  assert.equal(app.isHomeBodyweightExercise('Resistance Bands Squats'), false);
+  assert.equal(app.isHomeBodyweightExercise('Weighted Push Ups'), false);
+  assert.equal(app.isHomeBodyweightExercise('Assisted Pull Ups'), false);
+}
+const bodyweightContainer = document.getElementById('sets-bodyweight-smoke');
+bodyweightContainer.querySelectorAll = () => [bodyweightRow];
+bodyweightRow.querySelector = selector => selector === '.set-weight' ? bodyweightRow.children[1].children[0] : null;
+app.refreshExerciseLoadFields('bodyweight-smoke', 'Resistance Bands Squats');
+assert.equal(bodyweightRow.children[1].children[0].type, 'number');
+assert.equal(bodyweightRow.children[1].classList.contains('hidden'), false);
+bodyweightRow.children[1].children[0].value = '15';
+app.refreshExerciseLoadFields('bodyweight-smoke', 'Push Ups');
+assert.equal(bodyweightRow.children[1].children[0].type, 'hidden');
+assert.equal(bodyweightRow.children[1].children[0].value, '0', 'swapping back to bodyweight must clear the old external load');
+trainingState.workoutEnv = 'gym';
+assert.equal(app.isHomeBodyweightExercise('Push Ups'), false, 'gym logging keeps its existing weight controls');
+app.setWorkoutContext({ env: 'home' });
+assert.equal(app.isHomeBodyweightExercise('Push Ups'), true, 'restoring a home session uses its saved environment');
+app.setWorkoutContext(null);
+
+// A cooked batch's total nutrition is unchanged by its cooked weight. Both
+// grams and optional servings use that same batch basis through the diary popup.
+const recipeState = app.defaultState();
+recipeState.viewDate = '2026-10-27';
+const batchMeal = { id: 'batch-test', name: 'Batch chilli', calories: 1200, protein: 100,
+  carbs: 140, fat: 40, totalWeightGrams: 1000, servingGrams: 250, ingredients: [], defaultMealType: 'dinner' };
+recipeState.createdMeals = [batchMeal];
+app.setState(recipeState);
+const batchFood = app.createdMealFoodModel(batchMeal);
+assert.equal(batchFood.calories, 300);
+assert.equal(batchFood.per100g.calories, 120);
+assert.equal(batchFood.protein, 25);
+app.addCreatedMealToDiary(batchMeal.id, recipeState.viewDate, 'dinner');
+assert.equal(recipeState.dailyMeals.length, 0, 'opening a meal must let the member choose the amount before logging');
+assert.equal(document.getElementById('food-popup').style.display, 'flex');
+app.setAmountType('grams');
+document.getElementById('popup-custom-weight').value = '150';
+app.addFoodItem();
+const weighedRecipe = recipeState.dailyMeals.at(-1);
+assert.equal(weighedRecipe.calories, 180);
+assert.equal(weighedRecipe.protein, 15);
+assert.equal(weighedRecipe.carbs, 21);
+assert.equal(weighedRecipe.fat, 6);
+assert.equal(weighedRecipe.createdMealId, batchMeal.id);
+assert.equal(weighedRecipe.servingGrams, 250);
+assert.equal(weighedRecipe.totalWeightGrams, 1000);
+app.addCreatedMealToDiary(batchMeal.id, recipeState.viewDate, 'lunch');
+document.getElementById('popup-amount').value = '2';
+app.addFoodItem();
+assert.equal(recipeState.dailyMeals.at(-1).calories, 600);
+assert.equal(batchMeal.calories, 1200, 'logging a serving never modifies the batch total');
+const legacyRecipe = { id: 'legacy-recipe', name: 'Saved stew', calories: 640, protein: 32, carbs: 80, fat: 20 };
+recipeState.createdMeals.push(legacyRecipe);
+const beforeLegacy = recipeState.dailyMeals.length;
+app.addCreatedMealToDiary(legacyRecipe.id, recipeState.viewDate, 'dinner');
+assert.equal(document.getElementById('created-meal-weight-modal').style.display, 'flex');
+assert.equal(recipeState.dailyMeals.length, beforeLegacy);
+document.getElementById('created-meal-total-weight').value = '800';
+document.getElementById('created-meal-serving-size').value = '';
+app.saveCreatedMealWeights();
+assert.equal(legacyRecipe.servingGrams, 800, 'an omitted serving size uses the whole meal');
+app.setAmountType('grams'); document.getElementById('popup-custom-weight').value = '200'; app.addFoodItem();
+assert.equal(recipeState.dailyMeals.at(-1).calories, 160);
+app.setMealIngredients([{ name: 'Ingredients', grams: 1000, calories: 1200, protein: 100, carbs: 140, fat: 40 }]);
+document.getElementById('meal-name-input').value = 'New cooked batch';
+document.getElementById('create-meal-total-weight').value = '';
+document.getElementById('create-meal-serving-size').value = '';
+const beforeCreate = recipeState.createdMeals.length;
+app.saveMeal(); assert.equal(recipeState.createdMeals.length, beforeCreate, 'full cooked weight is required');
+document.getElementById('create-meal-total-weight').value = '1000';
+document.getElementById('create-meal-serving-size').value = '1001';
+app.saveMeal(); assert.equal(recipeState.createdMeals.length, beforeCreate, 'a serving cannot exceed the batch');
+document.getElementById('create-meal-serving-size').value = '250';
+document.getElementById('create-meal-add-to-plan').checked = true;
+document.getElementById('create-meal-plan-date').value = '2026-10-28';
+document.getElementById('create-meal-plan-slot').value = 'lunch';
+app.saveMeal();
+assert.equal(recipeState.createdMeals[0].totalWeightGrams, 1000);
+assert.equal(recipeState.createdMeals[0].calories, 1200);
+assert.equal(recipeState.dailyMeals.at(-1).calories, 300, 'add-to-plan logs one chosen serving');
+assert.equal(recipeState.dailyMeals.at(-1).date, '2026-10-28');
+assert.equal(recipeState.dailyMeals.at(-1).mealType, 'lunch');
+assert.equal(app.normalizeState(JSON.parse(JSON.stringify(recipeState))).createdMeals[0].servingGrams, 250, 'weights must survive an account-state round trip');
 
 // Step history keeps the final daily total and the goal that applied that day.
 const migratedSteps = app.normalizeState({
@@ -1061,8 +1167,19 @@ copyState.nutritionHistory = [{ date: packetDay, meals: [packetMeal] }];
 copyState.dailyMeals = [{ ...packetMeal, id: 902, date: '2026-10-02', amount: 1 }];
 app.setState(copyState);
 assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 2);
+copyState.dailyMeals.push({ ...packetMeal, id: 903, date: '2026-10-03', mealType: 'snack', mealTime: '18:00' });
+copyState.nutritionHistory[0].meals.push({ ...packetMeal, id: 904 });
+assert.equal(app.getAllLoggedFoods().filter(food => food.name === 'Protein bar').length, 2, 'identical food/weight/nutrition should be listed once across dates');
+document.getElementById('copy-date-select').value = packetDay;
+app.loadPreviousDayMeals();
+assert.equal((document.getElementById('previous-meals-list').innerHTML.match(/data-idx=/g) || []).length, 1, 'identical entries on one day share one choice');
+assert.notEqual(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, amount: 3 }), 'different consumed weights stay separate');
+assert.notEqual(app.copiedFoodIdentityKey(packetMeal), app.copiedFoodIdentityKey({ ...packetMeal, per100g: { calories: 510, protein: 25 } }), 'different packet figures stay separate');
 app.togglePreviousMeal({ checked: true }, 0, packetDay);
+app.togglePreviousMeal({ checked: true }, 1, packetDay);
+const beforeCopiedCount = copyState.dailyMeals.length;
 app.copySelectedMeals();
+assert.equal(copyState.dailyMeals.length, beforeCopiedCount + 1, 'the same food cannot be selected twice through duplicate history entries');
 const copiedPacketMeal = copyState.dailyMeals.at(-1);
 assert.equal(copiedPacketMeal.date, copyState.viewDate);
 assert.equal(copiedPacketMeal.copiedFromDate, packetDay);
