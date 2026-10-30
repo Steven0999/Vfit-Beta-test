@@ -1,0 +1,38 @@
+name: Publish VFIT beta.50 APK
+
+on:
+  push:
+    branches:
+      - codex/vfit-beta-hardening
+    paths:
+      - .github/workflows/publish-beta-50.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the validated beta.50 build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download 41028494114 --repo "$GITHUB_REPOSITORY" --name vfit-beta-android-debug --dir dist
+
+      - name: Check APK hash
+        run: echo 'bc6bb5f410c17028161eab8f99be7b04a3313f39eb4f5c04b266db5bfd4d7405  dist/app-debug.apk' | sha256sum --check -
+
+      - name: Publish public prerelease with direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp dist/app-debug.apk dist/VFIT-beta.50-debug.apk
+          gh release create v2.1.0-beta.50 \
+            dist/VFIT-beta.50-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 287cd37d197be30aa17ce228d10e3eb30fdaf1d1 \
+            --title 'VFIT 2.1.0 beta.50' \
+            --notes 'Copy Food now uses the original food-entry form. Check saved nutrition per 100g (per 100ml for drinks), enter servings or a custom weight, preview totals and choose a meal before adding each product to the selected diary day. Multiple products are reviewed one at a time. Android debug APK for beta testing.' \
+            --prerelease
