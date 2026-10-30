@@ -24,15 +24,23 @@ jobs:
       - name: Check APK hash
         run: echo 'bc6bb5f410c17028161eab8f99be7b04a3313f39eb4f5c04b266db5bfd4d7405  dist/app-debug.apk' | sha256sum --check -
 
-      - name: Publish public prerelease with direct APK download
+      - name: Publish public prerelease with installation note
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp dist/app-debug.apk dist/VFIT-beta.50-debug.apk
-          gh release create v2.1.0-beta.50 \
-            dist/VFIT-beta.50-debug.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --target 287cd37d197be30aa17ce228d10e3eb30fdaf1d1 \
-            --title 'VFIT 2.1.0 beta.50' \
-            --notes 'Copy Food now uses the original food-entry form. Check saved nutrition per 100g (per 100ml for drinks), enter servings or a custom weight, preview totals and choose a meal before adding each product to the selected diary day. Multiple products are reviewed one at a time. Android debug APK for beta testing.' \
-            --prerelease
+          beta_release_notes='Copy Food now uses the original food-entry form. Check saved nutrition per 100g (per 100ml for drinks), enter servings or a custom weight, preview totals and choose a meal before adding each product to the selected diary day. Multiple products are reviewed one at a time. Android debug APK for beta testing. INSTALLATION: This build uses a different debug signing certificate from beta.49 and cannot install over it. Keep your existing app installed until you have exported a backup and verified that its file was saved; uninstalling can remove local records and progress photos.'
+          if gh release view v2.1.0-beta.50 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit v2.1.0-beta.50 \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes "$beta_release_notes" \
+              --prerelease
+          else
+            gh release create v2.1.0-beta.50 \
+              dist/VFIT-beta.50-debug.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target 287cd37d197be30aa17ce228d10e3eb30fdaf1d1 \
+              --title 'VFIT 2.1.0 beta.50' \
+              --notes "$beta_release_notes" \
+              --prerelease
+          fi
