@@ -2323,11 +2323,15 @@
     <div id="food-popup" class="modal-overlay">
         <div class="relative bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
             <button onclick="closeFoodPopup()" class="absolute top-5 right-5 w-10 h-10 bg-slate-100 rounded-full text-2xl leading-none z-10" aria-label="Close food details">×</button>
+            <div id="popup-copy-context" class="hidden pr-10 mb-5">
+                <p id="popup-copy-progress" class="text-xs font-bold text-orange-600" role="status"></p>
+                <p class="text-sm text-slate-500 mt-2">Choose the amount and meal for this food. Check the totals before adding it to your selected diary day.</p>
+            </div>
             <div class="flex flex-col items-center mb-6">
                 <div class="w-32 h-32 sm:w-40 sm:h-40 bg-slate-50 rounded-3xl overflow-hidden mb-4 p-3 shadow-lg border-2 border-slate-100">
                     <img id="popup-image" src="" class="w-full h-full object-contain" alt="Food image">
                 </div>
-                <h2 id="popup-name" class="text-xl sm:text-2xl font-black text-center leading-tight mb-2">Product</h2>
+                <h2 id="popup-name" tabindex="-1" class="text-xl sm:text-2xl font-black text-center leading-tight mb-2">Product</h2>
                 <p id="popup-barcode" class="hidden font-mono text-xs font-bold text-slate-500 break-all text-center"></p>
             </div>
             <div class="bg-gradient-to-r from-indigo-50 to-blue-50 p-5 rounded-3xl mb-6 shadow-sm">
@@ -2425,9 +2429,15 @@
                 </div>
             </div>
             <button id="popup-database-action" onclick="saveCurrentFoodToDatabase()" class="hidden w-full mb-4 bg-orange-50 border border-orange-200 text-orange-700 p-3 rounded-2xl font-black text-sm flex items-center justify-center gap-2"><i data-lucide="database" class="w-4 h-4"></i><span id="popup-database-action-label">Save to Food Database</span></button>
+            <div id="popup-copy-reference-field" class="hidden bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-4">
+                <label id="popup-copy-reference-label" for="popup-copy-reference-weight" class="text-sm font-bold block mb-2">Weight of the saved portion (g)</label>
+                <input id="popup-copy-reference-weight" type="number" inputmode="decimal" min="0.1" max="100000" step="any" oninput="updateCopyFoodReference()" class="w-full p-3 rounded-xl bg-white border border-orange-200 font-bold">
+                <p id="popup-copy-reference-help" class="text-xs text-slate-500 mt-2"></p>
+            </div>
             <div class="mb-4">
                 <label class="text-[10px] font-black uppercase text-slate-400 block mb-2">Meal Type</label>
                 <select id="popup-meal-type" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none text-base">
+                    <option value="" disabled hidden>Choose a meal</option>
                     <option value="breakfast">Breakfast</option>
                     <option value="lunch">Lunch</option>
                     <option value="dinner">Dinner</option>
@@ -2474,7 +2484,7 @@
                     <p id="popup-custom-weight-help" class="text-xs text-slate-400 mt-2">Enter the exact weight eaten. Nutrition is calculated from the food's per-100g values.</p>
                 </div>
             </div>
-            <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6 shadow-xl">
+            <div class="bg-slate-900 text-white p-5 rounded-3xl mb-6 shadow-xl" aria-live="polite">
                 <p class="text-[10px] font-black uppercase text-slate-400 text-center mb-3">Total You're Adding</p>
                 <div class="grid grid-cols-2 gap-4 items-center">
                     <div class="text-center">
@@ -2492,7 +2502,8 @@
             <button id="popup-add-btn" onclick="addFoodItem()" class="w-full bg-gradient-to-r from-emerald-600 to-green-600 text-white py-5 rounded-[24px] font-black text-lg shadow-lg hover:shadow-xl transition-all active:scale-95 mb-3">
                 Add to Diary
             </button>
-            <button onclick="closeFoodPopup()" class="w-full py-3 text-sm font-bold text-slate-400 uppercase hover:text-slate-600 transition-colors">
+            <button id="popup-copy-skip" onclick="skipCopyFoodStep()" class="hidden w-full py-3 text-sm font-bold text-slate-500">Skip this food</button>
+            <button id="popup-cancel-btn" onclick="closeFoodPopup()" class="w-full py-3 text-sm font-bold text-slate-400 uppercase hover:text-slate-600 transition-colors">
                 Cancel
             </button>
         </div>
@@ -2615,20 +2626,6 @@
         </div>
     </div>
 
-    <div id="copy-food-step-modal" class="modal-overlay" style="z-index:225;" role="dialog" aria-modal="true" aria-labelledby="copy-food-step-title">
-        <div class="bg-white w-full max-w-lg rounded-[32px] p-6 max-h-[92vh] overflow-y-auto">
-            <div class="flex items-start justify-between gap-3 mb-5"><div><p id="copy-food-step-progress" class="text-xs font-bold text-orange-600" role="status"></p><h3 id="copy-food-step-title" class="text-xl font-black mt-1">Add this food</h3></div><button onclick="cancelCopyFoodSteps()" class="w-10 h-10 bg-slate-100 rounded-full text-2xl" aria-label="Back to product selection">×</button></div>
-            <h4 id="copy-food-step-name" class="text-lg font-black"></h4><p id="copy-food-step-brand" class="text-sm text-slate-400 mt-1 mb-5"></p>
-            <label id="copy-food-step-amount-label" for="copy-food-step-amount" class="block text-sm font-bold mb-2">How much did you have? (grams)</label>
-            <div class="relative mb-4"><input id="copy-food-step-amount" type="number" inputmode="decimal" min="0.1" max="100000" step="any" required placeholder="Enter amount" oninput="updateCopyFoodStepPreview()" class="w-full p-4 pr-14 bg-slate-50 border-2 border-slate-200 rounded-2xl text-2xl font-black outline-none focus:border-orange-500"><span id="copy-food-step-unit" class="absolute right-5 top-1/2 -translate-y-1/2 text-sm text-slate-400 font-bold">g</span></div>
-            <div id="copy-food-reference-field" class="hidden bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-4"><label id="copy-food-reference-label" for="copy-food-reference-weight" class="text-sm font-bold block mb-2">Weight of the saved portion (g)</label><input id="copy-food-reference-weight" type="number" inputmode="decimal" min="0.1" max="100000" step="any" oninput="updateCopyFoodStepPreview()" class="w-full p-3 rounded-xl bg-white border border-orange-200 font-bold"><p id="copy-food-reference-help" class="text-xs text-slate-500 mt-2"></p></div>
-            <label for="copy-food-step-meal-type" class="block text-sm font-bold mb-2">When did you have it?</label>
-            <select id="copy-food-step-meal-type" required class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold mb-5"><option value="" disabled selected>Choose a meal</option><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option><option value="snack">Snack</option></select>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 rounded-2xl p-4 mb-5" aria-live="polite"><div><p class="text-[10px] font-bold text-slate-400 uppercase">Calories</p><p id="copy-food-preview-calories" class="font-black text-orange-600">—</p></div><div><p class="text-[10px] font-bold text-slate-400 uppercase">Protein</p><p id="copy-food-preview-protein" class="font-black">—</p></div><div><p class="text-[10px] font-bold text-slate-400 uppercase">Carbs</p><p id="copy-food-preview-carbs" class="font-black">—</p></div><div><p class="text-[10px] font-bold text-slate-400 uppercase">Fat</p><p id="copy-food-preview-fat" class="font-black">—</p></div></div>
-            <button id="copy-food-step-confirm" onclick="confirmCopyFoodStep()" class="w-full bg-orange-600 text-white p-4 rounded-2xl font-black">Add to diary and next food</button>
-            <div class="flex gap-3 mt-3"><button onclick="cancelCopyFoodSteps()" class="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-sm">Back to products</button><button onclick="skipCopyFoodStep()" class="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-sm">Skip this food</button></div>
-        </div>
-    </div>
 
     <!-- EDIT COPIED MEAL MODAL -->
     <div id="edit-copied-meal-modal" class="modal-overlay">

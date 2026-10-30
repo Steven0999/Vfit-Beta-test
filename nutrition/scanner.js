@@ -2012,8 +2012,10 @@
     function closeCopyPreviousDay() {
         document.getElementById('copy-previous-day-modal').style.display = 'none';
         selectedPreviousMeals = [];
-        copyFoodSteps = null;
-        document.getElementById('copy-food-step-modal').style.display = 'none';
+        if (copyFoodSteps) {
+            copyFoodSteps = null;
+            closeFoodPopup();
+        }
         // Reset the search box
         const input = document.getElementById('copy-search-input');
         if (input) input.value = '';
@@ -2458,57 +2460,80 @@
             return;
         }
         const meal = flow.products[flow.index], unit = foodAmountUnit(meal);
-        document.getElementById('copy-food-step-progress').textContent = `Food ${flow.index + 1} of ${flow.products.length} · ${flow.targetDate}`;
-        document.getElementById('copy-food-step-name').textContent = meal.name;
-        document.getElementById('copy-food-step-brand').textContent = meal.brand || '';
-        document.getElementById('copy-food-step-amount').value = '';
-        document.getElementById('copy-food-step-unit').textContent = unit;
-        document.getElementById('copy-food-step-amount-label').textContent = unit === 'ml' ? 'How much did you have? (ml)' : 'How much did you have? (grams)';
-        document.getElementById('copy-food-step-meal-type').value = '';
-        document.getElementById('copy-food-reference-field').classList.toggle('hidden', copiedProductHasWeightBasis(meal));
-        document.getElementById('copy-food-reference-weight').value = '';
-        document.getElementById('copy-food-reference-label').textContent = `Weight of the saved portion (${unit})`;
-        document.getElementById('copy-food-reference-help').textContent = `This food was saved without a weight. Enter the ${unit} for its original ${Math.round(copiedMealNumber(meal.calories))} kcal portion so the new amount can be calculated.`;
-        document.getElementById('copy-food-step-confirm').textContent = flow.index === flow.products.length - 1 ? 'Add to diary and finish' : 'Add to diary and next food';
-        document.getElementById('copy-food-step-modal').style.display = 'flex';
-        updateCopyFoodStepPreview();
-        document.getElementById('copy-food-step-amount').focus();
+        currentFoodItem = copiedProductPopupFood(meal);
+        editingLoggedMealId = null;
+        renderFoodPopup();
+        document.getElementById('popup-copy-progress').textContent = `Food ${flow.index + 1} of ${flow.products.length} · ${flow.targetDate}`;
+        document.getElementById('popup-copy-reference-field').classList.toggle('hidden', copiedProductHasWeightBasis(meal));
+        document.getElementById('popup-copy-reference-weight').value = '';
+        document.getElementById('popup-copy-reference-label').textContent = `Weight of the saved portion (${unit})`;
+        document.getElementById('popup-copy-reference-help').textContent = `This food was saved without a weight. Enter the ${unit} for its original ${Math.round(copiedMealNumber(meal.calories))} kcal portion to calculate the per-100${unit} values and your new amount.`;
+        document.getElementById('popup-add-btn').textContent = flow.index === flow.products.length - 1 ? 'Add to diary and finish' : 'Add to diary and next food';
+        setAmountType('grams');
+        document.getElementById('popup-amount').value = '';
+        document.getElementById('popup-custom-weight').value = '';
+        document.getElementById('popup-meal-type').value = '';
+        document.getElementById('popup-meal-time').value = '';
+        document.getElementById('popup-meal-next-day').checked = false;
+        updatePopupTotals();
+        const popupCard = document.getElementById('food-popup').firstElementChild;
+        if (popupCard) popupCard.scrollTop = 0;
+        document.getElementById('popup-name').focus({ preventScroll: true });
     }
 
-    function copyFoodStepPer100g(meal) {
-        if (copiedProductHasWeightBasis(meal)) return copiedMealNutritionBases(meal).per100g;
-        const referenceWeight = Number(document.getElementById('copy-food-reference-weight').value);
-        if (!Number.isFinite(referenceWeight) || referenceWeight <= 0 || referenceWeight > 100000) return null;
-        const values = {};
-        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { values[key] = copiedMealBaseValue(meal, key) * 100 / referenceWeight; });
-        return values;
+    function copiedProductPopupFood(meal, referenceWeight) {
+        const knownWeight = copiedProductHasWeightBasis(meal);
+        const validReference = Number.isFinite(referenceWeight) && referenceWeight > 0 && referenceWeight <= 100000;
+        const per100g = knownWeight ? copiedMealNutritionBases(meal).per100g : {};
+        if (!knownWeight && validReference) {
+            COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { per100g[key] = copiedMealBaseValue(meal, key) * 100 / referenceWeight; });
+        }
+        const servingGrams = knownWeight ? copiedMealServingGrams(meal)
+            : validReference ? referenceWeight / (copiedMealNumber(meal.amount) || 1) : 0;
+        return {
+            name: meal.name, brand: meal.brand || '', image: safeImageUrl(meal.image),
+            barcode: meal.barcode || '', basisUnit: foodAmountUnit(meal),
+            ...per100g, sodium: (per100g.sodiumMg || 0) / 1000, per100g,
+            servingGrams, serving: copiedMealServingLabel(meal.servingLabel || meal.base && meal.base.serving || meal.serving),
+            isCustom: false, copyWeightRequired: !knownWeight && !validReference
+        };
     }
 
-    function updateCopyFoodStepPreview() {
-        if (!copyFoodSteps) return;
+    function updateCopyFoodReference() {
+        if (!copyFoodStepAccountMatches()) return;
         const meal = copyFoodSteps.products[copyFoodSteps.index];
-        const amount = Number(document.getElementById('copy-food-step-amount').value);
-        const values = meal && copyFoodStepPer100g(meal);
-        const valid = values && Number.isFinite(amount) && amount > 0 && amount <= 100000;
-        ['calories', 'protein', 'carbs', 'fat'].forEach(key => {
-            document.getElementById('copy-food-preview-' + key).textContent = valid
-                ? (key === 'calories' ? Math.round(values[key] * amount / 100) : (values[key] * amount / 100).toFixed(1) + 'g') : '—';
-        });
+        if (copiedProductHasWeightBasis(meal)) return;
+        currentFoodItem = copiedProductPopupFood(meal, Number(document.getElementById('popup-copy-reference-weight').value));
+        renderFoodPopupNutrition();
+        document.getElementById('popup-serving-detail').textContent = currentFoodItem.copyWeightRequired
+            ? 'Enter the saved portion weight below to calculate nutrition.'
+            : `1 serving is ${currentFoodItem.serving} (${Math.round(currentFoodItem.servingGrams * 10) / 10}${foodAmountUnit(meal)})`;
+        const input = document.getElementById(currentAmountType === 'grams' ? 'popup-custom-weight' : 'popup-amount');
+        const amount = input.value;
+        setAmountType(currentAmountType);
+        input.value = amount;
+        updatePopupTotals();
     }
 
     function confirmCopyFoodStep() {
         if (!copyFoodStepAccountMatches()) return;
         const flow = copyFoodSteps, meal = flow.products[flow.index];
-        const amount = Number(document.getElementById('copy-food-step-amount').value);
-        const mealType = document.getElementById('copy-food-step-meal-type').value;
-        if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) { showToast('Enter the amount you ate'); document.getElementById('copy-food-step-amount').focus(); return; }
-        if (!['breakfast', 'lunch', 'dinner', 'snack'].includes(mealType)) { showToast('Choose breakfast, lunch, dinner or snack'); document.getElementById('copy-food-step-meal-type').focus(); return; }
-        const per100g = copyFoodStepPer100g(meal);
-        if (!per100g) { showToast('Enter the weight of the saved portion first'); document.getElementById('copy-food-reference-weight').focus(); return; }
+        if (!currentFoodItem) return;
+        const amountInput = document.getElementById(currentAmountType === 'grams' ? 'popup-custom-weight' : 'popup-amount');
+        const amount = Number(amountInput.value);
+        const mealType = document.getElementById('popup-meal-type').value;
+        const servingGrams = currentFoodItem.servingGrams;
+        const weight = currentAmountType === 'grams' ? amount : amount * servingGrams;
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 100000 || weight > 100000) { showToast('Enter the amount you ate'); amountInput.focus(); return; }
+        if (!['breakfast', 'lunch', 'dinner', 'snack'].includes(mealType)) { showToast('Choose breakfast, lunch, dinner or snack'); document.getElementById('popup-meal-type').focus(); return; }
+        if (currentFoodItem.copyWeightRequired) { showToast('Enter the weight of the saved portion first'); document.getElementById('popup-copy-reference-weight').focus(); return; }
+        const mealTime = document.getElementById('popup-meal-time').value;
+        if (mealTime && mealClockMinutes(mealTime) === null) { showToast('Choose a valid meal time'); return; }
+        const per100g = foodNutrientsPer100g(currentFoodItem);
+        const base = currentAmountType === 'grams' ? { ...per100g } : foodNutrientsPerServing(currentFoodItem);
+        const multiplier = currentAmountType === 'grams' ? amount / 100 : amount;
         const totals = {};
-        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { totals[key] = copiedMealNumber(per100g[key]) * amount / 100; });
-        const referenceWeight = copiedMealNumber(document.getElementById('copy-food-reference-weight').value);
-        const servingGrams = copiedMealNumber(meal.servingGrams) || (referenceWeight ? referenceWeight / (meal.amountType === 'grams' ? 1 : copiedMealNumber(meal.amount) || 1) : 100);
+        COPIED_MEAL_NUTRIENT_KEYS.forEach(key => { totals[key] = copiedMealNumber(base[key]) * multiplier; });
         // Older diary days may exist only in the archive. Restore that day's
         // records before appending so auto-save does not replace them.
         if (!(state.dailyMeals || []).some(item => item.date === flow.targetDate)) {
@@ -2516,11 +2541,12 @@
             (archived && archived.meals || []).forEach(item => state.dailyMeals.push({ ...item, date: flow.targetDate }));
         }
         state.dailyMeals.push({ ...meal, ...totals, id: Date.now() + Math.random(),
-            date: flow.targetDate, type: mealType, mealType, amount, amountType: 'grams',
+            date: flow.targetDate, type: mealType, mealType, amount, amountType: currentAmountType,
             basisUnit: foodAmountUnit(meal), servingGrams,
-            servingLabel: copiedMealServingLabel(meal.servingLabel || (meal.base && meal.base.serving)),
-            base: { ...per100g, isCustom: false, serving: '100' + foodAmountUnit(meal) }, per100g: { ...per100g },
-            sodium: totals.sodiumMg / 1000, mealTime: '', mealNextDay: false,
+            servingLabel: currentFoodItem.serving,
+            base: { ...base, isCustom: currentAmountType !== 'grams', serving: currentAmountType === 'grams' ? '100' + foodAmountUnit(meal) : currentFoodItem.serving }, per100g: { ...per100g },
+            sodium: totals.sodiumMg / 1000, mealTime,
+            mealNextDay: Boolean(mealTime && (document.getElementById('popup-meal-next-day').checked || mealClockMinutes(mealTime) < mealScheduleForDate(flow.targetDate).wake)),
             copiedFromDate: meal.copiedFromDate || meal.date,
             createdAt: new Date().toISOString()
         });
@@ -2544,7 +2570,7 @@
         const flow = copyFoodSteps;
         selectedPreviousMeals = flow.products.slice(flow.index);
         copyFoodSteps = null;
-        document.getElementById('copy-food-step-modal').style.display = 'none';
+        closeFoodPopup();
         document.getElementById('copy-target-date').value = flow.targetDate;
         document.getElementById('copy-previous-day-modal').style.display = 'flex';
         loadPreviousDayMeals();
