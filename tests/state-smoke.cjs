@@ -209,7 +209,7 @@ sandbox.globalThis = sandbox;
 
 const expose = `
 ;globalThis.__vfitTest = {
-  isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
+  resetWorkoutSessionUI, isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
   nextRotationWorkout, weeklyPlannedCompletedVolume, trainingWeekStart,
   toggleCompletedSet, stopSessionRestTimer, restoreSessionRestTimer, updateSessionRestTimer,
   saveSessionExerciseSettings, cardSessionSettings, getPersonalRecord, getLastPerformance,
@@ -2198,6 +2198,8 @@ app.saveSessionExerciseSettings(notesId);
 assert.equal(toolsState.exercisePreferences['gym|Bench Press'].notes,'Seat 4, neutral grip');
 app.restoreActiveWorkout();
 assert.equal(app.snapshotActiveWorkout().exercises[0].settings.notes,'Seat 4, neutral grip');
+document.getElementById('workout-active').classList.add('hidden');app.startSavedWorkout('notes-plan');
+assert.equal(app.snapshotActiveWorkout().exercises[0].settings.repMin,6,'exercise targets persist when a saved plan is reused');
 const invalidCard=document.querySelectorAll('#exercise-list > div')[0],invalidRow=invalidCard.querySelector('.set-row');
 invalidRow.querySelector('.set-reps').value='-1';app.toggleCompletedSet(invalidRow.id,invalidCard.id.replace('card-',''),true);
 assert.equal(invalidRow.dataset.completed,'false','invalid sets cannot be completed');
@@ -2253,3 +2255,12 @@ localTools.deletedNutritionTemplateIds=['removed'];remoteTools.nutritionDayTempl
 const mergedTools=app.mergeStateSnapshots(localTools,remoteTools);
 assert.equal(mergedTools.exercisePreferences['gym|Bench Press'].notes,'New note');assert.equal(mergedTools.nutritionDayTemplates.length,0);
 console.log('VFIT beta.53 training, graph and shift-day template tests passed');
+
+app.setState(toolsState);app.setUser({uid:'tools-owner'});
+document.getElementById('workout-active').classList.add('hidden');app.startSavedWorkout('notes-plan');
+const ownedCard=document.querySelectorAll('#exercise-list > div')[0],ownedRow=ownedCard.querySelector('.set-row');
+const untouchedPrefs=JSON.stringify(toolsState.exercisePreferences);
+app.setUser({uid:'different-account'});app.saveSessionExerciseSettings(ownedCard.id.replace('card-',''));app.toggleCompletedSet(ownedRow.id,ownedCard.id.replace('card-',''),true);
+assert.equal(JSON.stringify(toolsState.exercisePreferences),untouchedPrefs,'old-account exercise controls cannot write preferences');assert.equal(ownedRow.dataset.completed,'false');
+const retainedDraft=toolsState.activeWorkout;app.resetWorkoutSessionUI();
+assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account switches remove old exercise forms');assert.equal(toolsState.activeWorkout,retainedDraft,'clearing account UI preserves its saved workout');

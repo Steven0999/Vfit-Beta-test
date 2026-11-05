@@ -22,10 +22,12 @@ function cleanSessionSettings(raw) {
         estimatedMinutes: num('estimatedMinutes', 8, 1, 180), notes: String(value.notes || '').slice(0, 1000) };
 }
 
-function settingsForExercise(name, provided) {
-    const env = currentWorkoutContext && currentWorkoutContext.env || state.workoutEnv || 'gym';
+function settingsForExercise(name, provided, environment) {
+    const env = environment || currentWorkoutContext && currentWorkoutContext.env || state.workoutEnv || 'gym';
     const saved = (state.exercisePreferences || {})[exercisePreferenceKey(name, env)] || {};
-    const settings = cleanSessionSettings({ ...saved, ...(provided || {}) });
+    const personal = {};
+    for (const key of ['repMin','repMax','targetRir','increment','restSeconds']) if (saved[key] !== undefined) personal[key] = saved[key];
+    const settings = cleanSessionSettings({ ...(provided || {}), ...personal });
     settings.notes = String(saved.notes ?? provided?.notes ?? '').slice(0, 1000);
     return settings;
 }
@@ -42,6 +44,7 @@ function mountSessionExerciseTools(id, name, provided) {
     const settings = settingsForExercise(name, provided);
     card.dataset.sessionSettings = JSON.stringify(settings);
     card.dataset.settingsExerciseName = name;
+    card.dataset.sessionOwnerUid = currentUser && currentUser.uid || '';
     let wrap = document.getElementById('session-tools-' + id);
     if (!wrap || wrap.parentElement !== card) {
         wrap = document.createElement('div'); wrap.id = 'session-tools-' + id;
@@ -56,6 +59,7 @@ function mountSessionExerciseTools(id, name, provided) {
 }
 
 function saveSessionExerciseSettings(id) {
+    if (!sessionExerciseAccountMatches(id)) return;
     const name = document.getElementById('ex-name-' + id)?.value.trim();
     if (!name) { showToast('Choose an exercise before saving its settings'); return; }
     const raw = cardSessionSettings(id);
@@ -109,6 +113,7 @@ function renderSessionProgression(id, name) {
 }
 
 function applySessionProgression(id) {
+    if (!sessionExerciseAccountMatches(id)) return;
     const name = document.getElementById('ex-name-' + id)?.value.trim();
     const rows = document.getElementById('sets-' + id)?.querySelectorAll('.set-row') || [];
     const suggestion = sessionProgressionSuggestion(name, cardSessionSettings(id), Array.from(rows).filter(row => row.dataset.setType !== 'warmup').length);
@@ -149,6 +154,7 @@ function clearSetCompletion(row) {
 }
 
 function toggleCompletedSet(rowId, exerciseId, checked) {
+    if (!sessionExerciseAccountMatches(exerciseId)) return;
     const row = document.getElementById(rowId);
     if (!row) return;
     const name = document.getElementById('ex-name-' + exerciseId)?.value.trim();
@@ -286,4 +292,22 @@ function renderPlannedCompletedVolume() {
 
 function renderTrainingTools() {
     renderWorkoutRotation(); renderPlannedCompletedVolume();
+}
+
+// Remove the old account's form without deleting its saved in-progress snapshot.
+function resetWorkoutSessionUI() {
+    stopSessionRestTimer(); clearInterval(workoutTimer); workoutTimer = null;
+    workoutStartTime = null; workoutAccumulatedSeconds = 0; currentWorkoutContext = null;
+    assigningToClient = null; pendingWorkout = null; window._pendingRatings = null; window._activeAssignedWorkout = null;
+    exitWizardMode();
+    const list=document.getElementById('exercise-list'); if(list)list.innerHTML='';
+    document.getElementById('workout-active')?.classList.add('hidden');
+    document.getElementById('workout-setup')?.classList.remove('hidden');
+    const rating=document.getElementById('rate-exercises-modal');if(rating)rating.style.display='none';
+}
+
+function sessionExerciseAccountMatches(id) {
+    const card=document.getElementById('card-'+id);
+    if(card && card.dataset.sessionOwnerUid===(currentUser&&currentUser.uid||''))return true;
+    showToast('Reopen your workout for this account');return false;
 }

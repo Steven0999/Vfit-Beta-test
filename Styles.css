@@ -651,3 +651,13 @@
 .set-row[data-completed="true"] { border-color: #10b981; background: #ecfdf5; }
 .set-reps, .set-weight-field { min-width: 0; }
 .set-reps { flex-basis: 0; }
+
+/* Workout and template tools use the established dark VFIT theme. */
+.bg-orange-50, .bg-orange-100 { background-color: #111111 !important; }
+.bg-orange-500, .bg-orange-600 {
+    background-color: #000000 !important;
+    border: 1.5px solid #f97316 !important;
+    color: #fb923c !important;
+}
+.border-orange-100, .border-orange-200 { border-color: #7c3b13 !important; }
+html body #exercise-list .set-row[data-completed="true"] { border-width: 3px !important; }

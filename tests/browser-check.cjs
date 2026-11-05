@@ -58,7 +58,7 @@ const checks={
     expect(document.querySelector('.set-complete').checked,'completion lost on restore');
     expect(!document.getElementById('session-rest-timer').classList.contains('hidden'),'rest banner missing');
     expect(document.querySelector('.set-type').options.length===4,'advanced set types missing');
-    setTimeout(()=>{const target=document.getElementById('workout-active');window.scrollTo(0,target.getBoundingClientRect().top+window.scrollY-100);},100);
+    document.querySelectorAll('#training > :not(#workout-active)').forEach(element=>element.style.display='none');setTimeout(()=>window.scrollTo(0,0),100);
   `,
   plans:`
     switchTab('training');openMyWorkoutPlan();

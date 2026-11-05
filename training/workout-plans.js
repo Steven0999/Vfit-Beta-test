@@ -121,6 +121,7 @@ function editSavedWorkout(id) {
     workoutPlanDraft = existing ? cleanSavedWorkout(existing) : {
         id: '', name: '', env: state.workoutEnv || 'gym', focus: 'Full Body', includeCore: false, exercises: []
     };
+    workoutPlanDraft.exercises.forEach(ex=>{ ex.settings=settingsForExercise(ex.name,ex.settings,workoutPlanDraft.env); });
     workoutPlanSession = { uid: currentUser && currentUser.uid || '', dirty: false };
     closeMyWorkoutPlan();
     document.getElementById('workout-plan-editor-title').textContent = existing ? 'Edit workout' : 'Create workout';
@@ -287,8 +288,14 @@ function saveWorkoutPlan() {
         id: workoutPlanDraft.id || 'plan-' + Date.now() + '-' + Math.random().toString(36).slice(2),
         createdAt: workoutPlanDraft.createdAt || now, updatedAt: now });
     const previous = state.savedWorkouts || [];
+    const previousPreferences = deepClone(state.exercisePreferences);
+    plan.exercises.forEach(ex=>{
+        const key=exercisePreferenceKey(ex.name,plan.env), saved=state.exercisePreferences[key]||{};
+        const personal={};for(const field of ['repMin','repMax','targetRir','increment','restSeconds'])personal[field]=ex.settings[field];
+        state.exercisePreferences[key]={...saved,...personal,updatedAt:now};
+    });
     state.savedWorkouts = previous.some(item => item.id === plan.id) ? previous.map(item => item.id === plan.id ? plan : item) : [...previous, plan];
-    if (!saveState()) { state.savedWorkouts = previous; showToast('Could not save this plan on the device'); return; }
+    if (!saveState()) { state.savedWorkouts = previous; state.exercisePreferences = previousPreferences; showToast('Could not save this plan on the device'); return; }
     resetWorkoutPlanUI();
     openMyWorkoutPlan();
     showToast('Workout plan saved');

@@ -10,7 +10,7 @@
         if (!user) {
             if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
             if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
-            if (typeof stopSessionRestTimer === 'function') stopSessionRestTimer();
+            if (typeof resetWorkoutSessionUI === 'function') resetWorkoutSessionUI();
             if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
             if (typeof resetNutritionTemplateUI === 'function') resetNutritionTemplateUI();
             stopMembershipSync();
@@ -53,7 +53,7 @@
         closeFoodPhotoEstimate();
         if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
         if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
-        if (typeof stopSessionRestTimer === 'function') stopSessionRestTimer();
+        if (typeof resetWorkoutSessionUI === 'function') resetWorkoutSessionUI();
         if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
         if (typeof resetNutritionTemplateUI === 'function') resetNutritionTemplateUI();
         currentUser = user;
@@ -200,7 +200,10 @@
         if (exListEl) {
             const schedulePersist = () => {
                 clearTimeout(workoutPersistTimer);
-                workoutPersistTimer = setTimeout(persistActiveWorkout, 400);
+                const generation = authSessionGeneration;
+                workoutPersistTimer = setTimeout(() => {
+                    if (generation === authSessionGeneration) persistActiveWorkout();
+                }, 400);
             };
             exListEl.addEventListener('input', schedulePersist);
             exListEl.addEventListener('change', schedulePersist);
