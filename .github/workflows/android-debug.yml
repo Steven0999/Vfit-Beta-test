@@ -50,7 +50,7 @@ jobs:
           for page in active plans metrics nutrition; do
             google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --no-first-run --allow-file-access-from-files --window-size=390,920 --virtual-time-budget=5000 --screenshot="$RUNNER_TEMP/vfit-ui/$page.png" "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null
             google-chrome --headless --no-sandbox --disable-gpu --no-first-run --allow-file-access-from-files --virtual-time-budget=5000 --dump-dom "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null > "$RUNNER_TEMP/vfit-ui/$page.dom.html"
-            test "$(rg -c 'data-browser-check="passed"' "$RUNNER_TEMP/vfit-ui/$page.dom.html")" = "1"
+            python3 -c 'import sys,pathlib; page=pathlib.Path(sys.argv[1]).read_text(); assert "data-browser-check=\"passed\"" in page, "Browser check failed: " + page[page.find("browser-check-error"):page.find("browser-check-error")+1200]' "$RUNNER_TEMP/vfit-ui/$page.dom.html"
           done
 
       - name: Upload UI checks

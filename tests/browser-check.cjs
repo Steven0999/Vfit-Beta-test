@@ -26,7 +26,7 @@ testFirestore.FieldValue={serverTimestamp:()=>new Date().toISOString(),arrayUnio
 window.firebase={initializeApp(){},auth:testAuth,firestore:testFirestore};
 window.confirm=()=>true;window.alert=()=>{};
 </script>`;
-html=html.replace('</head>',mocks+'</head>');
+html=html.replace('</head>',mocks+'<style>.tab-content{animation:none!important}html{scroll-behavior:auto!important}</style></head>');
 const setup = `
 function expect(value,message){if(!value)throw new Error(message);}
 state=normalizeState(DEFAULT_STATE);currentUser={uid:'browser-fixture',email:'fixture@example.test'};firebaseUserData={name:'Fixture'};
@@ -43,7 +43,7 @@ state.metricsHistory=Array.from({length:14},(_,i)=>({date:offsetLocalDateKey(loc
 state.metricTargets={weight:{value:80}};state.metricAnnotations=[{id:'night-note',date:localDateKey(),text:'Night-shift block started',metric:'all'}];
 state.dailyMeals=[{id:'oats',name:'Porridge oats',date:localDateKey(),mealType:'breakfast',mealTime:'17:00',amountType:'grams',amount:60,servingGrams:40,calories:228,protein:7.8,carbs:36,fat:4.2,per100g:{calories:380,protein:13,carbs:60,fat:7}},{id:'yogurt',name:'Greek yogurt',date:localDateKey(),mealType:'snack',mealTime:'02:00',mealNextDay:true,amountType:'grams',amount:150,servingGrams:150,calories:90,per100g:{calories:60,protein:10,carbs:4,fat:0}}];
 state.mealWakeTimes[localDateKey()]='16:00';
-document.getElementById('auth-screen').style.display='none';document.getElementById('app-screen').style.display='block';
+document.getElementById('auth-screen').style.display='none';document.getElementById('app-screen').style.display='block';document.getElementById('status-date').textContent='Browser fixture';
 applyTrainingExperienceMode();
 `;
 const checks={
@@ -58,7 +58,7 @@ const checks={
     expect(document.querySelector('.set-complete').checked,'completion lost on restore');
     expect(!document.getElementById('session-rest-timer').classList.contains('hidden'),'rest banner missing');
     expect(document.querySelector('.set-type').options.length===4,'advanced set types missing');
-    document.getElementById('workout-active').scrollIntoView();
+    setTimeout(()=>{const target=document.getElementById('workout-active');window.scrollTo(0,target.getBoundingClientRect().top+window.scrollY-100);},100);
   `,
   plans:`
     switchTab('training');openMyWorkoutPlan();
@@ -76,7 +76,7 @@ const checks={
     document.getElementById('metric-target-overview').value='79';setMetricTarget('weight','79');
     expect(state.metricTargets.weight.value===79,'target not saved');
     expect(document.querySelector('#metric-progress-graph-overview [stroke="#0284c7"]'),'trend missing');
-    document.getElementById('metric-overview-select').closest('.glass-card').scrollIntoView();
+    setTimeout(()=>{const target=document.getElementById('metric-overview-select').closest('.glass-card');window.scrollTo(0,target.getBoundingClientRect().top+window.scrollY-100);},100);
   `,
   nutrition:`
     switchTab('nutrition');openNutritionTemplates();document.getElementById('template-name').value='My night-shift day';document.getElementById('template-kind').value='night';saveNutritionDayTemplate();
