@@ -1197,7 +1197,8 @@
         const userRef = db.collection('users').doc(uid);
         let exists = false;
         try {
-            const doc = await userRef.get();
+            // Cached absence or stale data is not proof of the server's save.
+            const doc = await userRef.get({ source: 'server' });
             if (!currentUser || currentUser.uid !== uid) return false;
             exists = doc.exists;
             firebaseUserData = doc.exists ? (doc.data() || {}) : {};

@@ -4,8 +4,9 @@ importScripts(
 );
 
 const CACHE_VERSION = 'vfit-2.1.0-beta.54';
-const SHELL_CACHE = `${CACHE_VERSION}-shell`;
-const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+const CACHE_REVISION = 2;
+const SHELL_CACHE = `${CACHE_VERSION}-${CACHE_REVISION}-shell`;
+const RUNTIME_CACHE = `${CACHE_VERSION}-${CACHE_REVISION}-runtime`;
 
 const APP_SHELL = [
   './',

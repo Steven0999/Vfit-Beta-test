@@ -164,7 +164,7 @@ function firestore() {
       return {
         doc(id) {
           return {
-            get: async () => cloudFixture.read(collectionName,id),
+            get: async options => cloudFixture.read(collectionName,id,options),
             set: async value => { cloudFixture.writes.push({collection:collectionName,id,value}); }, update: async () => {}
           };
         },
@@ -2363,7 +2363,7 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
 
   // Re-fetch existing cloud data before any full-snapshot write after a failed read.
   app.setUser({uid:'cloud-safety',email:'cloud@example.test'});const device=app.defaultState();device.meta.updatedAt=null;device.workoutHistory=[{id:'offline-device',date:'2026-11-01'}];app.setState(device);app.setCloudReconciledForTest(null);
-  cloudFixture.writes=[];cloudFixture.read=async collection=>{if(collection==='users')throw new Error('Expected offline read');return {exists:false,data:()=>({})};};
+  cloudFixture.writes=[];cloudFixture.read=async (collection,id,options)=>{if(collection==='users'){assert.equal(options?.source,'server','snapshot reconciliation requires a server read');throw new Error('Expected offline read');}return {exists:false,data:()=>({})};};
   assert.equal(await app.writeCloudSnapshot(),false);assert.equal(cloudFixture.writes.filter(write=>write.value.dataSnapshot).length,0,'failed cloud reads cannot write a blank snapshot');
   cloudFixture.read=async collection=>collection==='users'?{exists:true,data:()=>({name:'Saved cloud name',dataSnapshot:{...original,goals:{calories:2300,water:2500,steps:10000},workoutHistory:[{id:'saved-cloud',date:'2026-10-01'}]}})}:{exists:false,data:()=>({})};
   assert.equal(await app.writeCloudSnapshot(),true);
