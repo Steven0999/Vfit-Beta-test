@@ -59,6 +59,7 @@
         if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
         if (typeof resetNutritionTemplateUI === 'function') resetNutritionTemplateUI();
         currentUser = user;
+        state = normalizeState(DEFAULT_STATE);
         currentUserIsOwner = false;
         currentUserCanManageFoodDatabase = false;
         if (authScreen) authScreen.style.display = 'none';
@@ -67,7 +68,10 @@
         // a returning user's cloud snapshot.
         if (appScreen) appScreen.style.display = 'none';
         if (!await prepareAccountDataForUpdate(user.uid)) {
-            if (sessionGeneration === authSessionGeneration && currentUser?.uid === user.uid) showAccountDataProtection(user.uid);
+            if (sessionGeneration === authSessionGeneration && currentUser?.uid === user.uid) {
+                loadProtectedAccountState(user.uid);
+                showAccountDataProtection(user.uid);
+            }
             return;
         }
         if (sessionGeneration !== authSessionGeneration || currentUser?.uid !== user.uid) return;

@@ -153,6 +153,21 @@ function showAccountDataProtection(uid) {
     screen.classList.remove('hidden');
 }
 
+// A recovery screen may still offer an additive backup restore. Never let
+// data left in memory by a different account become part of that restore.
+function loadProtectedAccountState(uid) {
+    state = normalizeState(DEFAULT_STATE);
+    try {
+        const originals = accountOriginalSaves(uid);
+        const candidates = [originals.primaryRaw, originals.recoveryRaw, originals.legacyRaw].map(parseAccountSave);
+        if (candidates.some(snapshotNeedsNewerApp)) return;
+        const readable = candidates.find(Boolean);
+        if (readable) state = normalizeState(readable);
+    } catch (error) {
+        // Keep the device records untouched when storage itself cannot be read.
+    }
+}
+
 function hideAccountDataProtection() {
     document.getElementById('data-protection-screen')?.classList.add('hidden');
 }
@@ -199,6 +214,7 @@ function showAccountRecoveryNotice(uid) {
 }
 
 function assertAccountRestoreCompatible(uid) {
-    if (snapshotNeedsNewerApp(readStoredJson(stateStorageKey(uid))))
+    const originals = accountOriginalSaves(uid);
+    if ([originals.primaryRaw, originals.recoveryRaw, originals.legacyRaw].map(parseAccountSave).some(snapshotNeedsNewerApp))
         throw new Error('This device has data from a newer VFIT version. Update VFIT before restoring a backup.');
 }

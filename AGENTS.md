@@ -14,6 +14,8 @@ permission to reset or replace a person's saved data.
   writes when a save cannot be protected or requires a newer app version.
 - Never clear personal localStorage, IndexedDB or photos during startup,
   service-worker activation, a version change or failed cloud reconciliation.
+- Refresh the code-cache version or revision when app scripts change. Only
+  replace app-code caches; keep personal storage identities unchanged.
 - Reconcile an existing cloud account before uploading a full device snapshot.
   A failed read is not evidence of an empty account. Respect saved privacy
   preferences after reconciliation.

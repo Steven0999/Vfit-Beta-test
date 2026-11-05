@@ -212,7 +212,7 @@ sandbox.globalThis = sandbox;
 const expose = `
 ;globalThis.__vfitTest = {
   prepareAccountDataForUpdate, accountDataWriteBlocked, originalAccountCopies, deleteUpdateSafetyCopies,
-  showAccountDataProtection, snapshotNeedsNewerApp, writeCloudSnapshot, loadFirebaseUserData, inspectVfitBackup, saveDailyNutrition,
+  showAccountDataProtection, loadProtectedAccountState, assertAccountRestoreCompatible, snapshotNeedsNewerApp, writeCloudSnapshot, loadFirebaseUserData, inspectVfitBackup, saveDailyNutrition,
   putProgressPhoto, getProgressPhoto, listProgressPhotos, migrateProgressPhotosToIndexedDb,
   setCloudReconciledForTest:value=>{cloudReconciledUid=value;},
   resetWorkoutSessionUI, isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
@@ -2311,6 +2311,11 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
   assert.equal(await app.prepareAccountDataForUpdate(failedOwner),false);assert.equal(app.accountDataWriteBlocked(failedOwner),true);
   app.setState(app.defaultState());assert.equal(app.saveState({skipCloud:true}),false);
   assert.equal(localStorage.getItem(app.stateStorageKey(failedOwner)),bytes);
+  app.getState().userProfile.name='Previous account data';
+  app.loadProtectedAccountState(failedOwner);
+  assert.equal(app.getState().userProfile.name,'Saved profile','paused updates use this account alone for additive recovery');
+  assert.equal(app.getState().savedWorkouts[0].id,'kept-plan','readable existing plans remain available to merge with a backup');
+  assert.equal(localStorage.getItem(app.stateStorageKey(failedOwner)),bytes,'recovery preparation does not write or normalise the original save');
   assert.equal((await app.originalAccountCopies(failedOwner)).length,0,'an aborted checkpoint must not look successful');
   assert.equal(await app.prepareAccountDataForUpdate(failedOwner),true,'a storage failure can be retried safely');
   assert.equal((await app.originalAccountCopies(failedOwner)).length,1);
@@ -2326,6 +2331,11 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
   await assert.rejects(app.inspectVfitBackup({app:'VFIT',appVersion:'2.1.0-beta.100',state:original}),/newer VFIT/);
   await assert.rejects(app.putProgressPhoto('2026-05-01','front',oldImage,futureOwner),/newer VFIT/);
   assert.equal((await app.listProgressPhotos(futureOwner)).length,0,'a stale app cannot write photos before its state save is blocked');
+  const newerRecoveryOwner='upgrade-newer-recovery';app.setUser({uid:newerRecoveryOwner});
+  localStorage.setItem(app.stateStorageKey(newerRecoveryOwner),'{unreadable');localStorage.setItem(app.recoveryStorageKey(newerRecoveryOwner),future);
+  assert.throws(()=>app.assertAccountRestoreCompatible(newerRecoveryOwner),/newer VFIT/);
+  app.loadProtectedAccountState(newerRecoveryOwner);
+  assert.equal(app.getState().savedWorkouts.length,0,'a protected newer save is never normalised or mixed with another account');
 
   const damagedOwner='upgrade-damaged';app.setUser({uid:damagedOwner});
   localStorage.setItem(app.stateStorageKey(damagedOwner),'{not-readable');localStorage.setItem(app.recoveryStorageKey(damagedOwner),bytes);
