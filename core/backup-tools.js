@@ -29,6 +29,7 @@ async function inspectVfitBackup(parsed) {
     const wrapped=isPlainRecord(parsed.state), imported=wrapped?parsed.state:parsed;
     if(wrapped&&parsed.app&&parsed.app!=='VFIT')throw new Error('This backup belongs to another app');
     const fields=['dailyMeals','workoutHistory','nutritionHistory','metricsHistory','savedWorkouts'];
+    if(typeof snapshotNeedsNewerApp==='function'&&(snapshotNeedsNewerApp(imported)||(wrapped&&snapshotNeedsNewerApp({meta:{schemaVersion:parsed.schemaVersion,appVersion:parsed.appVersion}}))))throw new Error('This backup needs a newer VFIT version. Nothing was restored.');
     if(!fields.some(key=>Array.isArray(imported[key])))throw new Error('No VFIT diary, workout or metrics data found');
     for(const key of [...fields,'nutritionDayTemplates','metricAnnotations','customExercises']){
         if(imported[key]!==undefined&&!Array.isArray(imported[key]))throw new Error('Invalid backup data: '+key);

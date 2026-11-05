@@ -4,56 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function fakeIndexedDb() {
-  const records = new Map();
-  const store = {
-    createIndex() {},
-    put(record) { records.set(record.id, structuredClone(record)); },
-    delete(id) { records.delete(id); },
-    get(id) {
-      const request = {};
-      queueMicrotask(() => {
-        request.result = records.has(id) ? structuredClone(records.get(id)) : undefined;
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    },
-    index(name) {
-      assert.equal(name, 'owner');
-      return {
-        getAll(owner) {
-          const request = {};
-          queueMicrotask(() => {
-            request.result = [...records.values()].filter(record => record.owner === owner).map(record => structuredClone(record));
-            if (request.onsuccess) request.onsuccess();
-          });
-          return request;
-        }
-      };
-    }
-  };
-  const database = {
-    objectStoreNames: { contains: () => database.created === true },
-    createObjectStore() { database.created = true; return store; },
-    transaction() {
-      const transaction = { objectStore: () => store };
-      queueMicrotask(() => { if (transaction.oncomplete) transaction.oncomplete(); });
-      return transaction;
-    }
-  };
-  return {
-    records,
-    open() {
-      const request = {};
-      queueMicrotask(() => {
-        request.result = database;
-        if (!database.created && request.onupgradeneeded) request.onupgradeneeded();
-        if (request.onsuccess) request.onsuccess();
-      });
-      return request;
-    }
-  };
-}
+const fakeIndexedDb = require('./fake-indexeddb.cjs');
 
 const indexedDB = fakeIndexedDb();
 const sandbox = {
@@ -128,6 +79,7 @@ const expose = `
 globalThis.__photoTest = {
   sealVfitBackup, inspectVfitBackup, checkVfitBackup, importVfitBackup, exportVfitBackup, saveNativeBackupFile, cancelNativeBackupExport,
   lastToast:()=>__lastToast,
+  saveRecordedPhotos,
   putProgressPhoto,
   getProgressPhoto,
   listProgressPhotos,
@@ -253,6 +205,23 @@ const photos = sandbox.__photoTest;
   const goodPost=sandbox.vfitBackupExport.postMessage;
   sandbox.vfitBackupExport.postMessage=function(raw){const message=JSON.parse(raw);if(message.command==='finish'){queueMicrotask(()=>this.onmessage({data:JSON.stringify({requestId:message.requestId,ownerUid:message.ownerUid,status:'complete',sha256:'wrong',size:1})}));}else goodPost.call(this,raw);};
   await assert.rejects(photos.saveNativeBackupFile('test','vfit-backup-test.json','restore-user'),/could not be verified/);
+  // Interrupted migrations keep their inline original and can retry in the same session.
+  photos.setUser({uid:'photo-retry'});photos.setState({metricsDate:'2026-11-05',currentPhotos:{},metricsHistory:[{date:'2026-11-05',photos:{front:tinyImage}}],meta:{}});
+  indexedDB.failNextWrite=true;
+  assert.equal(await photos.migrateProgressPhotosToIndexedDb(),0);assert.equal(photos.getState().metricsHistory[0].photos.front,tinyImage);
+  assert.equal(await photos.migrateProgressPhotosToIndexedDb(),1);assert.equal(await photos.getProgressPhoto(photos.getState().metricsHistory[0].photos.front),tinyImage);
+
+  // An asynchronous save or gallery read cannot attach one account's photos to another.
+  const secondAccount={metricsDate:'2026-11-05',currentPhotos:{front:'second-account-draft'},metricsHistory:[],meta:{}};
+  photos.setUser({uid:'photo-save-a'});photos.setState({metricsDate:'2026-11-05',currentPhotos:{front:tinyImage},metricsHistory:[],meta:{}});
+  indexedDB.beforeWrite=(name)=>{if(name==='vfit-progress-photos'){indexedDB.beforeWrite=null;photos.setUser({uid:'photo-save-b'});photos.setState(secondAccount);}};
+  await photos.saveRecordedPhotos();
+  assert.equal(photos.getState(),secondAccount);assert.equal(secondAccount.currentPhotos.front,'second-account-draft');assert.equal(secondAccount.metricsHistory.length,0);
+  assert.equal((await photos.listProgressPhotos('photo-save-b')).length,0);
+  assert.equal((await photos.listProgressPhotos('photo-save-a')).length,1,'interrupted save stays under the original account');
+  photos.setUser({uid:'capacity-user'});photos.setState({metricsHistory:[],meta:{}});
+  indexedDB.beforeRead=name=>{if(name==='vfit-progress-photos'){indexedDB.beforeRead=null;photos.setUser({uid:'photo-save-b'});photos.setState(secondAccount);}};
+  assert.equal(await photos.reconcileProgressPhotoReferences(),false);assert.equal(secondAccount.metricsHistory.length,0);
   console.log('VFIT photo storage and verified backup round-trip tests passed (120-photo gallery, native chunk transfer)');
 })().catch(error => {
   console.error(error);

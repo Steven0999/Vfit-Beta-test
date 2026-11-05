@@ -23,6 +23,7 @@ const moduleFiles = [
   'metrics/run-tracking.js',
   'metrics/photo-storage.js',
   'core/backup-tools.js',
+  'core/update-safety.js',
   'metrics/progress-charts.js',
   'metrics/graph-context.js',
   'feedback/beta-feedback.js',
@@ -156,14 +157,15 @@ const authApi = {
 function auth() { return authApi; }
 auth.Auth = { Persistence: { LOCAL: 'local' } };
 
+const cloudFixture = {read:async()=>({exists:false,data:()=>({})}), writes:[]};
 function firestore() {
   return {
-    collection() {
+    collection(collectionName) {
       return {
-        doc() {
+        doc(id) {
           return {
-            get: async () => ({ exists: false, data: () => ({}) }),
-            set: async () => {}, update: async () => {}
+            get: async () => cloudFixture.read(collectionName,id),
+            set: async value => { cloudFixture.writes.push({collection:collectionName,id,value}); }, update: async () => {}
           };
         },
         where() { return this; }, limit() { return this; },
@@ -209,6 +211,10 @@ sandbox.globalThis = sandbox;
 
 const expose = `
 ;globalThis.__vfitTest = {
+  prepareAccountDataForUpdate, accountDataWriteBlocked, originalAccountCopies, deleteUpdateSafetyCopies,
+  showAccountDataProtection, snapshotNeedsNewerApp, writeCloudSnapshot, loadFirebaseUserData, inspectVfitBackup, saveDailyNutrition,
+  putProgressPhoto, getProgressPhoto, listProgressPhotos, migrateProgressPhotosToIndexedDb,
+  setCloudReconciledForTest:value=>{cloudReconciledUid=value;},
   resetWorkoutSessionUI, isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
   nextRotationWorkout, weeklyPlannedCompletedVolume, trainingWeekStart,
   toggleCompletedSet, stopSessionRestTimer, restoreSessionRestTimer, updateSessionRestTimer,
@@ -2264,3 +2270,131 @@ app.setUser({uid:'different-account'});app.saveSessionExerciseSettings(ownedCard
 assert.equal(JSON.stringify(toolsState.exercisePreferences),untouchedPrefs,'old-account exercise controls cannot write preferences');assert.equal(ownedRow.dataset.completed,'false');
 const retainedDraft=toolsState.activeWorkout;app.resetWorkoutSessionUI();
 assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account switches remove old exercise forms');assert.equal(toolsState.activeWorkout,retainedDraft,'clearing account UI preserves its saved workout');
+
+// Exercise the complete upgrade against transactional device storage, then retry
+// failed cloud reconciliation without allowing any blank account overwrite.
+(async()=>{
+  const disk=require('./fake-indexeddb.cjs')();sandbox.indexedDB=disk;
+  sandbox.crypto=require('node:crypto').webcrypto;sandbox.TextEncoder=TextEncoder;sandbox.Uint8Array=Uint8Array;
+  const owner='upgrade-owner';app.setUser({uid:owner,email:'upgrade@example.test'});app.setWorkoutContext(null);
+  const oldImage='data:image/jpeg;base64,QUFB',newImage='data:image/jpeg;base64,QkJC';
+  const galleryReference=await app.putProgressPhoto('2026-05-01','front',newImage);
+  const original=app.defaultState();original.meta={schemaVersion:9,appVersion:'2.1.0-beta.53',updatedAt:'2026-10-01T12:00:00Z'};
+  original.userProfile={...original.userProfile,name:'Saved profile',yearsTraining:5};
+  original.workoutHistory=[{id:'kept-workout',date:'2026-05-01',exercises:[{name:'Bench Press',sets:[{reps:10,weight:60,rir:2,completed:true}]}]}];
+  original.dailyMeals=[{id:'kept-food',date:'2026-05-01',name:'Saved oats',mealType:'breakfast',calories:228}];
+  original.savedWorkouts=[{id:'kept-plan',name:'Saved plan',exercises:[{name:'Bench Press',sets:[{reps:10,weight:60}],settings:{restSeconds:90}}]}];
+  original.createdMeals=[{id:'kept-recipe',name:'My recipe',ingredients:[{name:'Oats',weight:60}]}];
+  original.userGoals=[{id:'kept-goal',description:'My target',progressEntries:[{id:'entry',date:'2026-05-01',note:'Saved progress'}]}];
+  original.metricsHistory=[{date:'2026-05-01',weight:80,waist:88,photos:{front:oldImage}}];
+  original.exercisePreferences={'gym|Bench Press':{notes:'Saved setup note'}};
+  original.nutritionDayTemplates=[{id:'kept-template',name:'Night shift',entries:[{food:{name:'Oats'},offsetMinutes:60}]}];
+  const bytes=JSON.stringify(original),key=app.stateStorageKey(owner);
+  localStorage.setItem(key,bytes);
+  assert.equal(await app.prepareAccountDataForUpdate(owner),true);
+  assert.equal(localStorage.getItem(key),bytes,'checkpointing cannot change the original save');
+  const copies=await app.originalAccountCopies(owner);
+  assert.equal(copies.length,1);assert.equal(copies[0].originals.primaryRaw,bytes,'the untouched copy includes all fields and inline image bytes');
+  app.loadState(owner);
+  for(const field of ['userProfile','workoutHistory','dailyMeals','savedWorkouts','createdMeals','userGoals','metricsHistory','exercisePreferences','nutritionDayTemplates'])
+    assert.equal(JSON.stringify(app.getState()[field]),JSON.stringify(original[field]),field+' survives the upgrade');
+  app.saveState({skipCloud:true,preserveUpdatedAt:true});
+  assert.equal(JSON.parse(localStorage.getItem(key)).meta.appVersion,'2.1.0-beta.54');
+  assert.equal(await app.prepareAccountDataForUpdate(owner),true);assert.equal((await app.originalAccountCopies(owner)).length,1,'normal reopen does not replace or duplicate an original copy');
+  await app.migrateProgressPhotosToIndexedDb();
+  assert.equal(await app.getProgressPhoto(galleryReference),newImage,'stale inline photos cannot replace existing gallery bytes');
+  assert.equal((await app.originalAccountCopies(owner))[0].originals.primaryRaw,bytes,'the original inline photo is still recoverable');
+
+  // Failed writes leave both original localStorage and gallery records intact.
+  const failedOwner='upgrade-quota';app.setUser({uid:failedOwner});localStorage.setItem(app.stateStorageKey(failedOwner),bytes);
+  disk.failNextWrite=true;
+  assert.equal(await app.prepareAccountDataForUpdate(failedOwner),false);assert.equal(app.accountDataWriteBlocked(failedOwner),true);
+  app.setState(app.defaultState());assert.equal(app.saveState({skipCloud:true}),false);
+  assert.equal(localStorage.getItem(app.stateStorageKey(failedOwner)),bytes);
+  assert.equal((await app.originalAccountCopies(failedOwner)).length,0,'an aborted checkpoint must not look successful');
+  assert.equal(await app.prepareAccountDataForUpdate(failedOwner),true,'a storage failure can be retried safely');
+  assert.equal((await app.originalAccountCopies(failedOwner)).length,1);
+
+  // An older app/backup cannot silently discard fields written by a newer app.
+  const futureOwner='upgrade-newer';app.setUser({uid:futureOwner});
+  const future=JSON.stringify({...original,meta:{schemaVersion:10,appVersion:'2.1.0-beta.99'},futureFeature:{saved:'keep me'}});
+  localStorage.setItem(app.stateStorageKey(futureOwner),future);
+  assert.equal(await app.prepareAccountDataForUpdate(futureOwner),false);
+  assert.equal(app.loadState(futureOwner),'protected');assert.equal(app.saveState({skipCloud:true}),false);
+  assert.equal(localStorage.getItem(app.stateStorageKey(futureOwner)),future);
+  await assert.rejects(app.inspectVfitBackup({app:'VFIT',state:JSON.parse(future)}),/newer VFIT/);
+  await assert.rejects(app.inspectVfitBackup({app:'VFIT',appVersion:'2.1.0-beta.100',state:original}),/newer VFIT/);
+  await assert.rejects(app.putProgressPhoto('2026-05-01','front',oldImage,futureOwner),/newer VFIT/);
+  assert.equal((await app.listProgressPhotos(futureOwner)).length,0,'a stale app cannot write photos before its state save is blocked');
+
+  const damagedOwner='upgrade-damaged';app.setUser({uid:damagedOwner});
+  localStorage.setItem(app.stateStorageKey(damagedOwner),'{not-readable');localStorage.setItem(app.recoveryStorageKey(damagedOwner),bytes);
+  assert.equal(await app.prepareAccountDataForUpdate(damagedOwner),true);assert.equal(app.loadState(damagedOwner),'recovery');
+  assert.equal(app.getState().workoutHistory[0].id,'kept-workout');
+  assert.equal((await app.originalAccountCopies(damagedOwner))[0].originals.primaryRaw,'{not-readable','unreadable bytes remain available for recovery');
+  // Even an already-open older tab cannot overwrite a newer on-disk save.
+  const staleOwner='upgrade-stale-tab';app.setUser({uid:staleOwner});app.setState(app.defaultState());
+  const sameSchemaFuture=JSON.stringify({...original,meta:{schemaVersion:9,appVersion:'2.1.0-beta.55'}});
+  localStorage.setItem(app.stateStorageKey(staleOwner),sameSchemaFuture);
+  assert.equal(app.saveState({skipCloud:true}),false);assert.equal(localStorage.getItem(app.stateStorageKey(staleOwner)),sameSchemaFuture);
+  assert.equal(app.snapshotNeedsNewerApp({meta:{appVersion:'2.1.0-beta.9',schemaVersion:9}}),false);
+  assert.equal(app.snapshotNeedsNewerApp({meta:{appVersion:'2.1.0-beta.100',schemaVersion:9}}),true);
+  const badCopyOwner='upgrade-bad-copy';app.setUser({uid:badCopyOwner});localStorage.setItem(app.stateStorageKey(badCopyOwner),bytes);
+  assert.equal(await app.prepareAccountDataForUpdate(badCopyOwner),true);
+  const corruptCopy=[...disk.records('vfit-update-safety','accountSaves').values()].find(record=>record.owner===badCopyOwner);
+  corruptCopy.originals.primaryRaw='{damaged-copy';
+  assert.equal(await app.prepareAccountDataForUpdate(badCopyOwner),false,'a corrupt checkpoint must fail readback verification');
+  assert.equal(localStorage.getItem(app.stateStorageKey(badCopyOwner)),bytes);
+  app.setUser({uid:damagedOwner});
+  const noBackupOwner='upgrade-no-recovery';app.setUser({uid:noBackupOwner});localStorage.setItem(app.stateStorageKey(noBackupOwner),'{unreadable');
+  assert.equal(await app.prepareAccountDataForUpdate(noBackupOwner),false);app.loadState(noBackupOwner);assert.equal(app.saveState({skipCloud:true}),false);
+  assert.equal(localStorage.getItem(app.stateStorageKey(noBackupOwner)),'{unreadable','a failed load cannot overwrite existing data with defaults');
+  app.setUser({uid:owner});localStorage.setItem(key,'{damaged-later');localStorage.setItem(app.recoveryStorageKey(owner),'{also-damaged');
+  assert.equal(await app.prepareAccountDataForUpdate(owner),true);app.loadState(owner);
+  assert.equal(app.getState().workoutHistory[0].id,'kept-workout','a valid immutable update copy can recover a damaged primary and recovery save');
+
+  // Full history stays on the device regardless of the number of logged days.
+  const lifetime=app.defaultState();lifetime.viewDate=app.localDateKey();
+  lifetime.nutritionHistory=Array.from({length:500},(_,i)=>({date:app.offsetLocalDateKey(lifetime.viewDate,-i-1),meals:[{id:'past-'+i,name:'Historic food'}]}));
+  lifetime.dailyMeals=[{id:'today',date:lifetime.viewDate,name:'Today food',calories:100}];
+  app.setState(lifetime);app.setUser({uid:'lifetime-owner'});app.saveDailyNutrition();
+  assert.equal(lifetime.nutritionHistory.length,501,'new diary saves do not trim older history');
+  assert.ok(lifetime.nutritionHistory.some(day=>day.meals[0].id==='past-499'));
+
+  // Re-fetch existing cloud data before any full-snapshot write after a failed read.
+  app.setUser({uid:'cloud-safety',email:'cloud@example.test'});const device=app.defaultState();device.meta.updatedAt=null;device.workoutHistory=[{id:'offline-device',date:'2026-11-01'}];app.setState(device);app.setCloudReconciledForTest(null);
+  cloudFixture.writes=[];cloudFixture.read=async collection=>{if(collection==='users')throw new Error('Expected offline read');return {exists:false,data:()=>({})};};
+  assert.equal(await app.writeCloudSnapshot(),false);assert.equal(cloudFixture.writes.filter(write=>write.value.dataSnapshot).length,0,'failed cloud reads cannot write a blank snapshot');
+  cloudFixture.read=async collection=>collection==='users'?{exists:true,data:()=>({name:'Saved cloud name',dataSnapshot:{...original,goals:{calories:2300,water:2500,steps:10000},workoutHistory:[{id:'saved-cloud',date:'2026-10-01'}]}})}:{exists:false,data:()=>({})};
+  assert.equal(await app.writeCloudSnapshot(),true);
+  const cloudWrite=cloudFixture.writes.find(write=>write.value.dataSnapshot).value.dataSnapshot;
+  assert.deepEqual([...cloudWrite.workoutHistory.map(workout=>workout.id)].sort(),['offline-device','saved-cloud']);
+  assert.equal(cloudWrite.goals.calories,2300);assert.equal(cloudWrite.savedWorkouts[0].id,'kept-plan');
+  assert.equal(cloudWrite.createdMeals[0].name,'My recipe');
+  cloudFixture.writes=[];app.setCloudReconciledForTest(null);cloudFixture.read=async collection=>collection==='users'?{exists:true,data:()=>({dataSnapshot:JSON.parse(future)})}:{exists:false,data:()=>({})};
+  assert.equal(await app.writeCloudSnapshot(),false);assert.equal(cloudFixture.writes.filter(write=>write.value.dataSnapshot).length,0,'older app cannot overwrite newer cloud data');
+
+  app.setUser({uid:'cloud-privacy',email:'privacy@example.test'});app.setState(app.defaultState());app.setCloudReconciledForTest(null);cloudFixture.writes=[];
+  cloudFixture.read=async collection=>collection==='users'?{exists:true,data:()=>({privacy:{cloudHealthData:false},dataSnapshot:original})}:{exists:false,data:()=>({})};
+  assert.equal(await app.writeCloudSnapshot(),false);assert.equal(cloudFixture.writes.filter(write=>write.value.dataSnapshot).length,0,'reconciliation must respect the saved cloud opt-out');
+
+  app.setUser({uid:'cloud-fresh-offline'});app.setState(app.defaultState());app.setCloudReconciledForTest(null);
+  cloudFixture.read=async()=>{throw new Error('Expected first-launch offline read');};
+  assert.equal(await app.loadFirebaseUserData(),false);
+  assert.equal(localStorage.getItem(app.stateStorageKey('cloud-fresh-offline')),null,'failed first launch must not persist a default account');
+  let finishCloudRead;
+  app.setUser({uid:'cloud-before-switch'});
+  cloudFixture.read=async()=>new Promise(resolve=>{finishCloudRead=resolve;});
+  const pendingCloud=app.loadFirebaseUserData();
+  const switchedState=app.defaultState();switchedState.userProfile.name='Other account';
+  app.setUser({uid:'cloud-after-switch'});app.setState(switchedState);
+  finishCloudRead({exists:true,data:()=>({dataSnapshot:original})});
+  assert.equal(await pendingCloud,false);assert.equal(app.getState(),switchedState,'a late cloud response cannot replace another account');
+
+  // Explicit deletion remains possible, and never affects a different owner.
+  app.setUser({uid:owner});await app.deleteUpdateSafetyCopies(owner);
+  assert.equal((await app.originalAccountCopies(owner)).length,0);
+  assert.equal((await app.originalAccountCopies(failedOwner)).length,1);
+  assert.equal(await app.getProgressPhoto(galleryReference),newImage,'deleting update copies alone cannot touch the separate photo gallery');
+  console.log('VFIT update safety tests passed: original saves, 501-day history, photos, failed storage, newer versions and cloud recovery');
+})().catch(error=>{console.error(error);process.exitCode=1;});

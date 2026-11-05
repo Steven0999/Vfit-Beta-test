@@ -47,7 +47,7 @@ jobs:
       - name: Render mobile UI checks
         run: |
           node tests/browser-check.cjs "$RUNNER_TEMP/vfit-ui"
-          for page in active plans metrics nutrition; do
+          for page in active plans metrics nutrition updates; do
             google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --no-first-run --allow-file-access-from-files --window-size=390,920 --virtual-time-budget=5000 --screenshot="$RUNNER_TEMP/vfit-ui/$page.png" "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null
             google-chrome --headless --no-sandbox --disable-gpu --no-first-run --allow-file-access-from-files --virtual-time-budget=5000 --dump-dom "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null > "$RUNNER_TEMP/vfit-ui/$page.dom.html"
             python3 -c 'import sys,pathlib; page=pathlib.Path(sys.argv[1]).read_text(); assert "data-browser-check=\"passed\"" in page, "Browser check failed: " + page[page.find("browser-check-error"):page.find("browser-check-error")+1200]' "$RUNNER_TEMP/vfit-ui/$page.dom.html"
@@ -74,21 +74,26 @@ jobs:
             printf '%s' "$VFIT_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/vfit-beta.p12"
             printf 'VFIT_KEYSTORE_PATH=%s\n' "$RUNNER_TEMP/vfit-beta.p12" >> "$GITHUB_ENV"
             printf 'VFIT_KEYSTORE_PASSWORD=%s\n' "$VFIT_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo 'VFIT_DISTRIBUTION_KIND=update' >> "$GITHUB_ENV"
             echo 'Persistent VFIT signing enabled.'
           elif [ -n "$VFIT_KEYSTORE_BASE64" ] || [ -n "$VFIT_KEYSTORE_PASSWORD" ]; then
             echo 'Both signing secrets must be configured.' >&2
             exit 1
           else
-            echo 'Signing secrets are absent: this CI artifact uses an ephemeral debug key.'
+            echo 'VFIT_DISTRIBUTION_KIND=test-only' >> "$GITHUB_ENV"
+            echo 'Signing secrets are absent: building VFIT Test alongside the real app. This is not an update APK.'
           fi
 
       - name: Build debug APK
         run: gradle -p android :app:assembleDebug --stacktrace
 
+      - name: Verify APK identity and saved-data update compatibility
+        run: python3 tools/verify-android-apk.py --apk android/app/build/outputs/apk/debug/app-debug.apk --sdk "$ANDROID_HOME" --mode "$VFIT_DISTRIBUTION_KIND"
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: vfit-beta-android-debug
+          name: vfit-beta-android-${{ env.VFIT_DISTRIBUTION_KIND }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14

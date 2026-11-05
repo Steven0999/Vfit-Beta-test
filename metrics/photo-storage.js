@@ -49,7 +49,11 @@
                     store.createIndex('owner', 'owner', { unique: false });
                 }
             };
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+                const database = request.result;
+                database.onversionchange = () => { database.close(); progressPhotoDbPromise = null; };
+                resolve(database);
+            };
             request.onerror = () => {
                 progressPhotoDbPromise = null;
                 reject(request.error || new Error('Could not open expanded photo storage'));
@@ -62,12 +66,13 @@
         return progressPhotoDbPromise;
     }
 
-    async function putProgressPhoto(dateKey, angle, data, owner) {
+    async function putProgressPhoto(dateKey, angle, data, owner, options) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) throw new Error('Photo date is invalid');
         if (!['front', 'side', 'back'].includes(angle)) throw new Error('Photo angle is invalid');
         if (typeof data !== 'string' || !data.startsWith('data:image/')) throw new Error('Photo data is invalid');
         const accountId = owner || progressPhotoOwner();
         const database = await openProgressPhotoDatabase();
+        if (typeof assertAccountRestoreCompatible === 'function') assertAccountRestoreCompatible(accountId);
         const record = {
             id: progressPhotoRecordId(dateKey, angle, accountId),
             owner: accountId,
@@ -79,7 +84,13 @@
         };
         await new Promise((resolve, reject) => {
             const transaction = database.transaction(VFIT_PHOTO_STORE, 'readwrite');
-            transaction.objectStore(VFIT_PHOTO_STORE).put(record);
+            const store = transaction.objectStore(VFIT_PHOTO_STORE);
+            if (options?.keepExisting) {
+                // Check and insert in one transaction: a concurrent user save
+                // must win over an old inline image being migrated.
+                const existing = store.get(record.id);
+                existing.onsuccess = () => { if (!existing.result) store.add(record); };
+            } else store.put(record);
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error || new Error('Photo could not be stored'));
             transaction.onabort = () => reject(transaction.error || new Error('Photo storage was interrupted'));
@@ -141,6 +152,7 @@
     async function migrateProgressPhotosToIndexedDb() {
         const owner = progressPhotoOwner();
         const sourceSnapshot = state;
+        let migrationHadErrors = false;
         if (progressPhotoMigrations.has(owner)) return progressPhotoMigrations.get(owner);
         const migration = (async () => {
             let migrated = 0;
@@ -151,10 +163,12 @@
                     const value = metric.photos[angle];
                     if (typeof value !== 'string' || !value.startsWith('data:image/')) continue;
                     try {
-                        metric.photos[angle] = await putProgressPhoto(metric.date, angle, value, owner);
+                        // A stale inline save must never overwrite a newer gallery image.
+                        metric.photos[angle] = await putProgressPhoto(metric.date, angle, value, owner, { keepExisting: true });
                         migrated += 1;
                         changed = true;
                     } catch (error) {
+                        migrationHadErrors = true;
                         console.warn('A legacy progress photo could not be migrated:', error);
                         // Keep the original inline photo. Never delete it on a failed migration.
                     }
@@ -165,7 +179,9 @@
         })();
         progressPhotoMigrations.set(owner, migration);
         try {
-            return await migration;
+            const count = await migration;
+            if (migrationHadErrors) progressPhotoMigrations.delete(owner);
+            return count;
         } catch (error) {
             progressPhotoMigrations.delete(owner);
             throw error;
@@ -173,7 +189,9 @@
     }
 
     async function reconcileProgressPhotoReferences() {
-        const records = await listProgressPhotos();
+        const owner = progressPhotoOwner(), sourceSnapshot = state;
+        const records = await listProgressPhotos(owner);
+        if (owner !== progressPhotoOwner() || sourceSnapshot !== state) return false;
         let changed = false;
         records.forEach(record => {
             if (!record || !/^\d{4}-\d{2}-\d{2}$/.test(String(record.date || '')) || !['front', 'side', 'back'].includes(record.angle)) return;
@@ -264,13 +282,17 @@
 
     const saveRecordedPhotosWithInlineStorage = saveRecordedPhotos;
     saveRecordedPhotos = async function saveRecordedPhotosWithExpandedStorage() {
+        const owner = progressPhotoOwner(), sourceSnapshot = state;
+        const drafts = { ...state.currentPhotos };
+        const stillThisAccount = () => owner === progressPhotoOwner() && state === sourceSnapshot;
         const date = state.metricsDate || localDateKey();
         const existing = getCurrentMetricEntry();
         const photos = {};
         const referencesToDelete = [];
         let anyChange = false;
         for (const angle of ['front', 'side', 'back']) {
-            const value = state.currentPhotos[angle];
+            if (!stillThisAccount()) return;
+            const value = drafts[angle];
             if (value === 'REMOVE') {
                 anyChange = true;
                 photos[angle] = 'REMOVE';
@@ -279,7 +301,8 @@
             } else if (typeof value === 'string' && value.startsWith('data:image/')) {
                 anyChange = true;
                 try {
-                    photos[angle] = await putProgressPhoto(date, angle, value);
+                    photos[angle] = await putProgressPhoto(date, angle, value, owner);
+                    if (!stillThisAccount()) return;
                 } catch (error) {
                     console.error('Expanded photo save failed:', error);
                     showToast(error.message || 'Photo storage is unavailable — your selected photos are still on screen', 6500);
@@ -287,6 +310,7 @@
                 }
             }
         }
+        if (!stillThisAccount()) return;
         if (!anyChange) {
             showToast('No new photos to save');
             return;
@@ -298,6 +322,7 @@
         await Promise.all(referencesToDelete.map(reference => deleteProgressPhoto(reference).catch(error => {
             console.warn('Old progress photo could not be removed:', error);
         })));
+        if (!stillThisAccount()) return;
         state.currentPhotos = { front: null, side: null, back: null };
         if (typeof markReminderDone === 'function') markReminderDone('photo');
         document.getElementById('progress-photos-modal').style.display = 'none';
@@ -423,6 +448,7 @@
             const parsed = JSON.parse(await file.text());
             const check = await inspectVfitBackup(parsed);
             requireBackupAccount(uid);
+            if (typeof assertAccountRestoreCompatible === 'function') assertAccountRestoreCompatible(uid);
             const imported = check.imported;
             const sourceEmail = parsed && parsed.accountEmail ? String(parsed.accountEmail) : '';
             const accountWarning = sourceEmail && currentUser && sourceEmail.toLowerCase() !== (currentUser.email || '').toLowerCase()
@@ -470,7 +496,7 @@
             requireBackupAccount(uid);
             preferredImport.meta.updatedAt = new Date(Date.now() + 1000).toISOString();
             state = mergeStateSnapshots(state, preferredImport);
-            if (!saveState({ forceBackup: true })) throw new Error('The restored data could not be saved on this device');
+            if (!saveState({ forceBackup: true, allowRecoveryWrite: true })) throw new Error('The restored data could not be saved on this device');
             progressPhotoMigrations.delete(progressPhotoOwner());
             await migrateProgressPhotosToIndexedDb();
             requireBackupAccount(uid);

@@ -25,6 +25,7 @@ const moduleFiles = [
   'metrics/run-tracking.js',
   'metrics/photo-storage.js',
   'core/backup-tools.js',
+  'core/update-safety.js',
   'metrics/progress-charts.js',
   'metrics/graph-context.js',
   'feedback/beta-feedback.js',

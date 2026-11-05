@@ -661,3 +661,7 @@
 }
 .border-orange-100, .border-orange-200 { border-color: #7c3b13 !important; }
 html body #exercise-list .set-row[data-completed="true"] { border-width: 3px !important; }
+
+/* Recovery protection must work before optional online styles load. */
+#data-protection-screen { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 1.25rem; background: #1f2937; }
+#data-protection-screen.hidden { display: none !important; }

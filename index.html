@@ -43,6 +43,17 @@
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="network-status" class="hidden bg-amber-500 text-black px-4 py-2 rounded-full text-xs font-black shadow-xl" role="status" aria-live="polite"></div>
 
+    <div id="data-protection-screen" class="hidden fixed inset-0 z-[2000] flex items-center justify-center bg-slate-900 p-5" role="alert">
+        <div class="w-full max-w-md rounded-3xl bg-black p-6 border border-orange-200">
+            <h1 class="text-xl font-black mb-3">Your saved data is protected</h1>
+            <p id="data-protection-message" class="text-sm mb-3"></p>
+            <p class="text-xs text-slate-400 mb-5">VFIT has paused this update to avoid overwriting your existing save. Close other VFIT tabs and check free space before trying again.</p>
+            <button onclick="retryProtectedUpdate()" class="w-full rounded-xl bg-orange-600 p-3 font-bold mb-3">Try again</button>
+            <button onclick="document.getElementById('backup-import-input').click()" class="w-full rounded-xl border p-3 text-sm font-bold mb-3">Restore a saved backup</button>
+            <button onclick="exportOriginalRecoveryData()" class="w-full rounded-xl border p-3 text-sm font-bold">Download original recovery data</button>
+        </div>
+    </div>
+
     <!-- ========================================== -->
     <!-- AUTH SCREEN -->
     <!-- ========================================== -->
@@ -1515,6 +1526,7 @@
                         <input id="backup-check-input" type="file" accept="application/json,.json" class="hidden" onchange="checkVfitBackup(event)">
                         <p id="backup-verification-status" class="text-xs text-slate-500 mt-3" role="status" aria-live="polite"></p>
                         <input id="backup-import-input" type="file" accept="application/json,.json" class="hidden" onchange="importVfitBackup(event)">
+                        <p class="text-[10px] text-slate-400 mt-3">Updates keep an original recovery copy on this device. Photos stay in the existing gallery. Account deletion also removes recovery copies.</p>
                         <p class="text-[10px] text-slate-400 mt-3">Cloud sync excludes progress photos for privacy. Exported backups include them, so keep backup files private.</p>
                         <p id="vfit-version" class="text-[10px] text-slate-400 mt-1"></p>
                     </div>
@@ -4038,6 +4050,7 @@
     <script src="./metrics/run-tracking.js"></script>
     <script src="./metrics/photo-storage.js"></script>
     <script src="./core/backup-tools.js"></script>
+    <script src="./core/update-safety.js"></script>
     <script src="./metrics/progress-charts.js"></script>
     <script src="./metrics/graph-context.js"></script>
     <script src="./feedback/beta-feedback.js"></script>

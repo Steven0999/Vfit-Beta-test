@@ -503,6 +503,9 @@
                     console.warn('The deleted account had local progress photos that could not be removed:', error);
                 });
             }
+            if (typeof deleteUpdateSafetyCopies === 'function') {
+                await deleteUpdateSafetyCopies(uid).catch(error => console.warn('Update recovery copies could not be removed:', error));
+            }
             localStorage.removeItem(stateStorageKey(uid));
             localStorage.removeItem(recoveryStorageKey(uid));
             localStorage.removeItem(notificationStorageKey('vfit_seen_notifs'));

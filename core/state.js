@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.53';
+    const VFIT_APP_VERSION = '2.1.0-beta.54';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -1082,7 +1082,7 @@
     }
 
     function scheduleCloudSnapshotSync(delay) {
-        if (!currentUser) return;
+        if (!currentUser || accountDataWriteBlocked(currentUser.uid)) return;
         if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
             cloudDirty = false;
             updateDataSyncStatus();
@@ -1096,6 +1096,7 @@
     }
 
     async function writeCloudSnapshot() {
+        if (accountDataWriteBlocked(currentUser && currentUser.uid)) return false;
         if (state.privacySettings && state.privacySettings.cloudHealthData === false) {
             cloudDirty = false;
             updateDataSyncStatus();
@@ -1112,6 +1113,12 @@
         cloudSyncError = null;
         updateDataSyncStatus();
         cloudSyncPromise = (async () => {
+            // A failed login read must never let a blank/stale device overwrite
+            // the account's existing cloud save when connectivity returns.
+            if (cloudReconciledUid !== uid) await loadFirebaseUserData();
+            if (!currentUser || currentUser.uid !== uid || accountDataWriteBlocked(uid)) return false;
+            if (cloudReconciledUid !== uid) { cloudDirty = true; return false; }
+            if (state.privacySettings?.cloudHealthData === false) { cloudDirty = false; return false; }
             const snapshot = buildCloudSnapshot();
             await db.collection('users').doc(uid).set({
                 name: currentUser.displayName || (firebaseUserData && firebaseUserData.name) || 'User',
@@ -1139,7 +1146,7 @@
         }).finally(() => {
             cloudSyncPromise = null;
             updateDataSyncStatus();
-            if (cloudDirty && currentUser && navigator.onLine) scheduleCloudSnapshotSync(5000);
+            if (cloudDirty && currentUser && navigator.onLine && !accountDataWriteBlocked(currentUser.uid)) scheduleCloudSnapshotSync(5000);
         });
         return cloudSyncPromise;
     }
@@ -1186,6 +1193,7 @@
     async function loadFirebaseUserData() {
         if (!currentUser) return false;
         const uid = currentUser.uid;
+        cloudReconciledUid = null;
         const userRef = db.collection('users').doc(uid);
         let exists = false;
         try {
@@ -1217,6 +1225,10 @@
                     const cloudTime = valueTime(firebaseUserData.snapshotUpdatedAt);
                     if (cloudTime) remoteSnapshot.meta.updatedAt = new Date(cloudTime).toISOString();
                 }
+                if (snapshotNeedsNewerApp(remoteSnapshot) || Number(firebaseUserData.snapshotSchemaVersion || 0) > VFIT_STATE_SCHEMA_VERSION) {
+                    protectAccountData(uid, 'Your cloud save was written by a newer VFIT version. Open the latest version to continue.');
+                    return false;
+                }
                 if (Object.keys(remoteSnapshot).length > 1) state = mergeStateSnapshots(state, remoteSnapshot);
                 if (isPlainRecord(firebaseUserData.privacy)) {
                     state.privacySettings = Object.assign({}, state.privacySettings, firebaseUserData.privacy);
@@ -1224,6 +1236,7 @@
                 applyExercisePrefsFromCloud(state);
             }
 
+            cloudReconciledUid = uid;
             const approved = await isApprovedCoach(currentUser.email);
             if (!currentUser || currentUser.uid !== uid) return false;
             currentUserRole = approved ? 'coach' : 'member';
@@ -1242,16 +1255,21 @@
                 });
             }
             await userRef.set(baseProfile, { merge: true });
+            if (!currentUser || currentUser.uid !== uid) return false;
             await syncUserDirectory(currentUser, currentUserRole, baseProfile.name);
+            if (!currentUser || currentUser.uid !== uid) return false;
             firebaseUserData = Object.assign({}, firebaseUserData, baseProfile);
             state.meta.lastCloudSyncAt = new Date().toISOString();
             saveState({ skipCloud: true, preserveUpdatedAt: true, forceBackup: true });
             cloudSyncError = null;
             return true;
         } catch (error) {
+            if (!currentUser || currentUser.uid !== uid) return false;
             cloudSyncError = error;
             console.warn('Using device data; Firebase is currently unavailable:', error);
-            saveState({ skipCloud: true, preserveUpdatedAt: true });
+            // A failed first read must not turn an empty device into an
+            // apparently valid saved account on the next launch.
+            if (cloudReconciledUid === uid) saveState({ skipCloud: true, preserveUpdatedAt: true });
             updateDataSyncStatus();
             return false;
         }
@@ -5212,6 +5230,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
     const DEFAULT_STATE = {
         meta: {
             schemaVersion: VFIT_STATE_SCHEMA_VERSION,
+            appVersion: VFIT_APP_VERSION,
             updatedAt: null,
             lastCloudSyncAt: null
         },
@@ -5587,13 +5606,22 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
 
     function saveState(options) {
         const config = options || {};
+        const key = stateStorageKey(config.uid);
+        if (accountDataWriteBlocked(config.uid) && !config.allowRecoveryWrite) return false;
+        const previousSave = readStoredJson(key);
+        if (snapshotNeedsNewerApp(previousSave)) {
+            protectAccountData(config.uid || currentUser?.uid || 'guest', 'A newer VFIT version saved data on this device. Reopen the latest version to keep it safe.');
+            showAccountDataProtection(config.uid || currentUser?.uid || 'guest');
+            return false;
+        }
         if (!isPlainRecord(state.meta)) state.meta = deepClone(DEFAULT_STATE.meta);
         state.meta.schemaVersion = VFIT_STATE_SCHEMA_VERSION;
+        state.meta.appVersion = VFIT_APP_VERSION;
         if (!config.preserveUpdatedAt) state.meta.updatedAt = new Date().toISOString();
 
-        const key = stateStorageKey(config.uid);
         try {
             localStorage.setItem(key, JSON.stringify(state));
+            if (config.allowRecoveryWrite) accountDataGuards.delete(String(config.uid || currentUser?.uid || 'guest'));
             localSaveCounter += 1;
             if (config.forceBackup || localSaveCounter % 10 === 1 || !localStorage.getItem(recoveryStorageKey(config.uid))) {
                 try {
@@ -5648,6 +5676,14 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             }
         }
 
+        if (snapshotNeedsNewerApp(parsed)) {
+            protectAccountData(accountId, 'This save needs a newer VFIT version. It has not been changed.');
+            state = normalizeState(DEFAULT_STATE); return 'protected';
+        }
+        if (!parsed && (localStorage.getItem(stateStorageKey(accountId)) || localStorage.getItem(recoveryStorageKey(accountId)))) {
+            protectAccountData(accountId, 'The existing save could not be read. It has been kept unchanged.');
+            state = normalizeState(DEFAULT_STATE); return 'protected';
+        }
         state = normalizeState(parsed || DEFAULT_STATE);
         if (source === 'legacy' || source === 'recovery') {
             saveState({ uid: accountId, skipCloud: true, preserveUpdatedAt: true, forceBackup: true });
@@ -5825,7 +5861,6 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             };
             state.nutritionHistory.unshift(entry);
 
-            state.nutritionHistory = state.nutritionHistory.slice(0, 365);
 
             saveState();
         } else {

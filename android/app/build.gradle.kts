@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
 }
@@ -8,6 +11,19 @@ require((vfitKeystorePath == null) == (vfitKeystorePassword == null)) {
     "Configure both VFIT_KEYSTORE_PATH and VFIT_KEYSTORE_PASSWORD for persistent signing"
 }
 
+
+// The package ID and certificate are the installed app's data identity.
+// Never silently rotate this key or tell users to uninstall to accept an update.
+if (vfitKeystorePath != null && vfitKeystorePassword != null) {
+    val keyStore = KeyStore.getInstance("PKCS12")
+    file(vfitKeystorePath).inputStream().use { keyStore.load(it, vfitKeystorePassword.toCharArray()) }
+    val certificate = requireNotNull(keyStore.getCertificate("vfit")) { "VFIT signing alias is missing" }
+    val fingerprint = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    val expected = rootProject.file("vfit-update-certificate.sha256").readText().trim()
+    require(fingerprint == expected) { "The signing key changed. Update blocked to protect existing installations and their saved data." }
+}
+
 android {
     namespace = "com.vaughanfitness.vfit"
     compileSdk = 36
@@ -16,8 +32,8 @@ android {
         applicationId = "com.vaughanfitness.vfit"
         minSdk = 28
         targetSdk = 36
-        versionCode = 53
-        versionName = "2.1.0-beta.53"
+        versionCode = 54
+        versionName = "2.1.0-beta.54"
     }
 
     signingConfigs {
@@ -34,7 +50,15 @@ android {
 
     buildTypes {
         debug {
-            if (vfitKeystorePath != null) signingConfig = signingConfigs.getByName("vfitBeta")
+            if (vfitKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("vfitBeta")
+            } else {
+                // A development identity installs alongside VFIT.
+                // It cannot replace the real app or its private data directory.
+                applicationIdSuffix = ".test"
+                versionNameSuffix = "-test"
+                resValue("string", "app_name", "VFIT Test")
+            }
         }
         release {
             if (vfitKeystorePath != null) signingConfig = signingConfigs.getByName("vfitBeta")
@@ -95,3 +119,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
 }
+
+val verifyVfitUpdateSigning by tasks.registering {
+    doLast { require(vfitKeystorePath != null) { "The original VFIT signing key is required for a release update." } }
+}
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" || it.name == "packageRelease" }
+    .configureEach { dependsOn(verifyVfitUpdateSigning) }

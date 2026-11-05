@@ -47,6 +47,15 @@ document.getElementById('auth-screen').style.display='none';document.getElementB
 applyTrainingExperienceMode();
 `;
 const checks={
+  updates:`
+    const before=JSON.stringify({...state,meta:{schemaVersion:999,appVersion:'2.1.0-beta.999'},futureSavedField:{note:'Keep the original'}});
+    localStorage.setItem(stateStorageKey(currentUser.uid),before);
+    expect(!await prepareAccountDataForUpdate(currentUser.uid),'newer save must pause the update');
+    expect(localStorage.getItem(stateStorageKey(currentUser.uid))===before,'protected original changed');
+    expect((await originalAccountCopies(currentUser.uid))[0].originals.primaryRaw===before,'original copy missing');
+    showAccountDataProtection(currentUser.uid);
+    expect(!document.getElementById('data-protection-screen').classList.contains('hidden'),'recovery screen missing');
+  `,
   active:`
     switchTab('training');startSavedWorkout('push',20);
     const card=document.querySelector('#exercise-list > div'),row=card.querySelector('.set-row');
@@ -89,7 +98,7 @@ const checks={
   `
 };
 for(const [name,check] of Object.entries(checks)){
-  const script=`<script>try { ${setup}\n${check}\nif(window.__browserErrors.length)throw new Error(window.__browserErrors.join('; '));document.body.dataset.browserCheck='passed'; } catch(error) { document.body.dataset.browserCheck='failed';const report=document.createElement('pre');report.id='browser-check-error';report.textContent=error.stack;document.body.prepend(report);console.error(error); }</script>`;
+  const script=`<script>(async()=>{try { ${setup}\n${check}\nif(window.__browserErrors.length)throw new Error(window.__browserErrors.join('; '));document.body.dataset.browserCheck='passed'; } catch(error) { document.body.dataset.browserCheck='failed';const report=document.createElement('pre');report.id='browser-check-error';report.textContent=error.stack;document.body.prepend(report);console.error(error); }})()</script>`;
   fs.writeFileSync(path.join(destination,name+'.html'),html.replace('</body>',script+'</body>'));
 }
 console.log('Created isolated browser fixtures in '+destination);

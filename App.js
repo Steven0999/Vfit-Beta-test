@@ -4,6 +4,8 @@
 
     auth.onAuthStateChanged(async (user) => {
         const sessionGeneration = ++authSessionGeneration;
+        cloudReconciledUid = null;
+        hideAccountDataProtection();
         const authScreen = document.getElementById('auth-screen');
         const appScreen = document.getElementById('app-screen');
 
@@ -64,10 +66,20 @@
         // That prevents a blank/default dashboard flashing and then overwriting
         // a returning user's cloud snapshot.
         if (appScreen) appScreen.style.display = 'none';
-        loadState(user.uid);
+        if (!await prepareAccountDataForUpdate(user.uid)) {
+            if (sessionGeneration === authSessionGeneration && currentUser?.uid === user.uid) showAccountDataProtection(user.uid);
+            return;
+        }
+        if (sessionGeneration !== authSessionGeneration || currentUser?.uid !== user.uid) return;
+        const localSource = loadState(user.uid);
         await resolveOwnerAccess(user);
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
-        await loadFirebaseUserData();
+        const cloudLoaded = await loadFirebaseUserData();
+        if (!cloudLoaded && localSource === 'default') protectAccountData(user.uid, 'Your saved account information could not be downloaded. Connect to the internet and try again; your cloud save has not been replaced.');
+        if (accountDataWriteBlocked(user.uid)) {
+            if (sessionGeneration === authSessionGeneration) showAccountDataProtection(user.uid);
+            return;
+        }
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
         await resolveFoodDatabaseAccess(user);
         if (sessionGeneration !== authSessionGeneration || !currentUser || currentUser.uid !== user.uid) return;
@@ -127,6 +139,7 @@
             switchTab(initialTab, { scroll: false });
         }
 
+        showAccountRecoveryNotice(user.uid);
         refreshNotifBadge();
         restorePushRegistration();
         clearInterval(window._notifPoll);
