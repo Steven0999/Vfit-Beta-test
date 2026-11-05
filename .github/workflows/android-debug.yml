@@ -33,6 +33,55 @@ jobs:
         with:
           packages: platform-tools platforms;android-36 build-tools;36.0.0
 
+      - name: Run application checks
+        run: |
+          node tests/static-audit.cjs
+          node tests/membership.cjs
+          node tests/membership-functions.cjs
+          node tests/state-smoke.cjs
+          node tests/photo-storage.cjs
+          node tests/food-catalog.cjs
+          node tests/food-photo.cjs
+          git diff --check
+
+      - name: Render mobile UI checks
+        run: |
+          node tests/browser-check.cjs "$RUNNER_TEMP/vfit-ui"
+          for page in active plans metrics nutrition; do
+            google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --no-first-run --allow-file-access-from-files --window-size=390,920 --virtual-time-budget=5000 --screenshot="$RUNNER_TEMP/vfit-ui/$page.png" "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null
+            google-chrome --headless --no-sandbox --disable-gpu --no-first-run --allow-file-access-from-files --virtual-time-budget=5000 --dump-dom "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null > "$RUNNER_TEMP/vfit-ui/$page.dom.html"
+            test "$(rg -c 'data-browser-check="passed"' "$RUNNER_TEMP/vfit-ui/$page.dom.html")" = "1"
+          done
+
+      - name: Upload UI checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfit-beta-ui-checks
+          path: |
+            ${{ runner.temp }}/vfit-ui/*.png
+            ${{ runner.temp }}/vfit-ui/*.dom.html
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Configure persistent beta signing when available
+        env:
+          VFIT_KEYSTORE_BASE64: ${{ secrets.VFIT_KEYSTORE_BASE64 }}
+          VFIT_KEYSTORE_PASSWORD: ${{ secrets.VFIT_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$VFIT_KEYSTORE_BASE64" ] && [ -n "$VFIT_KEYSTORE_PASSWORD" ]; then
+            umask 077
+            printf '%s' "$VFIT_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/vfit-beta.p12"
+            printf 'VFIT_KEYSTORE_PATH=%s\n' "$RUNNER_TEMP/vfit-beta.p12" >> "$GITHUB_ENV"
+            printf 'VFIT_KEYSTORE_PASSWORD=%s\n' "$VFIT_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo 'Persistent VFIT signing enabled.'
+          elif [ -n "$VFIT_KEYSTORE_BASE64" ] || [ -n "$VFIT_KEYSTORE_PASSWORD" ]; then
+            echo 'Both signing secrets must be configured.' >&2
+            exit 1
+          else
+            echo 'Signing secrets are absent: this CI artifact uses an ephemeral debug key.'
+          fi
+
       - name: Build debug APK
         run: gradle -p android :app:assembleDebug --stacktrace
 
@@ -43,3 +92,15 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload APK signing tool for private local signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfit-apk-signing-tool
+          path: ${{ env.ANDROID_HOME }}/build-tools/36.0.0/lib/apksigner.jar
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/vfit-beta.p12"

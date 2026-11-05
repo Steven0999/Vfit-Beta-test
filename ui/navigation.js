@@ -340,11 +340,13 @@
             workout.exercises.forEach(ex => {
                 details += `\n${ex.name}:\n`;
                 (ex.sets || []).forEach((s, i) => {
-                    details += `  Set ${i + 1}: ${s.reps} reps × ${s.weight}kg\n`;
+                    details += `  Set ${i + 1}${s.setType && s.setType!=='working'?' ('+s.setType+')':''}: ${s.reps} reps × ${s.weight}kg\n`;
                 });
             });
         }
 
+        if (workout.timeBudget) details += `\nTime version: ${workout.timeBudget} minutes`;
+        if (workout.skippedExercises?.length) details += `\nOptional exercises left out: ${workout.skippedExercises.join(', ')}`;
         if (workout.distance) details += `\nDistance: ${workout.distance} km`;
         if (workout.notes) details += `\nNotes: ${workout.notes}`;
 
@@ -1395,7 +1397,7 @@
         const lifts = new Set();
         (state.workoutHistory || []).forEach(w => {
             (w.exercises || []).forEach(ex => {
-                const hasWeight = (ex.sets || []).some(s => !isNaN(parseFloat(s.weight)));
+                const hasWeight = (ex.sets || []).filter(isWorkingSet).some(s => !isNaN(parseFloat(s.weight)));
                 if (ex.name && hasWeight) lifts.add(ex.name);
             });
         });
@@ -1451,7 +1453,7 @@
                 let best = assisted ? null : 0;
                 (w.exercises || []).forEach(ex => {
                     if (ex.name !== name) return;
-                    (ex.sets || []).forEach(s => {
+                    (ex.sets || []).filter(isWorkingSet).forEach(s => {
                         const kg = parseFloat(s.weight);
                         if (isNaN(kg)) return;
                         if (assisted) { if (best === null || kg < best) best = kg; }
@@ -1611,7 +1613,7 @@
             if (!w.date || w.date > date) return;
             (w.exercises || []).forEach(ex => {
                 if (ex.name !== exerciseName) return;
-                (ex.sets || []).forEach(s => {
+                (ex.sets || []).filter(isWorkingSet).forEach(s => {
                     const kg = parseFloat(s.weight);
                     if (isNaN(kg)) return;
                     if (assisted) { if (best === null || kg < best) best = kg; }
@@ -1641,7 +1643,7 @@
             const bw = useRelative ? getBodyweightForDate(w.date) : null;
             (w.exercises || []).forEach(ex => {
                 if (ex.name !== exerciseName) return;
-                (ex.sets || []).forEach(s => {
+                (ex.sets || []).filter(isWorkingSet).forEach(s => {
                     const kg = parseFloat(s.weight);
                     if (!Number.isFinite(kg)) return;
                     const value = useRelative && bw && bw.weight > 0 ? kg / bw.weight : kg;
@@ -2118,7 +2120,7 @@
                 if (ex.name === exerciseName) {
                     let maxWeight = 0;
                     let totalReps = 0;
-                    (ex.sets || []).forEach(s => {
+                    (ex.sets || []).filter(isWorkingSet).forEach(s => {
                         const weight = parseFloat(s.weight) || 0;
                         const reps = parseInt(s.reps) || 0;
                         if (weight > maxWeight) maxWeight = weight;

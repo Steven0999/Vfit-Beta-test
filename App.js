@@ -8,8 +8,11 @@
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
+            if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
             if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
+            if (typeof stopSessionRestTimer === 'function') stopSessionRestTimer();
             if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
+            if (typeof resetNutritionTemplateUI === 'function') resetNutritionTemplateUI();
             stopMembershipSync();
             closeManualDiaryFood();
             closeFoodPhotoEstimate();
@@ -48,8 +51,11 @@
         stopMembershipSync();
         closeManualDiaryFood();
         closeFoodPhotoEstimate();
+        if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
         if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
+        if (typeof stopSessionRestTimer === 'function') stopSessionRestTimer();
         if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
+        if (typeof resetNutritionTemplateUI === 'function') resetNutritionTemplateUI();
         currentUser = user;
         currentUserIsOwner = false;
         currentUserCanManageFoodDatabase = false;

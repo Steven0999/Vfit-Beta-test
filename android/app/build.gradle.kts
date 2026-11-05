@@ -2,6 +2,12 @@ plugins {
     id("com.android.application")
 }
 
+val vfitKeystorePath = providers.environmentVariable("VFIT_KEYSTORE_PATH").orNull
+val vfitKeystorePassword = providers.environmentVariable("VFIT_KEYSTORE_PASSWORD").orNull
+require((vfitKeystorePath == null) == (vfitKeystorePassword == null)) {
+    "Configure both VFIT_KEYSTORE_PATH and VFIT_KEYSTORE_PASSWORD for persistent signing"
+}
+
 android {
     namespace = "com.vaughanfitness.vfit"
     compileSdk = 36
@@ -10,12 +16,28 @@ android {
         applicationId = "com.vaughanfitness.vfit"
         minSdk = 28
         targetSdk = 36
-        versionCode = 52
-        versionName = "2.1.0-beta.52"
+        versionCode = 53
+        versionName = "2.1.0-beta.53"
+    }
+
+    signingConfigs {
+        if (vfitKeystorePath != null && vfitKeystorePassword != null) {
+            create("vfitBeta") {
+                storeFile = file(vfitKeystorePath)
+                storeType = "PKCS12"
+                storePassword = vfitKeystorePassword
+                keyAlias = "vfit"
+                keyPassword = vfitKeystorePassword
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (vfitKeystorePath != null) signingConfig = signingConfigs.getByName("vfitBeta")
+        }
         release {
+            if (vfitKeystorePath != null) signingConfig = signingConfigs.getByName("vfitBeta")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

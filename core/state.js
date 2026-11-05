@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.52';
+    const VFIT_APP_VERSION = '2.1.0-beta.53';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -925,12 +925,12 @@
         const arrayFields = new Set([
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'checkIns', 'coachConversations'
+            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'nutritionDayTemplates', 'deletedNutritionTemplateIds', 'metricAnnotations', 'deletedMetricAnnotationIds', 'checkIns', 'coachConversations'
         ]);
         const recordFields = new Set([
             'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
-            'weeklyMealPlan', 'shoppingChecks'
+            'weeklyMealPlan', 'shoppingChecks', 'exercisePreferences', 'weeklyTrainingPlans', 'metricTargets', 'metricChartPreferences'
         ]);
         if (preferRemote) {
             Object.keys(DEFAULT_STATE).forEach(key => {
@@ -983,6 +983,14 @@
         merged.savedWorkouts = mergeUniqueItems(local.savedWorkouts, remote.savedWorkouts, item => item.id, preferRemote,
             (older, newer) => valueTime(older.updatedAt) > valueTime(newer.updatedAt) ? older : newer)
             .filter(plan => !deletedPlans.has(plan.id));
+        for (const [itemsKey, deletedKey] of [['nutritionDayTemplates', 'deletedNutritionTemplateIds'], ['metricAnnotations', 'deletedMetricAnnotationIds']]) {
+            merged[deletedKey] = Array.from(new Set([...local[deletedKey], ...remote[deletedKey]]));
+            const deleted = new Set(merged[deletedKey]);
+            merged[itemsKey] = mergeUniqueItems(local[itemsKey], remote[itemsKey], item => item.id, preferRemote,
+                (older, newer) => valueTime(older.updatedAt) > valueTime(newer.updatedAt) ? older : newer).filter(item => !deleted.has(item.id));
+        }
+        merged.workoutRotation = deepClone(valueTime(local.workoutRotation.updatedAt) > valueTime(remote.workoutRotation.updatedAt)
+            ? local.workoutRotation : remote.workoutRotation);
         merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
         merged.coachConversations = mergeUniqueItems(local.coachConversations, remote.coachConversations, itemKey, preferRemote);
         merged.metricsHistory = mergeUniqueItems(
@@ -1005,6 +1013,12 @@
             const newer = preferRemote ? remote[key] : local[key];
             merged[key] = Object.assign({}, older || {}, newer || {});
         });
+        for (const key of ['exercisePreferences', 'weeklyTrainingPlans', 'metricTargets']) {
+            for (const id of new Set([...Object.keys(local[key]), ...Object.keys(remote[key])])) {
+                const left = local[key][id], right = remote[key][id];
+                merged[key][id] = deepClone(!right || left && valueTime(left.updatedAt) > valueTime(right.updatedAt) ? left : right);
+            }
+        }
         merged.disabledExercises = {
             gym: Array.from(new Set([...(local.disabledExercises.gym || []), ...(remote.disabledExercises.gym || [])])),
             home: Array.from(new Set([...(local.disabledExercises.home || []), ...(remote.disabledExercises.home || [])]))
@@ -2060,7 +2074,7 @@
         const prettyDate = new Date(w.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
         let totalVolume = 0;
-        (w.exercises || []).forEach(ex => (ex.sets || []).forEach(s => {
+        (w.exercises || []).forEach(ex => (ex.sets || []).filter(isWorkingSet).forEach(s => {
             const kg = parseFloat(s.weight), reps = parseInt(s.reps);
             if (!isNaN(kg) && !isNaN(reps)) totalVolume += kg * reps;
         }));
@@ -2071,12 +2085,12 @@
             <div class="flex gap-2 mb-4 flex-wrap">
                 ${w.duration ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">⏱ ${escapeHtml(w.duration)}</span>` : ''}
                 <span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${(w.exercises || []).length} exercises</span>
-                ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg volume</span>` : ''}
+                ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg working volume</span>` : ''}
             </div>
             ${(w.exercises || []).map(ex => {
                 const rows = (ex.sets || []).map((s, i) => `
                     <div class="flex items-center gap-3 py-1.5 border-b border-slate-100 last:border-0">
-                        <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}</span>
+                        <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}${s.setType && s.setType!=='working'?' · '+escapeHtml(s.setType):''}</span>
                         <span class="text-sm font-bold">${escapeHtml(s.weight === '' || s.weight == null ? '—' : s.weight)} kg</span>
                         <span class="text-slate-300">×</span>
                         <span class="text-sm font-bold">${escapeHtml(s.reps === '' || s.reps == null ? '—' : s.reps)} reps</span>
@@ -2114,7 +2128,7 @@
             titleEl.textContent = w.focus || 'Workout';
 
             let totalVolume = 0;
-            (w.exercises || []).forEach(ex => (ex.sets || []).forEach(s => {
+            (w.exercises || []).forEach(ex => (ex.sets || []).filter(isWorkingSet).forEach(s => {
                 const kg = parseFloat(s.weight), reps = parseInt(s.reps);
                 if (!isNaN(kg) && !isNaN(reps)) totalVolume += kg * reps;
             }));
@@ -2124,12 +2138,12 @@
                 <div class="flex gap-2 mb-4 flex-wrap">
                     ${w.duration ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">⏱ ${escapeHtml(w.duration)}</span>` : ''}
                     <span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${(w.exercises || []).length} exercises</span>
-                    ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg volume</span>` : ''}
+                    ${totalVolume > 0 ? `<span class="text-xs font-bold bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full">${Math.round(totalVolume).toLocaleString()} kg working volume</span>` : ''}
                 </div>
                 ${(w.exercises || []).map(ex => {
                     const rows = (ex.sets || []).map((s, i) => `
                         <div class="flex items-center gap-3 py-1.5 border-b border-slate-100 last:border-0">
-                            <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}</span>
+                            <span class="text-xs font-black text-slate-400 w-12">Set ${i + 1}${s.setType && s.setType!=='working'?' · '+escapeHtml(s.setType):''}</span>
                             <span class="text-sm font-bold">${escapeHtml(s.weight === '' || s.weight == null ? '—' : s.weight)} kg</span>
                             <span class="text-slate-300">×</span>
                             <span class="text-sm font-bold">${escapeHtml(s.reps === '' || s.reps == null ? '—' : s.reps)} reps</span>
@@ -5322,6 +5336,16 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         customExercises: [],
         savedWorkouts: [],
         deletedSavedWorkoutIds: [],
+        workoutRotation: { planIds: [], updatedAt: '' },
+        exercisePreferences: {},
+        weeklyTrainingPlans: {},
+        metricAnnotations: [],
+        deletedMetricAnnotationIds: [],
+        metricTargets: {},
+        metricChartPreferences: { showTrend: true, showTarget: true },
+        nutritionDayTemplates: [],
+        deletedNutritionTemplateIds: [],
+        backupVerification: {},
         // Exercises the user has turned OFF (not available at their gym).
         // Stored as { gym: ['Machine Bicep Curl', ...], home: [...] }
         disabledExercises: { gym: [], home: [] },
@@ -5468,18 +5492,29 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         const arrayFields = [
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'checkIns', 'coachConversations'
+            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'nutritionDayTemplates', 'deletedNutritionTemplateIds', 'metricAnnotations', 'deletedMetricAnnotationIds', 'checkIns', 'coachConversations'
         ];
         arrayFields.forEach(key => {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
         });
+        normalized.workoutRotation = isPlainRecord(raw.workoutRotation)
+            ? { planIds: Array.isArray(raw.workoutRotation.planIds) ? [...new Set(raw.workoutRotation.planIds.filter(id => typeof id === 'string'))] : [], updatedAt: String(raw.workoutRotation.updatedAt || '') }
+            : deepClone(DEFAULT_STATE.workoutRotation);
+        for (const [itemsKey, deletedKey] of [['nutritionDayTemplates', 'deletedNutritionTemplateIds'], ['metricAnnotations', 'deletedMetricAnnotationIds']]) {
+            normalized[deletedKey] = [...new Set(normalized[deletedKey].filter(id => typeof id === 'string'))];
+            normalized[itemsKey] = normalized[itemsKey].filter(item => isPlainRecord(item) && typeof item.id === 'string' && !normalized[deletedKey].includes(item.id));
+        }
+        normalized.nutritionDayTemplates = normalized.nutritionDayTemplates.filter(item => typeof item.name === 'string' && Array.isArray(item.entries)).map(item => ({
+            ...item, name: item.name.slice(0,80), entries: item.entries.filter(entry => isPlainRecord(entry) && isPlainRecord(entry.food) && typeof entry.food.name === 'string')
+        }));
+        normalized.metricAnnotations = normalized.metricAnnotations.filter(item => typeof item.text === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(item.date || '')).map(item=>({...item,text:item.text.slice(0,200)}));
         normalized.deletedSavedWorkoutIds = Array.from(new Set(normalized.deletedSavedWorkoutIds.filter(id => typeof id === 'string')));
         normalized.savedWorkouts = normalized.savedWorkouts.filter(plan => isPlainRecord(plan) && typeof plan.id === 'string'
             && typeof plan.name === 'string' && Array.isArray(plan.exercises) && !normalized.deletedSavedWorkoutIds.includes(plan.id));
         const recordFields = [
             'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
-            'weeklyMealPlan', 'shoppingChecks'
+            'weeklyMealPlan', 'shoppingChecks', 'exercisePreferences', 'weeklyTrainingPlans', 'metricTargets', 'metricChartPreferences'
         ];
         recordFields.forEach(key => {
             if (!isPlainRecord(normalized[key])) normalized[key] = {};
@@ -6020,7 +6055,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
             profile: renderProfile,
             settings: () => { renderSettings(); renderCoachingHub(); },
             dashboard: renderDashboard,
-            training: renderCoachPlanInTraining,
+            training: () => { renderCoachPlanInTraining(); renderTrainingTools(); },
             metrics: () => {
                 const picker = document.getElementById('metrics-date-picker');
                 if (picker && !picker.value) picker.value = state.metricsDate || localDateKey();

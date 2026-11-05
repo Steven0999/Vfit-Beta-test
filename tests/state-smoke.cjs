@@ -9,9 +9,11 @@ const moduleFiles = [
   'core/state.js',
   'training/training.js',
   'training/workout-plans.js',
+  'training/session-tools.js',
   'nutrition/food-catalog.js',
   'nutrition/meal-planner.js',
   'nutrition/scanner.js',
+  'nutrition/day-templates.js',
   'ui/navigation.js',
   'coaching/coaching.js',
   'firebase/firebase-sync.js',
@@ -20,7 +22,9 @@ const moduleFiles = [
   'metrics/step-tracking.js',
   'metrics/run-tracking.js',
   'metrics/photo-storage.js',
+  'core/backup-tools.js',
   'metrics/progress-charts.js',
+  'metrics/graph-context.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
   'App.js'
@@ -205,6 +209,14 @@ sandbox.globalThis = sandbox;
 
 const expose = `
 ;globalThis.__vfitTest = {
+  isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
+  nextRotationWorkout, weeklyPlannedCompletedVolume, trainingWeekStart,
+  toggleCompletedSet, stopSessionRestTimer, restoreSessionRestTimer, updateSessionRestTimer,
+  saveSessionExerciseSettings, cardSessionSettings, getPersonalRecord, getLastPerformance,
+  metricRollingTrend, metricGraphContext, setMetricTarget, setMetricChartPreference,
+  openMetricContextEditor, saveMetricAnnotation, deleteMetricAnnotation,
+  nutritionTemplateEntries, nutritionTemplatePortion, openNutritionTemplates, saveNutritionDayTemplate,
+  applyNutritionDayTemplate, updateNutritionDayTemplate, deleteNutritionDayTemplate,
   cleanSavedWorkout,
   startSavedWorkout,
   addWorkoutPlanExercise,
@@ -1952,6 +1964,15 @@ app.restoreActiveWorkout();
 activePlanSnapshot = app.snapshotActiveWorkout();
 assert.equal(activePlanSnapshot.exercises[0].sets.length, 2, 'restoring a session must not add duplicate or default sets');
 assert.equal(activePlanSnapshot.exercises[0].sets[0].weight, '72.5');
+assert.equal(activePlanSnapshot.exercises[0].sets[0].completed, false, 'prefilled targets are not completed sets');
+app.saveWorkout();
+app.finalizeWorkoutSave(true);
+assert.equal(planState.workoutHistory.length, 1, 'unticked targets must not enter history');
+document.querySelectorAll('#exercise-list > div').forEach(card=>card.querySelectorAll('.set-row').forEach(row=>app.toggleCompletedSet(row.id,card.id.replace('card-',''),true)));
+assert.ok(app.getState().activeWorkout.restTimer.endAt > Date.now(), 'a completed set starts its exercise rest timer');
+app.restoreActiveWorkout();
+assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].completed, true, 'completion survives resume');
+assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].rir, '0', 'resume preserves RIR zero');
 app.saveWorkout();
 app.finalizeWorkoutSave(true);
 assert.equal(planState.workoutHistory.length, 2, 'the normal Finish Workout flow must save a session started from a plan');
@@ -1971,6 +1992,8 @@ planState.savedWorkouts.push(homeSavedPlan);
 app.startSavedWorkout('home-plan');
 assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].weight, '0', 'home bodyweight sessions must keep their zero external load');
 assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].rir, '0');
+const homeCompletionCard = document.querySelectorAll('#exercise-list > div')[0];
+app.toggleCompletedSet(homeCompletionCard.querySelector('.set-row').id,homeCompletionCard.id.replace('card-',''),true);
 app.saveWorkout();
 app.finalizeWorkoutSave(true);
 assert.equal(planState.workoutHistory[0].exercises[0].sets[0].weight, '0');
@@ -2117,3 +2140,116 @@ app.setMetricProgressMetric('neck');
 assert.equal(app.metricProgressViewForTest().metric, 'neck');
 
 console.log('VFIT state smoke tests passed, including saved plans, sync deletions, core selection and calendar progress ranges');
+
+// Session targets, real completion and calendar-week comparisons share one set definition.
+const toolsState = app.defaultState();
+app.setState(toolsState); app.setUser({uid:'tools-owner'}); app.setWorkoutContext({env:'gym'});
+assert.equal(app.isWorkingSet({reps:8,weight:50}),true,'legacy history remains working history');
+assert.equal(app.isWorkingSet({setType:'warmup',completed:true}),false);
+assert.equal(app.isWorkingSet({setType:'working',completed:false}),false);
+const progressionSets=[{reps:12,weight:50,rir:2},{reps:12,weight:50,rir:2}];
+toolsState.workoutHistory=[{date:app.localDateKey(),exercises:[{name:'Bench Press',sets:progressionSets}]}];
+let perExercise=app.sessionProgressionSuggestion('Bench Press',{repMin:8,repMax:12,targetRir:2,increment:1.25},2,toolsState);
+assert.equal(perExercise.ready,true); assert.equal(perExercise.suggested,51.25);
+progressionSets[1].reps=11;
+assert.equal(app.sessionProgressionSuggestion('Bench Press',{repMax:12,targetRir:2},2,toolsState).ready,false,'every working set must meet the top of the range');
+progressionSets[1].reps=12;progressionSets[1].rir='';
+assert.equal(app.sessionProgressionSuggestion('Bench Press',{repMax:12,targetRir:2},2,toolsState).ready,false,'missing RIR cannot trigger an increase');
+progressionSets[1].rir=2;
+toolsState.deloadPlan=app.buildDeloadPlan(app.localDateKey(),'test');
+assert.equal(app.sessionProgressionSuggestion('Bench Press',{},2,toolsState).ready,false,'recovery overrides progression');
+toolsState.deloadPlan.active=false;
+toolsState.workoutHistory[0].exercises[0].name='Assisted Pull Ups';
+assert.equal(app.sessionProgressionSuggestion('Assisted Pull Ups',{repMax:12,targetRir:2,increment:5},2,toolsState).suggested,45,'assistance progression reduces help');
+const budgetPlan={id:'budget-a',name:'Shift workout',env:'gym',exercises:[
+ {name:'Bench Press',settings:{priority:'essential',estimatedMinutes:12},sets:[{setType:'warmup'},{setType:'working'},{setType:'working'}]},
+ {name:'Lateral Raises',settings:{priority:'optional',estimatedMinutes:12},sets:[{}]},
+ {name:'Cable Crunch',settings:{priority:'optional',estimatedMinutes:6},sets:[{}]}
+]};
+const untouched=JSON.stringify(budgetPlan);
+assert.equal(app.timeLimitedWorkoutExercises(budgetPlan,20).exercises.map(ex=>ex.name).join('|'),'Bench Press|Cable Crunch');
+assert.equal(app.timeLimitedWorkoutExercises(budgetPlan,40).exercises.length,3);
+assert.equal(app.timeLimitedWorkoutExercises(budgetPlan,60).exercises.length,3);
+assert.equal(JSON.stringify(budgetPlan),untouched,'shortening never edits a saved template');
+const essentialsOverBudget={...budgetPlan,exercises:[{...budgetPlan.exercises[0],settings:{priority:'essential',estimatedMinutes:30}}]};
+assert.equal(app.timeLimitedWorkoutExercises(essentialsOverBudget,20).estimatedMinutes,30,'essentials are retained even when over budget');
+toolsState.savedWorkouts=[budgetPlan,{...budgetPlan,id:'budget-b',name:'Next shift'}];
+toolsState.workoutRotation={planIds:['budget-a','budget-b'],updatedAt:new Date().toISOString()};
+toolsState.workoutHistory=[];
+assert.equal(app.nextRotationWorkout(toolsState).id,'budget-a');
+toolsState.workoutHistory=[{savedWorkoutId:'budget-a',date:app.localDateKey(),exercises:[{name:'Bench Press',sets:[{completed:false}]}]}];
+assert.equal(app.nextRotationWorkout(toolsState).id,'budget-a','cancelled/incomplete sessions do not advance rotation');
+toolsState.workoutHistory[0].exercises[0].sets=[{completed:true,setType:'working'}];
+assert.equal(app.nextRotationWorkout(toolsState).id,'budget-b');
+assert.equal(app.trainingWeekStart('2026-11-08'),'2026-11-02');
+toolsState.weeklyTrainingPlans={'2026-11-02':{counts:{'budget-a':2}}};
+toolsState.workoutHistory=[{date:'2026-11-03',exercises:[{name:'Bench Press',sets:[{setType:'warmup',completed:true},{setType:'working',completed:true},{setType:'working',completed:false}]}]}];
+const muscleWeek=app.weeklyPlannedCompletedVolume(toolsState,'2026-11-06');
+assert.equal(muscleWeek.planned.Chest,4); assert.equal(muscleWeek.completed.Chest,1);
+assert.equal(muscleWeek.secondaryCompleted.Triceps,0.5,'secondary involvement stays separate');
+
+// Setup notes persist per environment/exercise and follow the normal session resume.
+toolsState.savedWorkouts=[{...savedPlanA,id:'notes-plan',exercises:[{...savedPlanA.exercises[0],settings:{restSeconds:45}}]}];
+document.getElementById('workout-active').classList.add('hidden');
+app.startSavedWorkout('notes-plan');
+const notesCard=document.querySelectorAll('#exercise-list > div')[0],notesId=notesCard.id.replace('card-','');
+for(const [key,value] of Object.entries({repMin:6,repMax:10,targetRir:1,increment:1.25,restSeconds:45,notes:'Seat 4, neutral grip'}))document.getElementById('session-'+key+'-'+notesId).value=String(value);
+app.saveSessionExerciseSettings(notesId);
+assert.equal(toolsState.exercisePreferences['gym|Bench Press'].notes,'Seat 4, neutral grip');
+app.restoreActiveWorkout();
+assert.equal(app.snapshotActiveWorkout().exercises[0].settings.notes,'Seat 4, neutral grip');
+const invalidCard=document.querySelectorAll('#exercise-list > div')[0],invalidRow=invalidCard.querySelector('.set-row');
+invalidRow.querySelector('.set-reps').value='-1';app.toggleCompletedSet(invalidRow.id,invalidCard.id.replace('card-',''),true);
+assert.equal(invalidRow.dataset.completed,'false','invalid sets cannot be completed');
+app.restoreSessionRestTimer({name:'Bench Press',endAt:Date.now()-1000,ownerUid:'tools-owner'});app.updateSessionRestTimer();
+assert.ok(document.getElementById('session-rest-label').textContent.includes('Rest complete'),'rest uses elapsed wall-clock time');
+app.restoreSessionRestTimer({name:'Other account',endAt:Date.now()+60000,ownerUid:'other'});
+assert.equal(document.getElementById('session-rest-timer').classList.contains('hidden'),true,'rest state is account scoped');
+app.stopSessionRestTimer();document.getElementById('workout-active').classList.add('hidden');
+
+// The weight trend uses logged daily means in a trailing seven-calendar-day window.
+const rolling=app.metricRollingTrend([{date:'2026-11-01',value:80},{date:'2026-11-01',value:82},{date:'2026-11-03',value:83}], [{date:'2026-11-03'},{date:'2026-11-08'},{date:'2026-11-10'}]);
+assert.equal(rolling[0].value,82); assert.equal(rolling[0].count,2);
+assert.equal(rolling[1].value,83); assert.equal(rolling[2].value,null,'missing logs never become zero weight');
+toolsState.weightUnit='lb'; app.setMetricTarget('weight','220.46226218');
+assert.ok(Math.abs(toolsState.metricTargets.weight.value-100)<0.00001,'targets are stored in kg');
+toolsState.weightUnit='kg';toolsState.metricsHistory=[{date:'2026-11-01',weight:90}];
+toolsState.metricAnnotations=[{id:'n1',date:'2026-11-01',text:'Night block',metric:'all'}];
+const contextualSeries=app.metricProgressSeries(app.metricProgressEntries('weight',toolsState),'month','2026-11-01');
+const graphContext=app.metricGraphContext('weight',contextualSeries,toolsState);
+assert.ok(app.metricProgressSVG(contextualSeries,'Weight','kg',graphContext).includes('Night block'));
+assert.equal(graphContext.annotations.length,1);assert.equal(graphContext.target,100);
+app.openMetricContextEditor(); document.getElementById('metric-note-date').value='2026-11-05';document.getElementById('metric-note-text').value='New routine';document.getElementById('metric-note-metric').value='weight';
+app.setUser({uid:'other'});app.saveMetricAnnotation();
+assert.equal(toolsState.metricAnnotations.length,1,'date note editors cannot cross accounts');
+app.setUser({uid:'tools-owner'});
+
+// Templates keep separate meal occurrences and move their clock times with waking.
+toolsState.viewDate='2026-11-01';toolsState.mealWakeTimes={'2026-11-01':'16:00'};
+const templateFood={id:'t1',name:'Oats',date:'2026-11-01',amount:60,amountType:'grams',mealType:'breakfast',mealTime:'17:00',servingGrams:40,per100g:{calories:380,protein:13,carbs:60,fat:7},calories:228,protein:7.8,carbs:36,fat:4.2};
+toolsState.dailyMeals=[templateFood,{...templateFood,id:'t2',mealTime:'02:00',mealType:'snack',mealNextDay:true}];
+toolsState.nutritionHistory=[{date:'2026-11-01',meals:[templateFood]}];
+const templateEntries=app.nutritionTemplateEntries('2026-11-01');
+assert.equal(templateEntries.length,2,'the same food in separate meals is retained, archived duplicates are not');
+assert.equal(templateEntries[0].offsetMinutes,60);assert.equal(templateEntries[1].offsetMinutes,600);
+assert.equal(app.nutritionTemplatePortion(templateEntries[1],18*60).time,'04:00');
+assert.equal(app.nutritionTemplatePortion(templateEntries[1],18*60).nextDay,true);
+app.openNutritionTemplates();document.getElementById('template-name').value='Night shift';document.getElementById('template-kind').value='night';app.saveNutritionDayTemplate();
+assert.equal(toolsState.nutritionDayTemplates.length,1);
+document.getElementById('template-target-date').value='2026-11-02';document.getElementById('template-wake').value='18:00';
+app.applyNutritionDayTemplate(toolsState.nutritionDayTemplates[0].id);
+assert.equal(toolsState.dailyMeals.length,2,'applying a template logs nothing before confirmation');
+assert.equal(document.getElementById('popup-custom-weight').value,'60');assert.equal(document.getElementById('popup-meal-time').value,'19:00');
+app.confirmCopyFoodStep();assert.equal(toolsState.dailyMeals.filter(meal=>meal.date==='2026-11-02').length,1);
+assert.equal(document.getElementById('popup-meal-time').value,'04:00');
+app.cancelCopyFoodSteps();assert.equal(toolsState.dailyMeals.filter(meal=>meal.date==='2026-11-02').length,1,'cancelling retains only confirmed portions');
+app.setUser({uid:'other'});app.saveNutritionDayTemplate();assert.equal(toolsState.nutritionDayTemplates.length,1,'template management is account scoped');
+
+// Per-record edits and deletion tombstones survive cloud reconciliation.
+const localTools=app.defaultState(),remoteTools=app.defaultState();
+localTools.exercisePreferences={'gym|Bench Press':{notes:'New note',updatedAt:'2026-11-05T12:00:00Z'}};
+remoteTools.exercisePreferences={'gym|Bench Press':{notes:'Old note',updatedAt:'2026-11-01T12:00:00Z'}};
+localTools.deletedNutritionTemplateIds=['removed'];remoteTools.nutritionDayTemplates=[{id:'removed',name:'Deleted',entries:[]}];
+const mergedTools=app.mergeStateSnapshots(localTools,remoteTools);
+assert.equal(mergedTools.exercisePreferences['gym|Bench Press'].notes,'New note');assert.equal(mergedTools.nutritionDayTemplates.length,0);
+console.log('VFIT beta.53 training, graph and shift-day template tests passed');

@@ -3,7 +3,7 @@ importScripts(
   'https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js'
 );
 
-const CACHE_VERSION = 'vfit-2.1.0-beta.52';
+const CACHE_VERSION = 'vfit-2.1.0-beta.53';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -14,10 +14,12 @@ const APP_SHELL = [
   './core/state.js',
   './training/training.js',
   './training/workout-plans.js',
+  './training/session-tools.js',
   './nutrition/food-catalog.js',
   './nutrition/data/uk-foods-2021.json',
   './nutrition/meal-planner.js',
   './nutrition/scanner.js',
+  './nutrition/day-templates.js',
   './ui/navigation.js',
   './coaching/coaching.js',
   './firebase/firebase-sync.js',
@@ -26,7 +28,9 @@ const APP_SHELL = [
   './metrics/step-tracking.js',
   './metrics/run-tracking.js',
   './metrics/photo-storage.js',
+  './core/backup-tools.js',
   './metrics/progress-charts.js',
+  './metrics/graph-context.js',
   './feedback/beta-feedback.js',
   './coaching/plan-builder.js',
   './App.js',

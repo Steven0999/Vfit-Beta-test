@@ -2475,6 +2475,7 @@
         document.getElementById('popup-meal-type').value = '';
         document.getElementById('popup-meal-time').value = '';
         document.getElementById('popup-meal-next-day').checked = false;
+        if (flow.templateId) prefillNutritionTemplateStep(flow);
         updatePopupTotals();
         const popupCard = document.getElementById('food-popup').firstElementChild;
         if (popupCard) popupCard.scrollTop = 0;
@@ -2568,6 +2569,10 @@
     function cancelCopyFoodSteps() {
         if (!copyFoodStepAccountMatches()) return;
         const flow = copyFoodSteps;
+        if (flow.templateId) {
+            copyFoodSteps = null; closeFoodPopup(); openNutritionTemplates();
+            showToast(`${flow.added} confirmed foods kept in the diary`); return;
+        }
         selectedPreviousMeals = flow.products.slice(flow.index);
         copyFoodSteps = null;
         closeFoodPopup();

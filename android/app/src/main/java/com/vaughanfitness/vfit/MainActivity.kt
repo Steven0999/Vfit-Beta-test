@@ -121,6 +121,8 @@ class MainActivity : AppCompatActivity() {
         request?.second?.invoke(request.first, grants[Manifest.permission.ACCESS_FINE_LOCATION] == true, false)
     }
 
+    private val backupExporter = BackupExporter(this)
+
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -142,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
         installHealthConnectBridge()
         installRunTrackingBridge()
+        installBackupExportBridge()
 
         onBackPressedDispatcher.addCallback(this) {
             if (webView.canGoBack()) webView.goBack() else finish()
@@ -185,6 +188,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
+                backupExporter.close()
                 stepReplyProxy = null
                 runReplyProxy = null
             }
@@ -277,6 +281,20 @@ class MainActivity : AppCompatActivity() {
                 "request_background_permission" -> requestBackgroundPermission()
                 "open_settings" -> openHealthConnectSettings()
                 "sync" -> syncStepHistory()
+            }
+        }
+    }
+
+    private fun installBackupExportBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        WebViewCompat.addWebMessageListener(webView, "vfitBackupExport", setOf(APP_ORIGIN)) {
+            _, message, sourceOrigin, isMainFrame, replyProxy ->
+            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
+            val data = message.data ?: return@addWebMessageListener
+            if (data.length > 67000) return@addWebMessageListener
+            val payload = try { JSONObject(data) } catch (error: Exception) { return@addWebMessageListener }
+            backupExporter.receive(payload) { result ->
+                if (isTrustedOrigin(Uri.parse(webView.url ?: ""))) replyProxy.postMessage(result.toString())
             }
         }
     }
@@ -656,6 +674,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        backupExporter.close()
         pendingCameraRequest?.deny()
         pendingCameraRequest = null
         filePathCallback?.onReceiveValue(null)

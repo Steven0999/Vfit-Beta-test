@@ -140,11 +140,12 @@
 
     async function migrateProgressPhotosToIndexedDb() {
         const owner = progressPhotoOwner();
+        const sourceSnapshot = state;
         if (progressPhotoMigrations.has(owner)) return progressPhotoMigrations.get(owner);
         const migration = (async () => {
             let migrated = 0;
             let changed = false;
-            for (const metric of state.metricsHistory || []) {
+            for (const metric of sourceSnapshot.metricsHistory || []) {
                 if (!metric || !metric.date || !isPlainRecord(metric.photos)) continue;
                 for (const angle of ['front', 'side', 'back']) {
                     const value = metric.photos[angle];
@@ -159,7 +160,7 @@
                     }
                 }
             }
-            if (changed) saveState({ skipCloud: true, forceBackup: true });
+            if (changed && owner === progressPhotoOwner() && state === sourceSnapshot) saveState({ skipCloud: true, forceBackup: true });
             return migrated;
         })();
         progressPhotoMigrations.set(owner, migration);
@@ -363,9 +364,13 @@
 
     const exportVfitBackupWithoutExpandedPhotos = exportVfitBackup;
     exportVfitBackup = async function exportVfitBackupWithExpandedPhotos() {
+        const uid = currentUser && currentUser.uid || '';
+        if (backupOperationUid !== null) { showToast('A backup operation is already running'); return; }
+        backupOperationUid = uid;
         try {
             await migrateProgressPhotosToIndexedDb();
             const records = await listProgressPhotos();
+            requireBackupAccount(uid);
             const payload = {
                 app: 'VFIT',
                 appVersion: VFIT_APP_VERSION,
@@ -380,20 +385,29 @@
                     updatedAt: record.updatedAt
                 }))
             };
-            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const sealed = await sealVfitBackup(payload);
+            await inspectVfitBackup(sealed);
+            requireBackupAccount(uid);
+            const text = JSON.stringify(sealed);
+            const fileName = `vfit-backup-${localDateKey()}.json`;
+            if (await saveNativeBackupFile(text, fileName, uid)) {
+                showToast(`Backup saved and read back successfully, including ${records.length} progress photos`, 7000);
+                return;
+            }
+            const blob = new Blob([text], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `vfit-backup-${localDateKey()}.json`;
+            link.download = fileName;
             document.body.appendChild(link);
             link.click();
             link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            showToast(`Backup downloaded with ${records.length} progress photo${records.length === 1 ? '' : 's'} — keep it private`, 6000);
+            showToast(`Download started with ${records.length} progress photos. Use Check Backup on the saved file to verify it.`, 7000);
         } catch (error) {
             console.error('Expanded backup export failed:', error);
-            showToast('Could not create the photo-inclusive backup', 6000);
-        }
+            showToast(error.message || 'Could not create the photo-inclusive backup', 7000);
+        } finally { backupOperationUid = null; }
     };
 
     const importVfitBackupWithoutExpandedPhotos = importVfitBackup;
@@ -401,16 +415,21 @@
         const input = event && event.target;
         const file = input && input.files && input.files[0];
         if (!file) return;
+        const uid = currentUser && currentUser.uid || '';
+        if (backupOperationUid !== null) { showToast('A backup operation is already running'); input.value = ''; return; }
+        backupOperationUid = uid;
         try {
             if (file.size > 250 * 1024 * 1024) throw new Error('Backup is larger than 250 MB');
             const parsed = JSON.parse(await file.text());
-            const imported = isPlainRecord(parsed && parsed.state) ? parsed.state : parsed;
-            if (!isPlainRecord(imported)) throw new Error('This is not a VFIT state backup');
+            const check = await inspectVfitBackup(parsed);
+            requireBackupAccount(uid);
+            const imported = check.imported;
             const sourceEmail = parsed && parsed.accountEmail ? String(parsed.accountEmail) : '';
             const accountWarning = sourceEmail && currentUser && sourceEmail.toLowerCase() !== (currentUser.email || '').toLowerCase()
                 ? `\n\nThis backup was exported for ${sourceEmail}.`
                 : '';
-            if (!confirm('Restore this VFIT backup? Existing workouts and progress photos are kept.' + accountWarning)) return;
+            if (!confirm('Restore this VFIT backup? Existing workouts and progress photos are kept.\n\n' + backupCheckSummary(check) + accountWarning)) return;
+            requireBackupAccount(uid);
             const preferredImport = normalizeState(imported);
             // IndexedDB references belong to the device/account that created
             // them. Rebuild those links from the photo payload below instead of
@@ -422,8 +441,9 @@
                 }
                 if (!Object.keys(metric.photos).length) delete metric.photos;
             }
-            const photoRecords = Array.isArray(parsed && parsed.progressPhotos) ? parsed.progressPhotos : [];
+            const photoRecords = check.photos;
             for (const record of photoRecords) {
+                requireBackupAccount(uid);
                 if (!record || !/^\d{4}-\d{2}-\d{2}$/.test(String(record.date || '')) || !['front', 'side', 'back'].includes(record.angle)) continue;
                 if (typeof record.data !== 'string' || !record.data.startsWith('data:image/')) continue;
                 const currentMetric = (state.metricsHistory || []).find(item => item && item.date === record.date);
@@ -436,7 +456,9 @@
                 // A restore is additive: never overwrite a photo already saved for
                 // the same date and angle on this device.
                 if (currentPhotoExists) continue;
-                const reference = await putProgressPhoto(record.date, record.angle, record.data);
+                requireBackupAccount(uid);
+                const reference = await putProgressPhoto(record.date, record.angle, record.data, uid || 'guest');
+                requireBackupAccount(uid);
                 let metric = (preferredImport.metricsHistory || []).find(item => item.date === record.date);
                 if (!metric) {
                     metric = { date: record.date };
@@ -445,12 +467,15 @@
                 if (!isPlainRecord(metric.photos)) metric.photos = {};
                 metric.photos[record.angle] = reference;
             }
+            requireBackupAccount(uid);
             preferredImport.meta.updatedAt = new Date(Date.now() + 1000).toISOString();
             state = mergeStateSnapshots(state, preferredImport);
             if (!saveState({ forceBackup: true })) throw new Error('The restored data could not be saved on this device');
             progressPhotoMigrations.delete(progressPhotoOwner());
             await migrateProgressPhotosToIndexedDb();
+            requireBackupAccount(uid);
             await flushCloudSync({ silent: true });
+            requireBackupAccount(uid);
             showToast('Backup and progress photos restored ✓');
             setTimeout(() => window.location.reload(), 500);
         } catch (error) {
@@ -458,6 +483,7 @@
             showToast(error.message || 'Could not restore that backup', 6500);
         } finally {
             if (input) input.value = '';
+            backupOperationUid = null;
         }
     };
 

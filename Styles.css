@@ -644,3 +644,10 @@
         html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list .set-rir,
         html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list .set-rir-label,
         html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list [id^="pb-line-"] { display: block !important; }
+
+/* Set controls retain their layout with or without the utility CDN. */
+.set-row { flex-wrap: wrap; }
+.set-completion-bar { order: -1; flex: 0 0 100%; }
+.set-row[data-completed="true"] { border-color: #10b981; background: #ecfdf5; }
+.set-reps, .set-weight-field { min-width: 0; }
+.set-reps { flex-basis: 0; }

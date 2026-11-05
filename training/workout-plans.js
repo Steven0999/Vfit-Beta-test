@@ -18,10 +18,11 @@ function cleanSavedWorkout(plan) {
         includeCore: Boolean(plan.includeCore), createdAt: String(plan.createdAt || ''), updatedAt: String(plan.updatedAt || ''),
         exercises: plan.exercises.filter(ex => ex && typeof ex.name === 'string' && ex.name.trim()).map(ex => ({
             name: ex.name.trim().slice(0, 100), type: ['compound', 'isolation', 'core'].includes(ex.type) ? ex.type : 'isolation',
-            group: String(ex.group || '').slice(0, 40),
+            group: String(ex.group || '').slice(0, 40), settings: cleanSessionSettings(ex.settings || ex),
             sets: (Array.isArray(ex.sets) && ex.sets.length ? ex.sets : [{}]).slice(0, 100).map(set => ({
                 reps: workoutPlanNumber(set && set.reps, 10000), weight: workoutPlanNumber(set && set.weight, 10000),
-                rir: workoutPlanNumber(set && set.rir, 10)
+                rir: workoutPlanNumber(set && set.rir, 10),
+                setType: ['warmup','drop','failure'].includes(set && set.setType) ? set.setType : 'working'
             }))
         }))
     };
@@ -97,10 +98,12 @@ function renderSavedWorkouts() {
             <h4 class="font-black text-lg break-words">${escapeHtml(plan.name)}</h4>
             <p class="text-xs text-slate-500 mt-1">${plan.env === 'home' ? 'Home' : 'Gym'} · ${escapeHtml(plan.focus)}${plan.includeCore ? ' + Core / Abs' : ''} · ${plan.exercises.length} exercises · ${count} sets</p>
             <p class="text-xs text-slate-400 mt-2">Latest reps, weight and RIR load when you start.</p>
-            <div class="flex gap-2 mt-4"><button onclick='startSavedWorkout(${id})' class="flex-1 rounded-xl bg-orange-600 text-white p-3 font-bold">Start workout</button>
+            <button onclick='toggleRotationWorkout(${id})' aria-pressed="${state.workoutRotation.planIds.includes(plan.id)}" class="mt-3 p-2 rounded-xl bg-white border text-xs font-bold">${state.workoutRotation.planIds.includes(plan.id) ? '✓ In rotation · remove' : '+ Add to rotation'}</button>
+            <div class="flex gap-2 mt-4"><button onclick='startSavedWorkout(${id},document.getElementById("saved-workout-time").value)' class="flex-1 rounded-xl bg-orange-600 text-white p-3 font-bold">Start workout</button>
             <button onclick='editSavedWorkout(${id})' class="rounded-xl bg-white border border-slate-200 px-4 py-3 font-bold">Edit</button>
             <button onclick='deleteSavedWorkout(${id})' class="rounded-xl bg-red-50 text-red-600 px-4 py-3 font-bold">Delete</button></div></article>`;
     }).join('') : '<p class="text-sm text-center text-slate-400 py-6">Create your first workout and keep it here for next time.</p>';
+    renderTrainingTools();
 }
 
 function workoutPlanSessionMatches() {
@@ -189,7 +192,7 @@ function addWorkoutPlanExercise() {
         return { reps: workoutPlanNumber(saved && saved.reps, 10000) || (type === 'compound' ? '8' : '12'),
             weight: workoutPlanNumber(saved && (saved.weight ?? saved.kg), 10000), rir: workoutPlanNumber(saved && saved.rir, 10) || '2' };
     });
-    workoutPlanDraft.exercises.push({ name, type, group: document.getElementById('workout-plan-exercise-group').value, sets });
+    workoutPlanDraft.exercises.push({ name, type, group: document.getElementById('workout-plan-exercise-group').value, settings: cleanSessionSettings({ ...state.exercisePreferences[exercisePreferenceKey(name,workoutPlanDraft.env)], priority: workoutPlanDraft.exercises.length < 2 ? 'essential' : 'optional' }), sets });
     workoutPlanSession.dirty = true;
     renderWorkoutPlanExercises();
 }
@@ -213,9 +216,17 @@ function setWorkoutPlanSetCount(index, value) {
 }
 
 function setWorkoutPlanSetValue(exerciseIndex, setIndex, field, value) {
-    if (!workoutPlanSessionMatches() || !['reps', 'weight', 'rir'].includes(field)) return;
+    if (!workoutPlanSessionMatches() || !['reps', 'weight', 'rir', 'setType'].includes(field)) return;
     const set = workoutPlanDraft.exercises[exerciseIndex]?.sets[setIndex];
     if (set) { set[field] = value; workoutPlanSession.dirty = true; }
+}
+
+function setWorkoutPlanExerciseSetting(index, key, value) {
+    if (!workoutPlanSessionMatches() || !['repMin','repMax','targetRir','increment','restSeconds','priority','estimatedMinutes'].includes(key)) return;
+    const ex = workoutPlanDraft.exercises[index];
+    if (!ex) return;
+    ex.settings = { ...cleanSessionSettings(ex.settings), [key]: value };
+    workoutPlanSession.dirty = true;
 }
 
 function moveWorkoutPlanExercise(index, offset) {
@@ -239,6 +250,7 @@ function renderWorkoutPlanExercises() {
     if (!workoutPlanDraft) return;
     list.innerHTML = workoutPlanDraft.exercises.map((ex, index) => {
         const last = getLastPerformance(ex.name);
+        const settings = cleanSessionSettings(ex.settings);
         const history = last ? `Last logged ${last.date}: ` + last.sets.map(set => `${set.reps || '—'} reps × ${set.weight ?? set.kg ?? '—'} kg${set.rir !== undefined ? ' · RIR ' + set.rir : ''}`).join('; ')
             : 'No previous lifts yet. Set your starting targets below.';
         return `<article class="border-2 ${ex.type === 'core' || ex.group === 'Core' ? 'border-orange-200' : 'border-slate-200'} rounded-2xl p-4 bg-white">
@@ -248,8 +260,11 @@ function renderWorkoutPlanExercises() {
                 <button onclick="moveWorkoutPlanExercise(${index},-1)" ${index === 0 ? 'disabled' : ''} class="p-2 rounded-xl bg-slate-50" aria-label="Move ${escapeHtml(ex.name)} up">↑</button>
                 <button onclick="moveWorkoutPlanExercise(${index},1)" ${index === workoutPlanDraft.exercises.length - 1 ? 'disabled' : ''} class="p-2 rounded-xl bg-slate-50" aria-label="Move ${escapeHtml(ex.name)} down">↓</button>
                 <button onclick="removeWorkoutPlanExercise(${index})" class="ml-auto text-red-600 text-xs font-bold p-2">Remove exercise</button></div>
+            <details class="mb-4 rounded-xl bg-orange-50 p-3"><summary class="font-bold text-xs text-orange-700">Progression & time options</summary>
+            <div class="grid grid-cols-2 gap-2 mt-3">${[['repMin','Minimum reps',1,1000],['repMax','Maximum reps',1,1000],['targetRir','Target RIR',0,10],['increment','Weight step kg',0.1,100],['restSeconds','Rest seconds',0,900],['estimatedMinutes','Estimated minutes',1,180]].map(([key,label,min,max])=>`<label class="text-xs font-bold">${label}<input type="number" min="${min}" max="${max}" step="${key==='increment'?'any':'1'}" value="${settings[key]}" onchange="setWorkoutPlanExerciseSetting(${index},'${key}',this.value)" class="block w-full p-2 mt-1 rounded-xl border bg-white"></label>`).join('')}</div>
+            <label class="block mt-3 text-xs font-bold">When time is short<select onchange="setWorkoutPlanExerciseSetting(${index},'priority',this.value)" class="block w-full rounded-xl p-2 mt-1 bg-white"><option value="essential" ${settings.priority==='essential'?'selected':''}>Essential — always keep</option><option value="optional" ${settings.priority==='optional'?'selected':''}>Optional — fit when time allows</option></select></label><p class="text-[10px] text-slate-500 mt-2">20/40/60-minute versions keep every essential exercise, even if their estimate exceeds the time available.</p></details>
             <div class="plan-set-grid text-[10px] uppercase font-bold text-slate-500 mb-2"><span>Set</span><span>Reps</span><span>Weight kg</span><span>RIR</span></div>
-            ${ex.sets.map((set, setIndex) => `<div class="plan-set-grid mb-2"><span class="text-xs font-bold">${setIndex + 1}</span>${['reps', 'weight', 'rir'].map(field => `<input type="number" min="0" max="${field === 'rir' ? 10 : 10000}" step="${field === 'weight' ? 'any' : '1'}" inputmode="decimal" value="${escapeHtml(set[field])}" aria-label="${field} for ${escapeHtml(ex.name)} set ${setIndex + 1}" oninput="setWorkoutPlanSetValue(${index},${setIndex},'${field}',this.value)" class="w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2 font-bold text-center">`).join('')}</div>`).join('')}</article>`;
+            ${ex.sets.map((set, setIndex) => `<div class="mb-3"><label class="text-xs font-bold">Set ${setIndex+1} type <select onchange="setWorkoutPlanSetValue(${index},${setIndex},'setType',this.value)" class="rounded-lg bg-slate-50 p-2 mb-1">${['working','warmup',...(trainingExperienceTier()==='advanced'||['drop','failure'].includes(set.setType)?['drop','failure']:[])].map(type=>`<option value="${type}" ${type===(set.setType||'working')?'selected':''}>${({working:'Working set',warmup:'Warm-up',drop:'Drop set',failure:'To failure'})[type]}</option>`).join('')}</select></label><div class="plan-set-grid mb-2"><span class="text-xs font-bold">${setIndex + 1}</span>${['reps', 'weight', 'rir'].map(field => `<input type="number" min="0" max="${field === 'rir' ? 10 : 10000}" step="${field === 'weight' ? 'any' : '1'}" inputmode="decimal" value="${escapeHtml(set[field])}" aria-label="${field} for ${escapeHtml(ex.name)} set ${setIndex + 1}" oninput="setWorkoutPlanSetValue(${index},${setIndex},'${field}',this.value)" class="w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2 font-bold text-center">`).join('')}</div></div>`).join('')}</article>`;
     }).join('') || '<p class="text-sm text-slate-400 text-center py-4">Add exercises to build your workout.</p>';
 }
 
@@ -258,6 +273,9 @@ function saveWorkoutPlan() {
     changeWorkoutPlanSetup();
     if (!workoutPlanDraft.name.trim()) { showToast('Give your workout a name'); return; }
     if (!workoutPlanDraft.exercises.length) { showToast('Add at least one exercise'); return; }
+    for (const ex of workoutPlanDraft.exercises) {
+        if (Number(ex.settings?.repMin || 8) > Number(ex.settings?.repMax || 12)) { showToast('Maximum reps must be at least minimum reps'); return; }
+    }
     for (const ex of workoutPlanDraft.exercises) for (const set of ex.sets) {
         if (['reps', 'weight', 'rir'].some(field => set[field] !== '' && workoutPlanNumber(set[field], field === 'rir' ? 10 : 10000) === '')) {
             showToast('Check the reps, weight and RIR values'); return;
@@ -291,41 +309,47 @@ function savedWorkoutSessionExercises(plan) {
     const clean = cleanSavedWorkout(plan);
     return clean ? clean.exercises.map(ex => {
         const last = getLastPerformance(ex.name);
-        return { ...ex, sets: ex.sets.map((target, index) => {
+        let workingIndex = 0;
+        return { ...ex, sets: ex.sets.map(target => {
+            if (target.setType === 'warmup') return { ...target };
+            const index = workingIndex++;
             const recent = last && (last.sets[index] || last.sets[last.sets.length - 1]);
             const fromHistory = field => workoutPlanNumber(recent && (field === 'weight' ? recent.weight ?? recent.kg : recent[field]), field === 'rir' ? 10 : 10000);
             return { reps: fromHistory('reps') || target.reps,
-                weight: fromHistory('weight') || target.weight, rir: fromHistory('rir') || target.rir };
+                weight: fromHistory('weight') || target.weight, rir: fromHistory('rir') || target.rir, setType: target.setType };
         }) };
     }) : [];
 }
 
-function startSavedWorkout(id) {
+function startSavedWorkout(id, minutes) {
     const selected = (state.savedWorkouts || []).find(item => item.id === id);
     const plan = cleanSavedWorkout(selected);
     if (!plan || !plan.exercises.length) { showToast('Edit this plan and add exercises first'); return; }
+    const version = timeLimitedWorkoutExercises(plan, minutes);
+    if (!version.exercises.length) { showToast('No exercises fit this time. Mark an exercise essential or choose more time.'); return; }
     const uid = currentUser && currentUser.uid || '';
     guardWorkoutLoss(() => {
         if (uid !== (currentUser && currentUser.uid || '') || !(state.savedWorkouts || []).some(item => item.id === id)) return;
         clearInterval(workoutTimer);
+        stopSessionRestTimer();
         exitWizardMode();
         resetWorkoutPlanUI();
         assigningToClient = null;
         window._activeAssignedWorkout = null;
         state.workoutEnv = plan.env;
-        currentWorkoutContext = { env: plan.env, focus: plan.focus, muscles: null, includeCore: plan.includeCore, savedWorkoutId: plan.id };
+        currentWorkoutContext = { env: plan.env, focus: plan.focus, muscles: null, includeCore: plan.includeCore, savedWorkoutId: plan.id, timeBudget: version.budget, skippedExercises: version.skipped };
         showAllExercisesInPicker = false;
         document.getElementById('workout-setup').classList.add('hidden');
         document.getElementById('coach-plan-card').classList.add('hidden');
         const active = document.getElementById('workout-active');
         active.classList.remove('hidden');
         active.setAttribute('data-saved-plan', 'true');
-        document.getElementById('active-workout-title').innerText = `${plan.env === 'home' ? 'Home' : 'Gym'} · ${plan.name}`;
+        document.getElementById('active-workout-title').innerText = `${plan.env === 'home' ? 'Home' : 'Gym'} · ${plan.name}${version.budget ? ' · ' + version.budget + ' min' : ''}`;
         document.getElementById('exercise-list').innerHTML = '';
-        savedWorkoutSessionExercises(plan).forEach(ex => {
-            const exerciseId = addExercise(ex.name, { skipInitialSet: true });
+        savedWorkoutSessionExercises({ ...plan, exercises: version.exercises }).forEach(ex => {
+            const exerciseId = addExercise(ex.name, { skipInitialSet: true, settings: ex.settings });
             ex.sets.forEach(set => addSetToExercise(exerciseId, getPersonalRecord(ex.name), ex.name,
-                { initialReps: set.reps, initialWeight: set.weight, initialRir: set.rir }));
+                { initialReps: set.reps, initialWeight: set.weight, initialRir: set.rir, initialSetType: set.setType }));
         });
         workoutStartTime = Date.now();
         workoutAccumulatedSeconds = 0;
@@ -334,7 +358,7 @@ function startSavedWorkout(id) {
         try { history.pushState({ workout: true }, ''); } catch (error) {}
         enterWizardMode();
         persistActiveWorkout();
-        showToast('Saved workout ready with your latest lifting figures');
+        showToast(version.budget && version.estimatedMinutes > version.budget ? 'All essentials kept; their estimated time exceeds this budget' : version.skipped.length ? `${version.skipped.length} optional exercises left out for this session` : 'Saved workout ready with your latest lifting figures');
     });
 }
 
@@ -348,7 +372,7 @@ function saveActiveWorkoutAsPlan() {
     workoutPlanDraft.includeCore = Boolean(currentWorkoutContext && currentWorkoutContext.includeCore);
     workoutPlanDraft.exercises = snapshot.exercises.filter(ex => ex.name.trim()).map(ex => ({
         name: ex.name, type: (getEnvDB(workoutPlanDraft.env).Core?.isolation || []).includes(ex.name) ? 'core' : isCompoundExercise(ex.name) ? 'compound' : 'isolation',
-        group: '', sets: ex.sets.length ? ex.sets.map(set => ({ ...set })) : [{ reps: '', weight: '', rir: '' }]
+        group: '', settings: ex.settings, sets: ex.sets.length ? ex.sets.map(set => ({ ...set })) : [{ reps: '', weight: '', rir: '' }]
     }));
     if (workoutPlanDraft.exercises.some(ex => ex.type === 'core')) workoutPlanDraft.includeCore = true;
     document.getElementById('workout-plan-name').value = workoutPlanDraft.name;

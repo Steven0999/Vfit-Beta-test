@@ -58,7 +58,7 @@ function metricProgressEntries(metric, source) {
     const unit = snapshot.weightUnit || 'kg';
     return (snapshot.metricsHistory || []).filter(entry => entry && validProgressDate(entry.date)
         && Number.isFinite(Number(entry[metric])) && Number(entry[metric]) > 0).map(entry => ({
-            date: entry.date, value: metric === 'weight' && unit === 'lb' ? Number(entry.weight) * 2.2046226218
+            date: entry.date, value: metric === 'weight' && ['lb','lbs'].includes(unit) ? Number(entry.weight) * 2.2046226218
                 : metric === 'weight' && unit === 'st' ? Number(entry.weight) / 6.35029318 : Number(entry[metric])
         })).sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -104,10 +104,12 @@ function progressDateLabel(date, bucket) {
         : bucket === 'month' ? { month: 'short', year: 'numeric', timeZone: 'UTC' } : { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
-function metricProgressSVG(series, label, unit) {
+function metricProgressSVG(series, label, unit, context) {
+    const extra = context || {};
     const known = series.points.filter(point => point.value !== null);
     if (!known.length) return `<div class="flex items-center justify-center text-center text-sm text-slate-400 p-8 h-56">No ${escapeHtml(label.toLowerCase())} logged in this period. Choose another period or add a measurement.</div>`;
-    let min = Math.min(...known.map(point => point.value)), max = Math.max(...known.map(point => point.value));
+    const bounds = [...known.map(point=>point.value), ...(extra.trend || []).filter(point=>point.value!==null).map(point=>point.value), ...(Number.isFinite(extra.target) && extra.target>0 ? [extra.target] : [])];
+    let min = Math.min(...bounds), max = Math.max(...bounds);
     const padding = Math.max((max - min) * 0.15, Math.abs(max) * 0.015, 0.5);
     min = Math.max(0, min - padding); max += padding;
     const width = 600, height = 270, left = 66, right = 20, top = 18, bottom = 42;
@@ -124,6 +126,19 @@ function metricProgressSVG(series, label, unit) {
         path += `${connected ? 'L' : 'M'}${x(index).toFixed(2)},${y(point.value).toFixed(2)} `;
         connected = true;
     });
+    let trendPath = '', trendConnected = false;
+    (extra.trend || []).forEach((point,index)=>{
+        if (point.value === null) { trendConnected=false; return; }
+        trendPath += `${trendConnected?'L':'M'}${x(index).toFixed(2)},${y(point.value).toFixed(2)} `;
+        trendConnected = true;
+    });
+    const trend = trendPath ? `<path d="${trendPath}" fill="none" stroke="#0284c7" stroke-width="3" stroke-linecap="round"><title>7-day trend: average of logged daily weights in each trailing seven-day window</title></path>` : '';
+    const target = Number.isFinite(extra.target) && extra.target>0 ? `<line x1="${left}" y1="${y(extra.target)}" x2="${width-right}" y2="${y(extra.target)}" stroke="#059669" stroke-width="2" stroke-dasharray="7 5"><title>Target: ${formatMetricProgressNumber(extra.target)} ${escapeHtml(unit)}</title></line>` : '';
+    const notes = (extra.annotations || []).map(note=>{
+        const key=series.bucket==='month'?note.date.slice(0,7)+'-01':series.bucket==='year'?note.date.slice(0,4)+'-01-01':note.date;
+        const index=series.points.findIndex(point=>point.date===key);
+        return index<0?'':`<line x1="${x(index)}" y1="${top}" x2="${x(index)}" y2="${height-bottom}" stroke="#a855f7" stroke-dasharray="3 5"><title>${escapeHtml(note.date+': '+note.text)}</title></line>`;
+    }).join('');
     const circles = series.points.map((point, index) => {
         if (point.value === null) return '';
         const title = `${progressDateLabel(point.date, series.bucket)}: ${formatMetricProgressNumber(point.value)} ${unit}${point.count > 1 ? ` (average of ${point.count} logs)` : ''}`;
@@ -131,7 +146,7 @@ function metricProgressSVG(series, label, unit) {
     }).join('');
     const ticks = [...new Set([0, Math.floor((series.points.length - 1) / 2), series.points.length - 1])].map(index =>
         `<text x="${x(index)}" y="${height - 12}" text-anchor="${index === 0 ? 'start' : index === series.points.length - 1 ? 'end' : 'middle'}" font-size="11" fill="#64748b">${escapeHtml(progressDateLabel(series.points[index].date, series.bucket))}</text>`).join('');
-    return `<svg viewBox="0 0 ${width} ${height}" class="w-full" role="img" aria-label="${escapeHtml(label + ' in ' + unit + ', ' + series.start + ' to ' + series.end)}">${grid}<path d="${path}" fill="none" stroke="#ea580c" stroke-width="3" stroke-linejoin="round"/>${circles}${ticks}</svg>`;
+    return `<svg viewBox="0 0 ${width} ${height}" class="w-full" role="img" aria-label="${escapeHtml(label + ' in ' + unit + ', ' + series.start + ' to ' + series.end)}">${grid}${target}${notes}${trend}<path d="${path}" fill="none" stroke="#ea580c" stroke-width="3" stroke-linejoin="round"/>${circles}${ticks}</svg>`;
 }
 
 function setMetricProgressMetric(value) {
@@ -176,6 +191,7 @@ function resetMetricProgressView() {
     metricProgressRange = 'month';
     exerciseProgressRange = 'lifetime';
     exerciseProgressAnchor = null;
+    resetMetricContextEditor();
 }
 
 function setExerciseProgressRange(range) {
@@ -226,7 +242,9 @@ function renderMetricProgressGraphs() {
         controls.innerHTML = `<div class="flex justify-center gap-1 rounded-2xl bg-slate-100 p-1">${METRIC_PROGRESS_RANGES.map(range => `<button onclick="setMetricProgressRange('${range}')" aria-pressed="${range === metricProgressRange}" class="flex-1 p-2 text-xs font-black rounded-xl ${range === metricProgressRange ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500'}">${range.charAt(0).toUpperCase() + range.slice(1)}</button>`).join('')}</div>
             <div class="flex items-center justify-center gap-2 mt-3"><button onclick="shiftMetricProgressPeriod(-1)" aria-label="Previous period" ${metricProgressRange === 'lifetime' ? 'disabled' : ''} class="p-2 font-bold text-orange-600 disabled:opacity-30">←</button><p class="text-xs font-bold text-center flex-1" role="status">${escapeHtml(period)}</p><button onclick="shiftMetricProgressPeriod(1)" aria-label="Next period" ${metricProgressRange === 'lifetime' ? 'disabled' : ''} class="p-2 font-bold text-orange-600 disabled:opacity-30">→</button></div>
             <div class="flex justify-center gap-3 my-2"><button onclick="zoomMetricProgress(-1)" ${metricProgressRange === 'week' ? 'disabled' : ''} class="text-xs font-bold text-orange-600 p-2 disabled:opacity-30">+ Zoom in</button><button onclick="zoomMetricProgress(1)" ${metricProgressRange === 'lifetime' ? 'disabled' : ''} class="text-xs font-bold text-orange-600 p-2 disabled:opacity-30">− Zoom out</button></div>`;
-        graph.innerHTML = metricProgressSVG(series, definition.label, unit);
+        const context = metricGraphContext(metric,series);
+        controls.innerHTML += metricContextControls(metric,scope);
+        graph.innerHTML = metricProgressSVG(series, definition.label, unit,context) + metricContextLegend(metric,context,series);
         const summary = document.getElementById('metric-progress-summary-' + scope);
         if (summary) {
             const entries = series.entries, first = entries[0], last = entries[entries.length - 1];

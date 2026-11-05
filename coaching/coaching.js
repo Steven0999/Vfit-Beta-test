@@ -953,7 +953,7 @@ function openAICoachCheckIn() {
         for (const workout of history) {
             const exercise = (workout.exercises || []).find(item => String(item.name || '').toLowerCase() === String(exerciseName || '').toLowerCase());
             if (!exercise || !Array.isArray(exercise.sets) || !exercise.sets.length) continue;
-            const validSets = exercise.sets.map(set => ({
+            const validSets = exercise.sets.filter(isWorkingSet).map(set => ({
                 weight: Number(set.weight),
                 reps: Number(set.reps),
                 rir: set.rir === '' || set.rir == null ? null : Number(set.rir)

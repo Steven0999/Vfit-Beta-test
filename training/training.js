@@ -778,11 +778,12 @@
      * Primary movers (what the exercise is filed under) count 1.0; secondary
      * (assisting) movers count 0.5. If a muscle is somehow both, 1.0 wins.
      */
-    function getExerciseVolumeContribution(exerciseName) {
+    function getExerciseVolumeContribution(exerciseName, source, environment) {
+        const snapshot = source || state;
         const contrib = {};
-        const custom = (state.customExercises || []).find(exercise => exercise.name === exerciseName
-            && (exercise.env || 'gym') === (currentWorkoutContext && currentWorkoutContext.env || state.workoutEnv || 'gym'))
-            || (state.customExercises || []).find(exercise => exercise.name === exerciseName);
+        const custom = (snapshot.customExercises || []).find(exercise => exercise.name === exerciseName
+            && (exercise.env || 'gym') === (environment || currentWorkoutContext && currentWorkoutContext.env || snapshot.workoutEnv || 'gym'))
+            || (snapshot.customExercises || []).find(exercise => exercise.name === exerciseName);
         const primary = custom && SPECIFIC_MUSCLES.includes(custom.primaryMuscle) ? [custom.primaryMuscle]
             : custom && Array.isArray(custom.muscles) ? custom.muscles : EXERCISE_TO_MUSCLES[exerciseName] || [];
         primary.forEach(m => { contrib[m] = 1.0; });
@@ -1072,9 +1073,9 @@
             wDay.setHours(0, 0, 0, 0);
             if (wDay < cutoff) return; // outside the last 7 days
             (workout.exercises || []).forEach(ex => {
-                const setCount = (ex.sets || []).length;
+                const setCount = (ex.sets || []).filter(isWorkingSet).length;
                 if (setCount === 0) return;
-                const contrib = getExerciseVolumeContribution(ex.name);
+                const contrib = getExerciseVolumeContribution(ex.name,state,workout.env);
                 Object.entries(contrib).forEach(([muscle, weight]) => {
                     if (counts[muscle] !== undefined) counts[muscle] += setCount * weight;
                 });
@@ -1409,6 +1410,7 @@
     }
 
     function startWorkout(mode) {
+        stopSessionRestTimer();
         const tier = trainingExperienceTier();
         if (tier === 'beginner' && mode !== 'manual') mode = 'basic';
         const focus = document.getElementById('workout-focus').value;
@@ -1819,11 +1821,12 @@
                 sets.push({
                     reps: repsEl ? repsEl.value : '',
                     weight: isHomeBodyweightExercise(name) ? '0' : weightEl ? weightEl.value : '',
-                    rir: rirEl ? rirEl.value : ''
+                    rir: rirEl ? rirEl.value : '',
+                    setType: row.dataset.setType || 'working', completed: row.dataset.completed === 'true'
                 });
             });
             // Keep the exercise even if empty, so the card structure is preserved
-            exercises.push({ name: name, sets: sets });
+            exercises.push({ name: name, sets: sets, settings: cardSessionSettings(card.id.replace('card-', '')) });
         });
 
         const titleEl = document.getElementById('active-workout-title');
@@ -1836,6 +1839,7 @@
             exercises: exercises,
             wizard: wizardActive,
             wizardIndex: wizardIndex,
+            restTimer: sessionRestTimer ? { ...sessionRestTimer } : null,
             savedAt: Date.now()
         };
     }
@@ -1859,6 +1863,7 @@
      * Clear any saved in-progress workout. Called on Finish and Cancel/Back.
      */
     function clearActiveWorkout() {
+        stopSessionRestTimer();
         delete state.activeWorkout;
         saveState();
     }
@@ -1904,7 +1909,7 @@
         const list = document.getElementById('exercise-list');
         if (list) list.innerHTML = '';
         saved.exercises.forEach(ex => {
-            addExercise(ex.name || '', { skipInitialSet: true });
+            addExercise(ex.name || '', { skipInitialSet: true, settings: ex.settings });
             // The card just added is the last one; find its id from the sets container
             const cards = document.querySelectorAll('#exercise-list > div');
             const card = cards[cards.length - 1];
@@ -1913,7 +1918,7 @@
             const exId = setsContainer ? setsContainer.id.replace('sets-', '') : null;
             const savedSets = Array.isArray(ex.sets) && ex.sets.length ? ex.sets : [{ reps: '', weight: '', rir: '' }];
             savedSets.forEach(s => {
-                if (exId) addSetToExercise(exId, ex.name ? getPersonalRecord(ex.name) : null, ex.name || '');
+                if (exId) addSetToExercise(exId, ex.name ? getPersonalRecord(ex.name) : null, ex.name || '', { initialSetType: s.setType, completed: s.completed === true });
                 // Fill the values we saved
                 const rows = card.querySelectorAll('.set-row');
                 const row = rows[rows.length - 1];
@@ -1921,15 +1926,16 @@
                     const r = row.querySelector('.set-reps');
                     const w = row.querySelector('.set-weight');
                     const rir = row.querySelector('.set-rir');
-                    if (r) r.value = s.reps || '';
-                    if (w) w.value = isHomeBodyweightExercise(ex.name) ? '0' : s.weight || '';
-                    if (rir) rir.value = s.rir || '';
+                    if (r) r.value = s.reps ?? '';
+                    if (w) w.value = isHomeBodyweightExercise(ex.name) ? '0' : s.weight ?? '';
+                    if (rir) rir.value = s.rir ?? '';
                 }
             });
         });
 
-        // Resume the ticking clock
+        // Resume the ticking clocks from absolute timestamps.
         startWorkoutTimer();
+        restoreSessionRestTimer(saved.restTimer);
 
         // If the workout was in one-exercise-at-a-time wizard mode, restore that too,
         // dropping the user back onto the exact exercise step they were on.
@@ -2103,6 +2109,7 @@
 
         const exerciseList = document.getElementById('exercise-list');
         if (exerciseList) exerciseList.appendChild(card);
+        if (!assigningToClient) mountSessionExerciseTools(id, name, config.settings);
 
         if (!config.skipInitialSet) {
             setTimeout(() => {
@@ -2247,6 +2254,11 @@
         const line = document.getElementById(`pb-line-${id}`);
         if (!input) return;
         const name = input.value.trim();
+        const card = document.getElementById('card-' + id);
+        if (card && card.dataset.settingsExerciseName !== name && !assigningToClient) {
+            card.querySelectorAll('.set-row').forEach(clearSetCompletion);
+            mountSessionExerciseTools(id, name);
+        }
         refreshExerciseLoadFields(id, name);
         if (!line) return;
         if (isHomeBodyweightExercise(name)) { line.innerHTML = ''; return; }
@@ -2407,7 +2419,7 @@
         deleteBtn.type = "button";
         deleteBtn.className = "w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center bg-red-50 text-red-500 rounded-lg hover:bg-red-100 font-bold text-lg sm:text-xl flex-shrink-0";
         deleteBtn.textContent = "×";
-        deleteBtn.addEventListener('click', () => { setRow.remove(); persistActiveWorkout(); });
+        deleteBtn.addEventListener('click', () => { setRow.remove(); renderSessionProgression(exerciseId, exerciseName); persistActiveWorkout(); });
 
         setRow.appendChild(repsInput);
         setRow.appendChild(weightDiv);
@@ -2415,6 +2427,7 @@
         setRow.appendChild(deleteBtn);
 
         container.appendChild(setRow);
+        if (!assigningToClient) mountSetCompletionTools(setRow, exerciseId, exerciseName, options);
         return setRow;
     }
 
@@ -2426,7 +2439,7 @@
             (state.workoutHistory || []).forEach(workout => {
                 (workout.exercises || []).forEach(ex => {
                     if (ex.name === exerciseName) {
-                        (ex.sets || []).forEach(set => {
+                        (ex.sets || []).filter(isWorkingSet).forEach(set => {
                             const w = parseFloat(set.weight);
                             if (!isNaN(w) && (minAssist === null || w < minAssist)) minAssist = w;
                         });
@@ -2440,7 +2453,7 @@
         (state.workoutHistory || []).forEach(workout => {
             (workout.exercises || []).forEach(ex => {
                 if (ex.name === exerciseName) {
-                    (ex.sets || []).forEach(set => {
+                    (ex.sets || []).filter(isWorkingSet).forEach(set => {
                         const weight = parseFloat(set.weight) || parseFloat(set.kg) || 0;
                         if (weight > maxWeight) maxWeight = weight;
                     });
@@ -2488,7 +2501,8 @@
         for (const w of history) {
             const match = (w.exercises || []).find(ex => ex.name === exerciseName);
             if (match && match.sets && match.sets.length > 0) {
-                return { date: w.date, sets: match.sets };
+                const sets = match.sets.filter(isWorkingSet);
+                if (sets.length) return { date: w.date, sets };
             }
         }
         return null;
@@ -2496,8 +2510,15 @@
 
     /** Suggest a readiness-aware working weight while preserving the legacy UI shape. */
     function getSuggestedWeight(exerciseName) {
-        const recommendation = smartProgressionForExercise(exerciseName, state);
+        let recommendation = smartProgressionForExercise(exerciseName, state);
         if (!recommendation) return null;
+        const card = Array.from(document.querySelectorAll('#exercise-list > div')).find(item=>item.querySelector('input[type="text"]')?.value.trim()===exerciseName);
+        const settings = card ? cardSessionSettings(card.id.replace('card-','')) : settingsForExercise(exerciseName);
+        const count = card ? Array.from(card.querySelectorAll('.set-row')).filter(row=>row.dataset.setType!=='warmup').length : 0;
+        const target = sessionProgressionSuggestion(exerciseName,settings,count);
+        if (target && !['deload','reduce'].includes(recommendation.action)) recommendation = {
+            ...recommendation, current:target.current, suggested:target.suggested, action:target.ready?'progress':'hold', reason:target.reason
+        };
         const workoutDate = window.selectedWorkoutDate || state.viewDate || localDateKey();
         const recovery = typeof getRecoveryPlanForDate === 'function' ? getRecoveryPlanForDate(workoutDate) : null;
         const adjusted = recovery && typeof recoveryAdjustedWeight === 'function'
@@ -2536,26 +2557,27 @@
 
             const sets = [];
             card.querySelectorAll('.set-row').forEach(row => {
+                if (row.dataset.completed !== 'true') return;
                 const repsEl = row.querySelector('.set-reps');
                 const weightEl = row.querySelector('.set-weight');
                 const rirEl = row.querySelector('.set-rir');
                 const reps = repsEl ? repsEl.value : '';
                 const weight = isHomeBodyweightExercise(name) ? '0' : weightEl ? weightEl.value : '';
-                if (reps && weight) {
-                    const setObj = { reps: reps, weight: weight };
+                if (Number(reps) > 0 && weight !== '' && Number.isFinite(Number(weight)) && Number(weight) >= 0) {
+                    const setObj = { reps, weight, setType: row.dataset.setType || 'working', completed: true };
                     // RIR is optional — only store it if entered
                     if (rirEl && rirEl.value !== '') setObj.rir = rirEl.value;
                     sets.push(setObj);
                 }
             });
 
-            if (sets.length > 0) exercises.push({ name, sets });
+            if (sets.length > 0) exercises.push({ name, sets, settings: cardSessionSettings(card.id.replace('card-', '')) });
         });
 
         if (exercises.length === 0) {
             // Restart timer since we're not actually saving
             startWorkoutTimer();
-            showToast('Add at least one exercise with sets');
+            showToast('Tick Completed on at least one set before finishing');
             return;
         }
 
@@ -2579,7 +2601,11 @@
             startedAt: workoutStartTime ? new Date(workoutStartTime).toISOString() : null,
             completedAt: new Date().toISOString(),
             exercises: exercises,
-            category: category
+            category: category,
+            env: currentWorkoutContext?.env || state.workoutEnv,
+            savedWorkoutId: currentWorkoutContext?.savedWorkoutId || null,
+            timeBudget: currentWorkoutContext?.timeBudget || 0,
+            skippedExercises: currentWorkoutContext?.skippedExercises || []
         };
 
         openRatingModal(exercises);
@@ -2696,6 +2722,7 @@
         currentWorkoutContext = null;
         showAllExercisesInPicker = false;
         renderDashboard();
+        renderTrainingTools();
         showToast(`Workout saved! 🏋️ (${exCount} exercises)`);
     }
 
@@ -2894,6 +2921,7 @@
     }
 
     function selectWorkoutDate(dateStr) {
+        setTimeout(renderTrainingTools, 0);
         document.getElementById('workout-date-picker').value = dateStr;
         window.selectedWorkoutDate = dateStr;
         const today = localDateKey();
