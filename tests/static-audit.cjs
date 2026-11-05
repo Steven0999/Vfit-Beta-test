@@ -298,6 +298,12 @@ for (const amountField of ['popup-serving-amount-field', 'popup-custom-weight-fi
 assert.ok(html.includes('id="edit-meal-serving-field"') && html.includes('id="edit-meal-custom-weight-field"'), 'copied-meal editing must keep servings and custom weight separate');
 const mealPlannerSource = moduleSources.get('nutrition/meal-planner.js');
 const scannerSource = moduleSources.get('nutrition/scanner.js');
+const customExerciseFocus = html.match(/<select id="new-ex-focus"[\s\S]*?<\/select>/)[0];
+for (const group of ['Push', 'Pull', 'Legs', 'Upper', 'Lower']) assert.ok(customExerciseFocus.includes(`value="${group}"`), `custom exercises need the ${group} classification`);
+assert.ok(!customExerciseFocus.includes('value="Full Body"'), 'Full Body membership must be automatic');
+for (const id of ['new-ex-focus', 'new-ex-primary-muscle']) assert.match(html, new RegExp(`id="${id}"[^>]*required[^>]*aria-required="true"`), `${id} must be required`);
+assert.ok(html.includes('id="new-ex-secondary-wrap" class="hidden" aria-hidden="true"'), 'secondary movers start hidden until experience is checked');
+assert.ok(html.includes('id="new-ex-secondary-muscle" disabled'), 'secondary mover selection starts disabled');
 assert.ok(mealPlannerSource.includes('function foodNutrientsPerServing(') && mealPlannerSource.includes('function selectedFoodAmount('), 'serving entry must calculate from the saved serving size');
 assert.ok(html.includes('id="popup-serving-weight-editor"') && html.includes('id="popup-serving-weight"') && html.includes('onclick="savePopupServingWeight()"'), 'authorized editors need an inline serving-weight editor');
 assert.ok(mealPlannerSource.includes('function databaseFoodWithServingWeight(') && mealPlannerSource.includes('function savePopupServingWeight('), 'serving weight changes must save through the food database');

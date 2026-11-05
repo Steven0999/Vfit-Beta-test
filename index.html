@@ -2186,24 +2186,29 @@
 
                 <!-- Focus -->
                 <div id="new-ex-focus-wrap">
-                    <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Focus</label>
-                    <select id="new-ex-focus" onchange="onNewExFocusChange()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
-                        <option value="Specific Muscle" hidden>Specific Muscle</option>
-                        <option value="Full Body">Full Body</option>
-                        <option value="Upper">Upper Body</option>
-                        <option value="Lower">Lower Body</option>
+                    <label for="new-ex-focus" class="text-xs font-bold text-slate-400 uppercase mb-2 block">Which workout group does it belong to?</label>
+                    <select id="new-ex-focus" required aria-required="true" onchange="onNewExFocusChange()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                        <option value="" disabled selected>Choose a workout group</option>
                         <option value="Push">Push</option>
                         <option value="Pull">Pull</option>
                         <option value="Legs">Legs</option>
-                        <option value="Core" hidden>Core / Abs</option>
+                        <option value="Upper">Upper</option>
+                        <option value="Lower">Lower</option>
                     </select>
+                    <p class="text-[11px] text-orange-600 font-bold mt-2">Always included in Full Body too.</p>
                 </div>
 
-                <!-- Muscles (shown when Specific Muscle is chosen) -->
+                <!-- Primary mover is required for every exercise type. -->
                 <div id="new-ex-muscles-wrap">
-                    <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Which muscles does it work?</label>
-                    <div id="new-ex-muscle-chips" class="flex flex-wrap gap-2"></div>
-                    <p class="text-[11px] text-slate-400 mt-2">Tap all the muscles this exercise trains.</p>
+                    <label for="new-ex-primary-muscle" class="text-xs font-bold text-slate-400 uppercase mb-2 block">Which muscle does it mainly work?</label>
+                    <select id="new-ex-primary-muscle" required aria-required="true" onchange="renderNewExMuscleSelectors()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"><option value="" disabled selected>Choose the main muscle</option></select>
+                    <p class="text-[11px] text-slate-400 mt-2">Choose the primary mover, including Core / Abs when appropriate.</p>
+                </div>
+
+                <div id="new-ex-secondary-wrap" class="hidden" aria-hidden="true">
+                    <label for="new-ex-secondary-muscle" class="text-xs font-bold text-slate-400 uppercase mb-2 block">Secondary mover <span class="normal-case">· Advanced</span></label>
+                    <select id="new-ex-secondary-muscle" disabled class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none"><option value="">None / not needed</option></select>
+                    <p class="text-[11px] text-slate-400 mt-2">Optional: choose another muscle that assists the main mover.</p>
                 </div>
 
                 <button onclick="saveCustomExercise()" class="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700">Save Exercise</button>

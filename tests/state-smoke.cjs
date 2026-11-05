@@ -224,7 +224,11 @@ const expose = `
   workoutPlanDraftForTest: () => workoutPlanDraft,
   getEnvDB,
   setNewExType,
+  openAddExerciseForm,
+  setNewExEnv,
+  renderNewExMuscleSelectors,
   saveCustomExercise,
+  getExerciseVolumeContribution,
   validProgressDate,
   progressCalendarWindow,
   metricProgressSeries,
@@ -1977,16 +1981,89 @@ assert.ok(app.exerciseNamesForCategory('home', 'core', 'Core', true).includes('D
 assert.ok(!app.exerciseNamesForCategory('home', 'core', 'Core', true).includes('Cable Crunch'), 'home core must not contain gym machines');
 assert.ok(app.exerciseNamesForCategory('gym', 'compound', 'Push', false).includes('Bench Press'));
 assert.ok(!app.exerciseNamesForCategory('gym', 'isolation', 'Biceps', false).includes('Bench Press'));
+planState.workoutEnv = 'gym';
+app.openAddExerciseForm();
 app.setNewExType('compound');
 assert.equal(document.getElementById('new-ex-focus-wrap').classList.contains('hidden'), false);
 app.setNewExType('isolation');
-assert.equal(document.getElementById('new-ex-focus-wrap').classList.contains('hidden'), true);
+assert.equal(document.getElementById('new-ex-focus-wrap').classList.contains('hidden'), false, 'isolation exercises also choose a workout group');
 assert.equal(document.getElementById('new-ex-muscles-wrap').style.display, 'block');
 app.setNewExType('core');
+document.getElementById('new-ex-focus').value = 'Lower';
 document.getElementById('new-ex-name').value = 'My core exercise';
 document.getElementById('workout-active').classList.add('hidden');
 app.saveCustomExercise();
 assert.ok(app.getEnvDB('gym').Core.isolation.includes('My core exercise'));
+assert.ok(app.getEnvDB('gym')['Full Body'].isolation.includes('My core exercise'));
+assert.equal(planState.customExercises.at(-1).primaryMuscle, 'Core');
+
+// The group and primary mover are required for all types. Full Body inclusion
+// is automatic, and secondary movers are recorded only for advanced lifters.
+planState.userProfile.yearsTraining = 1;
+app.openAddExerciseForm();
+document.getElementById('new-ex-name').value = 'Beginner custom press';
+const countBeforeRequiredFields = planState.customExercises.length;
+app.saveCustomExercise();
+assert.equal(planState.customExercises.length, countBeforeRequiredFields, 'a workout group is required');
+document.getElementById('new-ex-focus').value = 'Push';
+app.saveCustomExercise();
+assert.equal(planState.customExercises.length, countBeforeRequiredFields, 'the main muscle is required');
+document.getElementById('new-ex-primary-muscle').value = 'Chest';
+app.renderNewExMuscleSelectors();
+assert.equal(document.getElementById('new-ex-secondary-wrap').classList.contains('hidden'), true);
+assert.equal(document.getElementById('new-ex-secondary-muscle').disabled, true);
+document.getElementById('new-ex-secondary-muscle').value = 'Triceps';
+app.saveCustomExercise();
+assert.equal(planState.customExercises.at(-1).focus, 'Push');
+assert.equal(planState.customExercises.at(-1).primaryMuscle, 'Chest');
+assert.equal(planState.customExercises.at(-1).secondaryMuscles.length, 0, 'hidden secondary fields cannot be submitted by a non-advanced profile');
+assert.ok(app.getEnvDB('gym')['Full Body'].compound.includes('Beginner custom press'));
+assert.ok(app.getEnvDB('gym').Push.compound.includes('Beginner custom press'));
+
+for (const [years, hidden] of [[0, true], [2, true], [3.99, true], [4, false], [10, false]]) {
+  planState.userProfile.yearsTraining = years;
+  app.openAddExerciseForm();
+  assert.equal(document.getElementById('new-ex-secondary-wrap').classList.contains('hidden'), hidden);
+  assert.equal(document.getElementById('new-ex-secondary-muscle').disabled, hidden);
+}
+document.getElementById('new-ex-name').value = 'Advanced custom press';
+document.getElementById('new-ex-focus').value = 'Upper';
+document.getElementById('new-ex-primary-muscle').value = 'Chest';
+app.renderNewExMuscleSelectors();
+assert.ok(!document.getElementById('new-ex-secondary-muscle').innerHTML.includes('value="Chest"'), 'a primary mover cannot also be offered as its own secondary');
+document.getElementById('new-ex-secondary-muscle').value = 'Chest';
+const countBeforeSecondary = planState.customExercises.length;
+app.saveCustomExercise();
+assert.equal(planState.customExercises.length, countBeforeSecondary, 'duplicate primary and secondary roles must not save');
+document.getElementById('new-ex-secondary-muscle').value = 'Triceps';
+app.saveCustomExercise();
+const advancedExercise = planState.customExercises.at(-1);
+assert.equal(advancedExercise.primaryMuscle, 'Chest');
+assert.equal(advancedExercise.secondaryMuscles[0], 'Triceps');
+assert.equal(advancedExercise.muscles.length, 1, 'the assisting muscle must not be counted as a primary mover');
+assert.ok(app.getEnvDB('gym')['Full Body'].compound.includes('Advanced custom press'));
+assert.ok(app.getEnvDB('gym').Upper.compound.includes('Advanced custom press'));
+assert.ok(app.getEnvDB('gym').Chest.compound.includes('Advanced custom press'));
+const advancedContributions = app.getExerciseVolumeContribution('Advanced custom press');
+assert.equal(advancedContributions.Chest, 1);
+assert.equal(advancedContributions.Triceps, 0.5, 'secondary movers use the existing assisting-muscle volume rule');
+const exerciseRoundTrip = app.normalizeState(JSON.parse(JSON.stringify(planState))).customExercises.find(ex => ex.name === advancedExercise.name);
+assert.equal(exerciseRoundTrip.primaryMuscle, 'Chest');
+assert.equal(exerciseRoundTrip.secondaryMuscles[0], 'Triceps');
+planState.customExercises.push({ name: 'Legacy custom curl', env: 'gym', focus: 'Specific Muscle', type: 'isolation', muscles: ['Biceps'] });
+assert.ok(app.getEnvDB('gym')['Full Body'].isolation.includes('Legacy custom curl'), 'existing custom exercises also become available in Full Body');
+assert.ok(!app.getEnvDB('home')['Full Body'].compound.includes('Advanced custom press'), 'Full Body stays within the selected environment');
+planState.disabledExercises.gym.push('Advanced custom press');
+assert.ok(!app.getEnvDB('gym')['Full Body'].compound.includes('Advanced custom press'), 'unavailable exercises remain disabled in Full Body');
+app.openAddExerciseForm();
+document.getElementById('new-ex-name').value = 'Wrong account draft';
+document.getElementById('new-ex-focus').value = 'Pull';
+document.getElementById('new-ex-primary-muscle').value = 'Back';
+const countBeforeExerciseAccountSwitch = planState.customExercises.length;
+app.setUser({ uid: 'other-exercise-account' });
+app.saveCustomExercise();
+assert.equal(planState.customExercises.length, countBeforeExerciseAccountSwitch, 'an exercise draft must not move between accounts');
+app.setUser({ uid: 'plan-owner' });
 
 assert.equal(app.validProgressDate('2024-02-29'), true);
 assert.equal(app.validProgressDate('2026-02-29'), false);

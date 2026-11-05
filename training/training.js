@@ -225,7 +225,8 @@
             const bucket = (ce.type === 'compound') ? 'compound' : 'isolation';
 
             // Add under each specific muscle it targets
-            (ce.muscles || []).forEach(m => {
+            const primaryMuscles = SPECIFIC_MUSCLES.includes(ce.primaryMuscle) ? [ce.primaryMuscle] : (ce.muscles || []);
+            primaryMuscles.forEach(m => {
                 if (!out[m]) out[m] = { compound: [], isolation: [] };
                 if (out[m][bucket].indexOf(ce.name) < 0) out[m][bucket].push(ce.name);
             });
@@ -233,6 +234,13 @@
             if (ce.focus && ce.focus !== 'Specific Muscle') {
                 if (!out[ce.focus]) out[ce.focus] = { compound: [], isolation: [] };
                 if (out[ce.focus][bucket].indexOf(ce.name) < 0) out[ce.focus][bucket].push(ce.name);
+            }
+            // Full Body always includes every custom exercise in this environment.
+            if (!out['Full Body']) out['Full Body'] = { compound: [], isolation: [] };
+            if (!out['Full Body'][bucket].includes(ce.name)) out['Full Body'][bucket].push(ce.name);
+            if (ce.type === 'core') {
+                if (!out.Core) out.Core = { compound: [], isolation: [] };
+                if (!out.Core.isolation.includes(ce.name)) out.Core.isolation.push(ce.name);
             }
         });
 
@@ -265,25 +273,27 @@
     // ==========================================================================
     let newExEnv = 'gym';
     let newExType = 'compound';
-    let newExMuscles = [];
+    let newExerciseAccountUid = null;
+    const CUSTOM_EXERCISE_FOCUSES = ['Push', 'Pull', 'Legs', 'Upper', 'Lower'];
 
     function openAddExerciseForm() {
         newExEnv = state.workoutEnv || 'gym';
         newExType = 'compound';
-        newExMuscles = [];
+        newExerciseAccountUid = currentUser && currentUser.uid || '';
         document.getElementById('new-ex-name').value = '';
-        document.getElementById('new-ex-focus').value = 'Full Body';
+        document.getElementById('new-ex-focus').value = '';
+        document.getElementById('new-ex-primary-muscle').value = '';
+        document.getElementById('new-ex-secondary-muscle').value = '';
         const assistedCb = document.getElementById('new-ex-assisted');
         if (assistedCb) assistedCb.checked = false;
         setNewExEnv(newExEnv);
         setNewExType('compound');
-        renderNewExMuscleChips();
-        onNewExFocusChange();
         document.getElementById('add-exercise-modal').style.display = 'flex';
     }
 
     function closeAddExerciseForm() {
         document.getElementById('add-exercise-modal').style.display = 'none';
+        newExerciseAccountUid = null;
     }
 
     function setNewExEnv(env) {
@@ -297,6 +307,7 @@
     }
 
     function setNewExType(type) {
+        if (!['compound', 'isolation', 'core'].includes(type)) return;
         newExType = type;
         const c = document.getElementById('new-ex-type-compound');
         const i = document.getElementById('new-ex-type-isolation');
@@ -306,49 +317,47 @@
         if (i) i.className = (type === 'isolation') ? on : off;
         const core = document.getElementById('new-ex-type-core');
         if (core) core.className = type === 'core' ? on : off;
-        const focus = document.getElementById('new-ex-focus');
-        const focusWrap = document.getElementById('new-ex-focus-wrap');
-        if (focusWrap) focusWrap.classList.toggle('hidden', type !== 'compound');
-        if (focus) {
-            if (type !== 'compound') focus.value = type === 'core' ? 'Core' : 'Specific Muscle';
-            else if (!['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Full Body'].includes(focus.value)) focus.value = 'Full Body';
-        }
-        if (type === 'core') newExMuscles = ['Core'];
-        else if (type === 'compound') newExMuscles = [];
-        renderNewExMuscleChips();
+        if (type === 'core') document.getElementById('new-ex-primary-muscle').value = 'Core';
         onNewExFocusChange();
     }
 
     function onNewExFocusChange() {
-        const focus = document.getElementById('new-ex-focus').value;
-        const wrap = document.getElementById('new-ex-muscles-wrap');
-        // Muscle chips only matter for Specific Muscle
-        if (wrap) wrap.style.display = newExType === 'isolation' ? 'block' : 'none';
+        document.getElementById('new-ex-focus-wrap').classList.remove('hidden');
+        document.getElementById('new-ex-muscles-wrap').style.display = 'block';
+        renderNewExMuscleSelectors();
     }
 
-    function renderNewExMuscleChips() {
-        const box = document.getElementById('new-ex-muscle-chips');
-        if (!box) return;
-        box.innerHTML = SPECIFIC_MUSCLES.map(m => {
-            const sel = newExMuscles.indexOf(m) >= 0;
-            return `<button type="button" onclick="toggleNewExMuscle('${escapeJsString(m)}')"
-                class="px-4 py-2 rounded-full text-xs font-bold border-2 ${sel ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}">${escapeHtml(m === 'Core' ? 'Core / Abs' : m)}</button>`;
-        }).join('');
-    }
-
-    function toggleNewExMuscle(muscle) {
-        const i = newExMuscles.indexOf(muscle);
-        if (i >= 0) newExMuscles.splice(i, 1); else newExMuscles.push(muscle);
-        renderNewExMuscleChips();
+    function renderNewExMuscleSelectors() {
+        const primarySelect = document.getElementById('new-ex-primary-muscle');
+        const secondarySelect = document.getElementById('new-ex-secondary-muscle');
+        const primary = SPECIFIC_MUSCLES.includes(primarySelect.value) ? primarySelect.value : '';
+        const secondary = secondarySelect.value;
+        const option = muscle => `<option value="${escapeHtml(muscle)}">${escapeHtml(muscle === 'Core' ? 'Core / Abs' : muscle)}</option>`;
+        primarySelect.innerHTML = '<option value="" disabled>Choose the main muscle</option>' + SPECIFIC_MUSCLES.map(option).join('');
+        primarySelect.value = primary;
+        const advanced = trainingExperienceTier() === 'advanced';
+        const secondaryWrap = document.getElementById('new-ex-secondary-wrap');
+        secondaryWrap.classList.toggle('hidden', !advanced);
+        secondaryWrap.setAttribute('aria-hidden', String(!advanced));
+        secondarySelect.disabled = !advanced;
+        secondarySelect.innerHTML = '<option value="">None / not needed</option>' + SPECIFIC_MUSCLES.filter(muscle => muscle !== primary).map(option).join('');
+        secondarySelect.value = advanced && SPECIFIC_MUSCLES.includes(secondary) && secondary !== primary ? secondary : '';
     }
 
     function saveCustomExercise() {
+        if (newExerciseAccountUid === null || newExerciseAccountUid !== (currentUser && currentUser.uid || '')) {
+            closeAddExerciseForm(); showToast('Reopen Add Exercise for this account'); return;
+        }
         const name = document.getElementById('new-ex-name').value.trim();
-        const focus = newExType === 'core' ? 'Core' : newExType === 'isolation' ? 'Specific Muscle' : document.getElementById('new-ex-focus').value;
+        const focus = document.getElementById('new-ex-focus').value;
+        const primaryMuscle = document.getElementById('new-ex-primary-muscle').value;
+        const secondaryMuscle = trainingExperienceTier() === 'advanced' ? document.getElementById('new-ex-secondary-muscle').value : '';
 
         if (!name) { showToast('Enter an exercise name'); return; }
-        if (focus === 'Specific Muscle' && newExMuscles.length === 0) {
-            showToast('Pick at least one muscle it works'); return;
+        if (!CUSTOM_EXERCISE_FOCUSES.includes(focus)) { showToast('Choose Push, Pull, Legs, Upper or Lower'); return; }
+        if (!SPECIFIC_MUSCLES.includes(primaryMuscle)) { showToast('Choose the muscle this exercise mainly works'); return; }
+        if (secondaryMuscle && (!SPECIFIC_MUSCLES.includes(secondaryMuscle) || secondaryMuscle === primaryMuscle)) {
+            showToast('Choose a secondary mover different from the main muscle'); return;
         }
 
         // Don't allow a duplicate name in the same environment
@@ -356,24 +365,24 @@
             c.name.toLowerCase() === name.toLowerCase() && (c.env || 'gym') === newExEnv);
         if (exists) { showToast('You already have that exercise'); return; }
 
-        if (!state.customExercises) state.customExercises = [];
+        const previousExercises = state.customExercises || [];
         const isAssisted = !!(document.getElementById('new-ex-assisted') || {}).checked;
-        state.customExercises.push({
+        const exercise = {
             name: name,
             env: newExEnv,
             focus: focus,
             type: newExType,
             assisted: isAssisted, // when true, a LOWER weight is a better result
-            // If a focus group was chosen, no specific muscles are required
-            muscles: focus === 'Core' ? ['Core'] : (focus === 'Specific Muscle') ? newExMuscles.slice() : []
-        });
-        saveState();
+            primaryMuscle,
+            secondaryMuscles: secondaryMuscle ? [secondaryMuscle] : [],
+            muscles: [primaryMuscle]
+        };
+        state.customExercises = [...previousExercises, exercise];
+        if (!saveState()) { state.customExercises = previousExercises; showToast('Could not save this exercise on the device'); return; }
         syncExercisePrefs(); // push to the account so it follows the user across devices
 
         // Keep the reverse index in sync so swap/volume/ordering know about it
-        if (newExMuscles.length > 0) {
-            EXERCISE_TO_MUSCLES[name] = newExMuscles.slice();
-        }
+        EXERCISE_TO_MUSCLES[name] = [primaryMuscle];
 
         closeAddExerciseForm();
         showToast(`Added "${name}" to your ${newExEnv} exercises ✓`);
@@ -381,7 +390,7 @@
         // If a workout is open, drop the new exercise straight into it
         const activeEl = document.getElementById('workout-active');
         if (activeEl && !activeEl.classList.contains('hidden') && !(typeof workoutPlanDraft !== 'undefined' && workoutPlanDraft)) {
-            if (currentWorkoutContext && (focus === 'Core' || newExMuscles.includes('Core'))) currentWorkoutContext.includeCore = true;
+            if (currentWorkoutContext && (newExType === 'core' || primaryMuscle === 'Core')) currentWorkoutContext.includeCore = true;
             addExercise(name);
         }
         if (typeof renderWorkoutPlanExercisePicker === 'function' && typeof workoutPlanDraft !== 'undefined' && workoutPlanDraft) renderWorkoutPlanExercisePicker();
@@ -771,10 +780,15 @@
      */
     function getExerciseVolumeContribution(exerciseName) {
         const contrib = {};
-        const primary = EXERCISE_TO_MUSCLES[exerciseName] || [];
+        const custom = (state.customExercises || []).find(exercise => exercise.name === exerciseName
+            && (exercise.env || 'gym') === (currentWorkoutContext && currentWorkoutContext.env || state.workoutEnv || 'gym'))
+            || (state.customExercises || []).find(exercise => exercise.name === exerciseName);
+        const primary = custom && SPECIFIC_MUSCLES.includes(custom.primaryMuscle) ? [custom.primaryMuscle]
+            : custom && Array.isArray(custom.muscles) ? custom.muscles : EXERCISE_TO_MUSCLES[exerciseName] || [];
         primary.forEach(m => { contrib[m] = 1.0; });
 
-        const secondary = SECONDARY_MUSCLE_MAP[exerciseName] || [];
+        const secondary = custom && Array.isArray(custom.secondaryMuscles) ? custom.secondaryMuscles.filter(muscle => SPECIFIC_MUSCLES.includes(muscle))
+            : SECONDARY_MUSCLE_MAP[exerciseName] || [];
         secondary.forEach(m => {
             // Don't let a secondary downgrade a primary; only add if not already primary
             if (contrib[m] === undefined) contrib[m] = 0.5;
