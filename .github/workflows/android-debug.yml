@@ -47,17 +47,14 @@ jobs:
       - name: Render mobile UI checks
         run: |
           node tests/browser-check.cjs "$RUNNER_TEMP/vfit-ui"
-          for page in active plans metrics nutrition updates; do
-            google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --no-first-run --allow-file-access-from-files --window-size=390,920 --virtual-time-budget=5000 --screenshot="$RUNNER_TEMP/vfit-ui/$page.png" "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null
-            google-chrome --headless --no-sandbox --disable-gpu --no-first-run --allow-file-access-from-files --virtual-time-budget=5000 --dump-dom "file://$RUNNER_TEMP/vfit-ui/$page.html" 2>/dev/null > "$RUNNER_TEMP/vfit-ui/$page.dom.html"
-            python3 -c 'import sys,pathlib; page=pathlib.Path(sys.argv[1]).read_text(); assert "data-browser-check=\"passed\"" in page, "Browser check failed: " + page[page.find("browser-check-error"):page.find("browser-check-error")+1200]' "$RUNNER_TEMP/vfit-ui/$page.dom.html"
-          done
+          node tools/check-browser.cjs "$RUNNER_TEMP/vfit-ui"
 
       - name: Upload UI checks
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vfit-beta-ui-checks
+          overwrite: true
           path: |
             ${{ runner.temp }}/vfit-ui/*.png
             ${{ runner.temp }}/vfit-ui/*.dom.html
