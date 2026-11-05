@@ -50,6 +50,8 @@ const checks={
   updates:`
     const before=JSON.stringify({...state,meta:{schemaVersion:999,appVersion:'2.1.0-beta.999'},futureSavedField:{note:'Keep the original'}});
     localStorage.setItem(stateStorageKey(currentUser.uid),before);
+    protectAccountData(currentUser.uid,'Your saved data was written by a newer VFIT version. Open the latest version to continue.');
+    showAccountDataProtection(currentUser.uid);
     expect(!await prepareAccountDataForUpdate(currentUser.uid),'newer save must pause the update');
     expect(localStorage.getItem(stateStorageKey(currentUser.uid))===before,'protected original changed');
     expect((await originalAccountCopies(currentUser.uid))[0].originals.primaryRaw===before,'original copy missing');

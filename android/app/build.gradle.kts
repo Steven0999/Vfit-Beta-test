@@ -34,6 +34,7 @@ android {
         targetSdk = 36
         versionCode = 54
         versionName = "2.1.0-beta.54"
+        manifestPlaceholders["vfitAppLabel"] = "@string/app_name"
     }
 
     signingConfigs {
@@ -57,7 +58,7 @@ android {
                 // It cannot replace the real app or its private data directory.
                 applicationIdSuffix = ".test"
                 versionNameSuffix = "-test"
-                resValue("string", "app_name", "VFIT Test")
+                manifestPlaceholders["vfitAppLabel"] = "VFIT Test"
             }
         }
         release {
