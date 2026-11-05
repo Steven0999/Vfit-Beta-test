@@ -639,3 +639,8 @@
         html body:not([data-training-tier="beginner"]) #coaching-training-basics-card {
             display: none !important;
         }
+
+        .plan-set-grid { display: grid; grid-template-columns: 2rem repeat(3, minmax(0, 1fr)); gap: 0.5rem; align-items: center; }
+        html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list .set-rir,
+        html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list .set-rir-label,
+        html body[data-training-tier="beginner"] #workout-active[data-saved-plan="true"] #exercise-list [id^="pb-line-"] { display: block !important; }

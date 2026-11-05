@@ -8,6 +8,8 @@
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
+            if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
+            if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
             stopMembershipSync();
             closeManualDiaryFood();
             closeFoodPhotoEstimate();
@@ -46,6 +48,8 @@
         stopMembershipSync();
         closeManualDiaryFood();
         closeFoodPhotoEstimate();
+        if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
+        if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
         currentUser = user;
         currentUserIsOwner = false;
         currentUserCanManageFoodDatabase = false;

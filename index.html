@@ -568,6 +568,9 @@
             <!-- TRAINING TAB -->
             <!-- ============================== -->
             <section id="training" class="tab-content space-y-6">
+                <button id="my-workout-plan-button" onclick="openMyWorkoutPlan()" class="w-full bg-orange-600 text-white p-5 rounded-3xl font-black flex items-center justify-center gap-3">
+                    <i data-lucide="clipboard-list" class="w-6 h-6"></i> My Workout Plan
+                </button>
                 <!-- Date Selector -->
                 <div class="glass-card p-4 rounded-2xl">
                     <div class="flex items-center justify-between gap-3">
@@ -617,6 +620,7 @@
                             <option>Pull</option>
                             <option>Legs</option>
                             <option>Specific Muscle</option>
+                            <option value="Core">Core / Abs</option>
                         </select>
                     </div>
 
@@ -632,6 +636,7 @@
                             <button type="button" onclick="toggleMuscleChip('Hamstrings')" data-muscle="Hamstrings" class="muscle-chip py-3 px-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-indigo-300 hover:bg-indigo-50">Hams</button>
                             <button type="button" onclick="toggleMuscleChip('Glutes')" data-muscle="Glutes" class="muscle-chip py-3 px-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-indigo-300 hover:bg-indigo-50">Glutes</button>
                             <button type="button" onclick="toggleMuscleChip('Calves')" data-muscle="Calves" class="muscle-chip py-3 px-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-indigo-300 hover:bg-indigo-50">Calves</button>
+                            <button type="button" onclick="toggleMuscleChip('Core')" data-muscle="Core" class="muscle-chip py-3 px-2 rounded-xl border-2 border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-indigo-300 hover:bg-indigo-50">Core / Abs</button>
                         </div>
                         <p id="specific-muscle-count" class="text-xs text-slate-400 mt-2 italic">No muscles selected</p>
                     </div>
@@ -674,6 +679,7 @@
                         <button onclick="cancelWorkout()" class="w-10 h-10 bg-red-50 text-red-500 rounded-xl text-xl font-bold">×</button>
                     </div>
                     <div id="exercise-list" class="space-y-4 mb-6"></div>
+                    <button onclick="saveActiveWorkoutAsPlan()" class="w-full p-4 bg-orange-50 border border-orange-200 rounded-2xl text-orange-700 font-bold text-sm mb-4">Save as workout plan</button>
                     <button id="add-exercise-btn" onclick="addExercise()" class="w-full p-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 font-bold text-xs mb-4 hover:border-indigo-400 hover:text-indigo-500">+ Add Exercise</button>
                     <button id="finish-workout-btn" onclick="saveWorkout()" class="w-full bg-slate-900 text-white p-5 rounded-[1.5rem] font-bold hover:bg-slate-800">Finish Workout</button>
                 </div>
@@ -1030,6 +1036,16 @@
                     <div id="metrics-date-warning" class="hidden mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
                         <p class="text-xs text-amber-800 font-bold text-center">⚠️ Editing past date — values you save will apply to this date</p>
                     </div>
+                </div>
+
+                <div id="metrics-progress-overview" class="glass-card p-4 sm:p-6 rounded-3xl">
+                    <h3 class="font-black text-lg text-center mb-4">Your progress</h3>
+                    <label for="metric-overview-select" class="text-xs font-bold text-slate-500 block mb-2 text-center">Choose a metric</label>
+                    <select id="metric-overview-select" onchange="setMetricProgressMetric(this.value)" class="w-full rounded-2xl p-3 bg-slate-50 font-bold mb-4"><option value="weight">Weight</option></select>
+                    <div id="metric-progress-controls-overview"></div>
+                    <div id="metric-progress-graph-overview" class="metric-progress-graph rounded-2xl bg-slate-50 my-3"></div>
+                    <div id="metric-progress-summary-overview" class="mb-3" aria-live="polite"></div>
+                    <p id="metric-progress-help-overview" class="text-xs text-slate-400 text-center"></p>
                 </div>
 
                 <!-- 3 RECORD BUTTONS -->
@@ -2087,6 +2103,42 @@
         </div>
     </div>
 
+    <div id="my-workout-plan-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="my-workout-plan-title">
+        <div class="bg-white w-full max-w-2xl rounded-[32px] p-5 sm:p-8 max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center gap-3 mb-4"><h3 id="my-workout-plan-title" class="text-xl font-black">My Workout Plan</h3><button onclick="closeMyWorkoutPlan()" aria-label="Close workout plans" class="w-10 h-10 rounded-full bg-slate-100 text-2xl">×</button></div>
+            <p class="text-sm text-slate-500 mb-5">Build workouts once, then use them whenever you train. Each plan opens in your usual workout logger.</p>
+            <button onclick="editSavedWorkout()" class="w-full rounded-2xl bg-orange-600 p-4 text-white font-black mb-6">Create workout</button>
+            <div class="flex items-center justify-between gap-2 mb-3"><h4 class="font-black">Manage Workouts</h4><p id="saved-workouts-count" class="text-xs text-slate-400" role="status"></p></div>
+            <div id="saved-workouts-list" class="space-y-3"></div>
+        </div>
+    </div>
+
+    <div id="workout-plan-editor-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="workout-plan-editor-title">
+        <div class="bg-white w-full max-w-2xl rounded-[32px] p-5 sm:p-8 max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center gap-3 mb-5"><h3 id="workout-plan-editor-title" class="text-xl font-black">Create workout</h3><button onclick="closeWorkoutPlanEditor()" aria-label="Close workout editor" class="w-10 h-10 rounded-full bg-slate-100 text-2xl">×</button></div>
+            <label class="block text-xs font-bold text-slate-500 mb-4">Workout name<input id="workout-plan-name" type="text" maxlength="100" placeholder="e.g. Monday push" oninput="changeWorkoutPlanSetup()" class="block mt-2 w-full p-3 rounded-xl border-2 border-slate-200 font-bold"></label>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <label class="text-xs font-bold text-slate-500">Location<select id="workout-plan-env" onchange="changeWorkoutPlanSetup()" class="block mt-2 w-full p-3 rounded-xl bg-slate-50 font-bold"><option value="gym">Gym</option><option value="home">Home</option></select></label>
+                <label class="text-xs font-bold text-slate-500">Workout focus<select id="workout-plan-focus" onchange="changeWorkoutPlanSetup()" class="block mt-2 w-full p-3 rounded-xl bg-slate-50 font-bold"><option>Full Body</option><option>Push</option><option>Pull</option><option>Legs</option><option>Upper</option><option>Lower</option><option value="Core">Core / Abs</option></select></label>
+            </div>
+            <label class="flex items-center gap-3 rounded-2xl bg-orange-50 p-4 mb-5 font-bold text-sm"><input id="workout-plan-core" type="checkbox" onchange="changeWorkoutPlanSetup()" class="w-5 h-5 accent-orange-600">Add Core / Abs</label>
+            <div class="rounded-2xl bg-slate-50 p-4 mb-5">
+                <h4 class="font-black mb-3">Add exercises</h4>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <label class="text-xs font-bold text-slate-500">Exercise type<select id="workout-plan-exercise-type" onchange="renderWorkoutPlanExercisePicker()" class="block mt-2 w-full rounded-xl bg-white p-3 font-bold"><option value="compound">Compound</option><option value="isolation">Isolation</option></select></label>
+                    <label class="text-xs font-bold text-slate-500">Focus / muscle<select id="workout-plan-exercise-group" onchange="renderWorkoutPlanExercisePicker(true)" class="block mt-2 w-full rounded-xl bg-white p-3 font-bold"></select></label>
+                </div>
+                <label class="block text-xs font-bold text-slate-500 mb-2">Find an exercise<input id="workout-plan-search" type="search" oninput="renderWorkoutPlanExercisePicker(true)" placeholder="Search exercises" class="block mt-2 w-full rounded-xl bg-white p-3 font-medium"></label>
+                <label class="block text-xs font-bold text-slate-500">Exercise<select id="workout-plan-exercise-select" class="block mt-2 w-full rounded-xl bg-white p-3 font-bold"></select></label>
+                <button id="workout-plan-add-exercise" onclick="addWorkoutPlanExercise()" class="w-full mt-3 rounded-xl bg-slate-900 text-white p-3 font-bold disabled:opacity-40">Add exercise</button>
+                <button onclick="openWorkoutPlanCustomExercise()" class="w-full mt-2 p-2 text-xs font-bold text-orange-600">Create a new exercise</button>
+            </div>
+            <p class="text-xs text-slate-500 mb-4">Choose the sets and starting targets. Your latest logged reps, weight and RIR take priority each time you start the plan.</p>
+            <div id="workout-plan-exercises" class="space-y-4 mb-5"></div>
+            <button onclick="saveWorkoutPlan()" class="w-full rounded-2xl bg-orange-600 p-4 font-black text-white">Save workout</button>
+        </div>
+    </div>
+
     <!-- ADD CUSTOM EXERCISE FORM -->
     <div id="add-exercise-modal" class="modal-overlay">
         <div class="bg-white w-full max-w-lg rounded-[40px] p-6 sm:p-8 max-h-[90vh] overflow-y-auto">
@@ -2115,9 +2167,10 @@
                 <!-- Type -->
                 <div>
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Exercise Type</label>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-3 gap-3">
                         <button type="button" onclick="setNewExType('compound')" id="new-ex-type-compound" class="py-3 rounded-xl border-2 border-indigo-600 bg-indigo-600 text-white font-bold">Compound</button>
                         <button type="button" onclick="setNewExType('isolation')" id="new-ex-type-isolation" class="py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-600 font-bold">Isolation</button>
+                        <button type="button" onclick="setNewExType('core')" id="new-ex-type-core" class="py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-600 font-bold">Core / Abs</button>
                     </div>
                     <p class="text-[11px] text-slate-400 mt-2">Compound = multiple joints (squat, row). Isolation = single joint (curl, extension).</p>
                 </div>
@@ -2132,16 +2185,17 @@
                 </label>
 
                 <!-- Focus -->
-                <div>
+                <div id="new-ex-focus-wrap">
                     <label class="text-xs font-bold text-slate-400 uppercase mb-2 block">Focus</label>
                     <select id="new-ex-focus" onchange="onNewExFocusChange()" class="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none">
-                        <option value="Specific Muscle">Specific Muscle</option>
+                        <option value="Specific Muscle" hidden>Specific Muscle</option>
                         <option value="Full Body">Full Body</option>
                         <option value="Upper">Upper Body</option>
                         <option value="Lower">Lower Body</option>
                         <option value="Push">Push</option>
                         <option value="Pull">Pull</option>
                         <option value="Legs">Legs</option>
+                        <option value="Core" hidden>Core / Abs</option>
                     </select>
                 </div>
 
@@ -2987,9 +3041,10 @@
                     <option value="glutes">Glutes (cm)</option>
                 </select>
             </div>
-            <div class="h-80 relative bg-slate-50 rounded-3xl p-4">
-                <canvas id="metrics-chart"></canvas>
-            </div>
+            <div id="metric-progress-controls-expanded"></div>
+            <div id="metric-progress-graph-expanded" class="metric-progress-graph rounded-2xl bg-slate-50 my-3"></div>
+            <div id="metric-progress-summary-expanded" class="mb-3" aria-live="polite"></div>
+            <p id="metric-progress-help-expanded" class="text-xs text-slate-400 text-center"></p>
         </div>
     </div>
 
@@ -3014,6 +3069,7 @@
                 </select>
             </div>
             <label class="flex items-start gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl cursor-pointer mb-5"><input type="checkbox" id="exercise-progress-relative-toggle" onchange="renderExerciseProgressChart()" class="w-5 h-5 accent-indigo-600 mt-0.5"><span><span class="block text-sm font-bold text-indigo-900">Show weight lifted per kg of bodyweight</span><span class="block text-[10px] text-indigo-600 mt-1">Uses the lift date, or your most recent available weight.</span></span></label>
+            <div id="exercise-progress-period-controls" class="mb-5"></div>
 
             <div id="exercise-progress-stats" class="hidden mb-6">
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -3928,6 +3984,7 @@
     <!-- VFIT application modules: ordered classic scripts share one app state. -->
     <script src="./core/state.js"></script>
     <script src="./training/training.js"></script>
+    <script src="./training/workout-plans.js"></script>
     <script src="./nutrition/food-catalog.js"></script>
     <script src="./nutrition/meal-planner.js"></script>
     <script src="./nutrition/scanner.js"></script>
@@ -3939,6 +3996,7 @@
     <script src="./metrics/step-tracking.js"></script>
     <script src="./metrics/run-tracking.js"></script>
     <script src="./metrics/photo-storage.js"></script>
+    <script src="./metrics/progress-charts.js"></script>
     <script src="./feedback/beta-feedback.js"></script>
     <script src="./coaching/plan-builder.js"></script>
     <script src="./App.js"></script>

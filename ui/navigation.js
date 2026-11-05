@@ -384,6 +384,7 @@
 
     function selectMetricsDate(dateStr) {
         state.metricsDate = dateStr;
+        if (typeof metricProgressAnchor !== 'undefined') metricProgressAnchor = dateStr;
         document.getElementById('metrics-date-picker').value = dateStr;
         const today = localDateKey();
         const warning = document.getElementById('metrics-date-warning');
@@ -881,6 +882,7 @@
     }
 
     function renderMetricsHistory() {
+        if (typeof renderMetricProgressGraphs === 'function') renderMetricProgressGraphs();
         const container = document.getElementById('metrics-history-list');
         if (!container) return;
         const history = (state.metricsHistory || []).slice(0, 30);
@@ -928,57 +930,7 @@
     }
 
     function renderMetricChart() {
-        const metric = document.getElementById('chart-metric-select').value;
-        const canvas = document.getElementById('metrics-chart');
-        if (!canvas) return;
-
-        const history = (state.metricsHistory || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-        const filtered = history.filter(h => h[metric] !== undefined && h[metric] !== null);
-
-        if (filtered.length === 0) {
-            if (metricsChart) { metricsChart.destroy(); metricsChart = null; }
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.font = '14px Plus Jakarta Sans';
-            ctx.fillStyle = '#94a3b8';
-            ctx.textAlign = 'center';
-            ctx.fillText('No data for this metric yet', canvas.width / 2, canvas.height / 2);
-            return;
-        }
-
-        const labels = filtered.map(h => new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }));
-        const values = filtered.map(h => h[metric]);
-
-        if (metricsChart) metricsChart.destroy();
-        if (!chartLibraryReady(canvas)) return;
-
-        metricsChart = new Chart(canvas, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: metric.charAt(0).toUpperCase() + metric.slice(1),
-                    data: values,
-                    borderColor: '#4f46e5',
-                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 5,
-                    pointHoverRadius: 8,
-                    pointBackgroundColor: '#4f46e5'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { beginAtZero: false, grid: { color: '#e2e8f0' } },
-                    x: { grid: { display: false } }
-                }
-            }
-        });
+        setMetricProgressMetric(document.getElementById('chart-metric-select').value || 'weight');
     }
 
     // ==========================================================================
@@ -2150,6 +2102,7 @@
     }
 
     function renderExerciseProgressChart() {
+        if (typeof renderExerciseProgressRangeControls === 'function') renderExerciseProgressRangeControls([]);
         const exerciseName = document.getElementById('exercise-select').value;
         if (!exerciseName) {
             document.getElementById('exercise-progress-stats').classList.add('hidden');
@@ -2159,7 +2112,7 @@
         }
 
         // Gather data points for this exercise (date + max weight that day)
-        const dataPoints = [];
+        let dataPoints = [];
         (state.workoutHistory || []).forEach(w => {
             (w.exercises || []).forEach(ex => {
                 if (ex.name === exerciseName) {
@@ -2178,7 +2131,12 @@
             });
         });
 
+        if (typeof exerciseProgressPointsForRange === 'function') {
+            renderExerciseProgressRangeControls(dataPoints);
+            dataPoints = exerciseProgressPointsForRange(dataPoints, exerciseProgressRange, exerciseProgressAnchor || state.metricsDate || localDateKey());
+        }
         if (dataPoints.length === 0) {
+            document.getElementById('exercise-progress-empty').textContent = 'No lifts logged for this exercise in the selected period.';
             document.getElementById('exercise-progress-empty').classList.remove('hidden');
             document.getElementById('exercise-progress-stats').classList.add('hidden');
             document.getElementById('exercise-progress-chart-container').classList.add('hidden');
@@ -2195,6 +2153,13 @@
             });
         }
         const plotted = dataPoints.filter(d => !useRelative || d.displayWeight > 0);
+        if (!plotted.length) {
+            document.getElementById('exercise-progress-empty').textContent = 'Log a bodyweight measurement to show these lifts relative to your bodyweight.';
+            document.getElementById('exercise-progress-empty').classList.remove('hidden');
+            document.getElementById('exercise-progress-stats').classList.add('hidden');
+            document.getElementById('exercise-progress-chart-container').classList.add('hidden');
+            return;
+        }
 
         // Show stats and chart sections
         document.getElementById('exercise-progress-empty').classList.add('hidden');

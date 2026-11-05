@@ -10,6 +10,7 @@ const styles = fs.readFileSync(path.join(root, 'Styles.css'), 'utf8');
 const moduleFiles = [
   'core/state.js',
   'training/training.js',
+  'training/workout-plans.js',
   'nutrition/food-catalog.js',
   'nutrition/meal-planner.js',
   'nutrition/scanner.js',
@@ -21,6 +22,7 @@ const moduleFiles = [
   'metrics/step-tracking.js',
   'metrics/run-tracking.js',
   'metrics/photo-storage.js',
+  'metrics/progress-charts.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
   'App.js'

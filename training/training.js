@@ -98,6 +98,10 @@
                 compound: ['Hip Thrust', 'Bulgarian Split Squat', 'Sumo Deadlift', 'Romanian Deadlift', 'Walking Lunges'],
                 isolation: ['Cable Kickback', 'Hip Abduction', 'Glute Bridge', 'Single Leg Hip Thrust', 'Glute Kickback Machine', 'Banded Side Steps']
             },
+            'Core': {
+                compound: [],
+                isolation: ['Cable Crunch', 'Hanging Knee Raises', 'Hanging Leg Raises', 'Ab Wheel Rollout', 'Weighted Crunch', 'Plank', 'Side Plank', 'Crunches', 'Leg Raises', 'Russian Twists', 'Dead Bug']
+            },
             'Calves': {
                 compound: ['Smith Machine Calf Raise', 'Leg Press Calf Raise', 'Calf Press Machine', 'Weighted Box Jumps'],
                 isolation: ['Standing Calf Raise', 'Seated Calf Raise', 'Donkey Calf Raise', 'Single Leg Calf Raise', 'Tibialis Raise']
@@ -163,6 +167,10 @@
             'Calves': {
                 compound: [],
                 isolation: ['Calf Raise', 'Single-Leg Calf Raise', 'Jump Rope']
+            },
+            'Core': {
+                compound: [],
+                isolation: ['Plank', 'Side Plank', 'Crunches', 'Reverse Crunches', 'Leg Raises', 'Russian Twists', 'Mountain Climbers', 'Dead Bug', 'Bird Dog', 'Hollow Body Hold']
             }
         }
     };
@@ -264,7 +272,7 @@
         newExType = 'compound';
         newExMuscles = [];
         document.getElementById('new-ex-name').value = '';
-        document.getElementById('new-ex-focus').value = 'Specific Muscle';
+        document.getElementById('new-ex-focus').value = 'Full Body';
         const assistedCb = document.getElementById('new-ex-assisted');
         if (assistedCb) assistedCb.checked = false;
         setNewExEnv(newExEnv);
@@ -296,13 +304,26 @@
         const off = 'py-3 rounded-xl border-2 border-slate-200 bg-white text-slate-600 font-bold';
         if (c) c.className = (type === 'compound') ? on : off;
         if (i) i.className = (type === 'isolation') ? on : off;
+        const core = document.getElementById('new-ex-type-core');
+        if (core) core.className = type === 'core' ? on : off;
+        const focus = document.getElementById('new-ex-focus');
+        const focusWrap = document.getElementById('new-ex-focus-wrap');
+        if (focusWrap) focusWrap.classList.toggle('hidden', type !== 'compound');
+        if (focus) {
+            if (type !== 'compound') focus.value = type === 'core' ? 'Core' : 'Specific Muscle';
+            else if (!['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Full Body'].includes(focus.value)) focus.value = 'Full Body';
+        }
+        if (type === 'core') newExMuscles = ['Core'];
+        else if (type === 'compound') newExMuscles = [];
+        renderNewExMuscleChips();
+        onNewExFocusChange();
     }
 
     function onNewExFocusChange() {
         const focus = document.getElementById('new-ex-focus').value;
         const wrap = document.getElementById('new-ex-muscles-wrap');
         // Muscle chips only matter for Specific Muscle
-        if (wrap) wrap.style.display = (focus === 'Specific Muscle') ? 'block' : 'none';
+        if (wrap) wrap.style.display = newExType === 'isolation' ? 'block' : 'none';
     }
 
     function renderNewExMuscleChips() {
@@ -311,7 +332,7 @@
         box.innerHTML = SPECIFIC_MUSCLES.map(m => {
             const sel = newExMuscles.indexOf(m) >= 0;
             return `<button type="button" onclick="toggleNewExMuscle('${escapeJsString(m)}')"
-                class="px-4 py-2 rounded-full text-xs font-bold border-2 ${sel ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}">${escapeHtml(m)}</button>`;
+                class="px-4 py-2 rounded-full text-xs font-bold border-2 ${sel ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}">${escapeHtml(m === 'Core' ? 'Core / Abs' : m)}</button>`;
         }).join('');
     }
 
@@ -323,7 +344,7 @@
 
     function saveCustomExercise() {
         const name = document.getElementById('new-ex-name').value.trim();
-        const focus = document.getElementById('new-ex-focus').value;
+        const focus = newExType === 'core' ? 'Core' : newExType === 'isolation' ? 'Specific Muscle' : document.getElementById('new-ex-focus').value;
 
         if (!name) { showToast('Enter an exercise name'); return; }
         if (focus === 'Specific Muscle' && newExMuscles.length === 0) {
@@ -344,7 +365,7 @@
             type: newExType,
             assisted: isAssisted, // when true, a LOWER weight is a better result
             // If a focus group was chosen, no specific muscles are required
-            muscles: (focus === 'Specific Muscle') ? newExMuscles.slice() : []
+            muscles: focus === 'Core' ? ['Core'] : (focus === 'Specific Muscle') ? newExMuscles.slice() : []
         });
         saveState();
         syncExercisePrefs(); // push to the account so it follows the user across devices
@@ -359,9 +380,11 @@
 
         // If a workout is open, drop the new exercise straight into it
         const activeEl = document.getElementById('workout-active');
-        if (activeEl && !activeEl.classList.contains('hidden')) {
+        if (activeEl && !activeEl.classList.contains('hidden') && !(typeof workoutPlanDraft !== 'undefined' && workoutPlanDraft)) {
+            if (currentWorkoutContext && (focus === 'Core' || newExMuscles.includes('Core'))) currentWorkoutContext.includeCore = true;
             addExercise(name);
         }
+        if (typeof renderWorkoutPlanExercisePicker === 'function' && typeof workoutPlanDraft !== 'undefined' && workoutPlanDraft) renderWorkoutPlanExercisePicker();
         renderExerciseDatabase(); // refresh the settings list if it's open
     }
 
@@ -549,13 +572,13 @@
     // — not the focus groups like "Upper" or "Push", because those are
     // aggregations, not muscle groups.
     // ==========================================================================
-    const SPECIFIC_MUSCLES = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves'];
+    const SPECIFIC_MUSCLES = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Quads', 'Hamstrings', 'Glutes', 'Calves', 'Core'];
 
     // Order muscle groups from MOST demanding (trained first) to least. The big,
     // taxing muscles — quads, hamstrings, glutes, and back (lats/upper back) —
     // come first while you're freshest; the smaller muscles — biceps, triceps,
     // calves — come last. Chest and shoulders sit in the middle.
-    const MUSCLE_PRIORITY_ORDER = ['Quads', 'Hamstrings', 'Glutes', 'Back', 'Chest', 'Shoulders', 'Biceps', 'Triceps', 'Calves'];
+    const MUSCLE_PRIORITY_ORDER = ['Quads', 'Hamstrings', 'Glutes', 'Back', 'Chest', 'Shoulders', 'Biceps', 'Triceps', 'Calves', 'Core'];
 
     /**
      * Reorder a list of exercises so that:
@@ -1387,6 +1410,12 @@
         // Prefix with the environment so it's always clear whether this is a
         // Gym or Home workout, and that AI Generate used that environment.
         const envForTitle = state.workoutEnv || 'gym';
+        currentWorkoutContext = {
+            env: envForTitle, focus: tier === 'beginner' ? 'Full Body' : focus,
+            muscles: isSpecific ? selectedMuscles.slice() : null,
+            includeCore: focus === 'Core' || Boolean(document.getElementById('add-core-check').checked)
+        };
+        document.getElementById('workout-active').removeAttribute('data-saved-plan');
         const envLabel = envForTitle === 'home' ? '🏠 Home' : '🏋️ Gym';
         let title;
         if (isSpecific) {
@@ -1490,12 +1519,12 @@
                     delay += 20;
                 }
 
-                if (addCore) {
-                    const core1 = CORE_EXERCISES[Math.floor(Math.random() * CORE_EXERCISES.length)];
-                    const core2 = CORE_EXERCISES.filter(c => c !== core1)[Math.floor(Math.random() * (CORE_EXERCISES.length - 1))];
-                    setTimeout(() => addExercise(core1), delay);
-                    delay += 20;
-                    setTimeout(() => addExercise(core2), delay);
+                if (addCore && focus !== 'Core') {
+                    const corePool = getEnvDB(env).Core || {};
+                    weightedSample(corePool.isolation || [], 2).filter(name => !finalList.includes(name)).forEach(name => {
+                        setTimeout(() => addExercise(name), delay);
+                        delay += 20;
+                    });
                 }
                 showToast('AI workout generated! 💪');
                 // ALL focuses step through one exercise at a time. `delay` accounts
@@ -1511,7 +1540,8 @@
         currentWorkoutContext = {
             env: state.workoutEnv || 'gym',
             focus: tier === 'beginner' ? 'Full Body' : focus,
-            muscles: isSpecific ? selectedMuscles.slice() : null
+            muscles: isSpecific ? selectedMuscles.slice() : null,
+            includeCore: focus === 'Core' || Boolean(document.getElementById('add-core-check').checked)
         };
 
         workoutStartTime = Date.now();
@@ -1694,6 +1724,10 @@
         const ctx = currentWorkoutContext;
         const env = ctx.env || 'gym';
         const envDb = getEnvDB(env); // custom merged in, disabled filtered out
+        const withCore = set => {
+            if (ctx.includeCore && envDb.Core) [...envDb.Core.compound, ...envDb.Core.isolation].forEach(name => set.add(name));
+            return Array.from(set).sort();
+        };
 
         // Specific muscle workout: exercises that target any selected muscle,
         // drawn ONLY from the active environment (gym stays gym, home stays home).
@@ -1705,7 +1739,7 @@
                 (e.compound || []).forEach(ex => set.add(ex));
                 (e.isolation || []).forEach(ex => set.add(ex));
             });
-            if (set.size > 0) return Array.from(set).sort();
+            if (set.size > 0) return withCore(set);
         }
 
         // Focus-group workout: take from that group in the active env ONLY.
@@ -1716,7 +1750,7 @@
                 (e.compound || []).forEach(ex => set.add(ex));
                 (e.isolation || []).forEach(ex => set.add(ex));
             }
-            if (set.size > 0) return Array.from(set).sort();
+            if (set.size > 0) return withCore(set);
         }
 
         // Last resort: every exercise in the active environment (still no cross-over).
@@ -1847,6 +1881,7 @@
         const activeEl = document.getElementById('workout-active');
         if (setupEl) setupEl.classList.add('hidden');
         if (activeEl) activeEl.classList.remove('hidden');
+        if (activeEl) activeEl.setAttribute('data-saved-plan', String(Boolean(currentWorkoutContext && currentWorkoutContext.savedWorkoutId)));
 
         const titleEl = document.getElementById('active-workout-title');
         if (titleEl) titleEl.innerText = saved.title || 'Workout';
@@ -1984,6 +2019,7 @@
         inputWrapper.appendChild(infoBtn);
         nameContainer.appendChild(inputWrapper);
         nameContainer.appendChild(dropdown);
+        if (typeof createWorkoutExerciseFilters === 'function') nameContainer.appendChild(createWorkoutExerciseFilters(id));
 
         // Live PB / suggestion line — updates dynamically to match whatever exercise
         // is currently in the name field (typed, selected, or swapped), rather than
@@ -2070,6 +2106,7 @@
             }, 80);
         }
         refreshIcons();
+        return id;
     }
 
     /**
@@ -2128,7 +2165,8 @@
         if (!dropdown) return;
 
         // Filtered list by default; full list if user toggled "show all" or there's no context
-        const list = showAllExercisesInPicker ? getAvailableExercises(state.workoutEnv || 'gym') : getExercisesForCurrentFocus();
+        const list = typeof workoutExercisePickerNames === 'function' ? workoutExercisePickerNames(id)
+            : showAllExercisesInPicker ? getAvailableExercises(state.workoutEnv || 'gym') : getExercisesForCurrentFocus();
         const visible = list.slice(0, 80);
         const rows = visible.map(ex => renderDropdownRow(id, ex)).join('');
         const more = list.length > visible.length
@@ -2142,7 +2180,8 @@
         const dropdown = document.getElementById(`dropdown-${id}`);
         if (!dropdown) return;
 
-        const base = showAllExercisesInPicker ? getAvailableExercises(state.workoutEnv || 'gym') : getExercisesForCurrentFocus();
+        const base = typeof workoutExercisePickerNames === 'function' ? workoutExercisePickerNames(id)
+            : showAllExercisesInPicker ? getAvailableExercises(state.workoutEnv || 'gym') : getExercisesForCurrentFocus();
         const q = query.toLowerCase();
         const filtered = base.filter(ex => ex.toLowerCase().includes(q));
 
@@ -2288,6 +2327,7 @@
         repsInput.placeholder = "Reps";
         repsInput.min = "0";
         repsInput.className = "set-reps flex-1 p-3 sm:p-4 bg-slate-50 rounded-lg text-center font-bold text-base sm:text-lg border-2 border-transparent focus:border-indigo-500";
+        if (options && options.initialReps !== undefined) repsInput.value = String(options.initialReps);
 
         const weightDiv = document.createElement('div');
         weightDiv.className = "set-weight-field flex-1 relative";
@@ -2336,6 +2376,7 @@
         rirInput.max = "10";
         rirInput.title = "Reps In Reserve — how many more reps you could have done";
         rirInput.className = "set-rir w-16 sm:w-20 p-3 sm:p-4 bg-amber-50 rounded-lg text-center font-bold text-base sm:text-lg border-2 border-transparent focus:border-amber-400";
+        if (options && options.initialRir !== undefined) rirInput.value = String(options.initialRir);
 
         // Always create the PB badge (with a stable class) so it can be updated
         // live when the exercise changes; hide it when there's no PB.
@@ -2360,6 +2401,7 @@
         setRow.appendChild(deleteBtn);
 
         container.appendChild(setRow);
+        return setRow;
     }
 
     function getPersonalRecord(exerciseName) {

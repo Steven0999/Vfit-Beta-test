@@ -8,6 +8,7 @@ const html = fs.readFileSync(new URL('../index.html', `file://${__filename}`), '
 const moduleFiles = [
   'core/state.js',
   'training/training.js',
+  'training/workout-plans.js',
   'nutrition/food-catalog.js',
   'nutrition/meal-planner.js',
   'nutrition/scanner.js',
@@ -19,6 +20,7 @@ const moduleFiles = [
   'metrics/step-tracking.js',
   'metrics/run-tracking.js',
   'metrics/photo-storage.js',
+  'metrics/progress-charts.js',
   'feedback/beta-feedback.js',
   'coaching/plan-builder.js',
   'App.js'
@@ -39,12 +41,18 @@ const localStorage = {
   clear() { values.clear(); }
 };
 
-function fakeElement() {
+function fakeElement(tag) {
   const attributes = new Map();
   const classes = new Set();
+  let elementId = '', markup = '';
   return {
+    tagName: String(tag || 'div').toUpperCase(),
     style: {}, dataset: {}, value: '', checked: false, disabled: false,
-    innerHTML: '', innerText: '', textContent: '', id: '', labels: [],
+    get innerHTML() { return markup; },
+    set innerHTML(value) { markup = value; this.children = []; },
+    get id() { return elementId; },
+    set id(value) { elementId = value; if (value) elements.set(value, this); },
+    innerText: '', textContent: '', labels: [],
     parentElement: null, children: [],
     classList: {
       add(...names) { names.forEach(name => classes.add(name)); },
@@ -88,7 +96,21 @@ function fakeElement() {
       return true;
     },
     addEventListener() {}, removeEventListener() {}, scrollIntoView() {},
-    querySelector() { return null; }, querySelectorAll() { return []; },
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+    querySelectorAll(selector) {
+      const matches = element => {
+        if (selector.startsWith('.')) return String(element.className || '').split(/\s+/).includes(selector.slice(1));
+        const input = selector.match(/^input\[type="([^"]+)"\]$/);
+        if (input) return element.tagName === 'INPUT' && element.type === input[1];
+        const prefix = selector.match(/^\[id\^="([^"]+)"\]$/);
+        if (prefix) return element.id.startsWith(prefix[1]);
+        return element.tagName === selector.toUpperCase();
+      };
+      const found = [];
+      const visit = element => { for (const child of element.children || []) { if (matches(child)) found.push(child); visit(child); } };
+      visit(this);
+      return found;
+    },
     getContext() {
       return {
         clearRect() {}, fillRect() {}, drawImage() {}, fillText() {},
@@ -114,9 +136,10 @@ const document = {
   },
   querySelector() { return fakeElement(); },
   querySelectorAll(selector) {
+    if (selector === '#exercise-list > div') return document.getElementById('exercise-list').children;
     return selector === '[data-step-tracking-action]' ? [stepTrackingAction] : [];
   },
-  createElement() { return fakeElement(); },
+  createElement(tag) { return fakeElement(tag); },
   addEventListener() {}, removeEventListener() {}
 };
 
@@ -182,6 +205,36 @@ sandbox.globalThis = sandbox;
 
 const expose = `
 ;globalThis.__vfitTest = {
+  cleanSavedWorkout,
+  startSavedWorkout,
+  addWorkoutPlanExercise,
+  snapshotActiveWorkout,
+  persistActiveWorkout,
+  restoreActiveWorkout,
+  saveWorkout,
+  finalizeWorkoutSave,
+  savedWorkoutSessionExercises,
+  exerciseNamesForCategory,
+  setWorkoutPlanSetCount,
+  setWorkoutPlanSetValue,
+  saveWorkoutPlan,
+  deleteSavedWorkout,
+  editSavedWorkout,
+  setWorkoutPlanDraftForTest: draft => { workoutPlanDraft = draft; workoutPlanSession = { uid: currentUser && currentUser.uid || '', dirty: false }; },
+  workoutPlanDraftForTest: () => workoutPlanDraft,
+  getEnvDB,
+  setNewExType,
+  saveCustomExercise,
+  validProgressDate,
+  progressCalendarWindow,
+  metricProgressSeries,
+  metricProgressEntries,
+  exerciseProgressPointsForRange,
+  metricProgressSVG,
+  setMetricProgressRange,
+  setMetricProgressMetric,
+  shiftMetricProgressPeriod,
+  metricProgressViewForTest: () => ({ range: metricProgressRange, anchor: metricProgressAnchor, metric: metricProgressSelection }),
   normalizeState,
   mergeStateSnapshots,
   stateWithoutLocalImages,
@@ -1830,4 +1883,160 @@ app.setUser({ uid: 'user-a' });
 app.loadState('user-a');
 assert.equal(app.getState().workoutHistory[0].id, 'a-only');
 
-console.log('VFIT state smoke tests passed');
+// Saved plans round-trip with their account, keep separate plans, and never
+// resurrect a deleted plan when an older offline snapshot is reconciled.
+const savedPlanA = { id: 'plan-a', name: 'Push day', env: 'gym', focus: 'Push', includeCore: true,
+  createdAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z', exercises: [
+    { name: 'Bench Press', type: 'compound', group: 'Push', sets: [{ reps: '8', weight: '60', rir: '2' }, { reps: '8', weight: '60', rir: '2' }] },
+    { name: 'Cable Crunch', type: 'core', group: 'Core', sets: [{ reps: '12', weight: '20', rir: '2' }] }
+  ] };
+const savedPlanB = { ...savedPlanA, id: 'plan-b', name: 'Another workout' };
+const plansRoundTrip = app.normalizeState(JSON.parse(JSON.stringify({ savedWorkouts: [savedPlanA, savedPlanB] })));
+assert.equal(plansRoundTrip.savedWorkouts.length, 2);
+assert.equal(plansRoundTrip.savedWorkouts[0].exercises[0].sets.length, 2);
+const newerPlan = { ...savedPlanA, name: 'Edited push day', updatedAt: '2026-11-04T10:00:00Z' };
+const staleSnapshot = { meta: { updatedAt: '2026-11-05T10:00:00Z' }, savedWorkouts: [savedPlanA, savedPlanB] };
+const freshSnapshot = { meta: { updatedAt: '2026-11-04T10:00:00Z' }, savedWorkouts: [newerPlan] };
+const mergedPlans = app.mergeStateSnapshots(freshSnapshot, staleSnapshot);
+assert.equal(mergedPlans.savedWorkouts.length, 2, 'syncing another plan must not discard the existing plans');
+assert.equal(mergedPlans.savedWorkouts.find(plan => plan.id === 'plan-a').name, 'Edited push day', 'the plan timestamp wins over an unrelated snapshot update');
+const deletedPlans = app.mergeStateSnapshots({ savedWorkouts: [savedPlanB], deletedSavedWorkoutIds: ['plan-a'] }, staleSnapshot);
+assert.equal(deletedPlans.savedWorkouts.length, 1);
+assert.equal(deletedPlans.savedWorkouts[0].id, 'plan-b');
+assert.equal(deletedPlans.deletedSavedWorkoutIds.includes('plan-a'), true);
+
+const planState = app.defaultState();
+planState.savedWorkouts = [savedPlanA, savedPlanB];
+planState.workoutHistory = [{ id: 'last-lifts', date: '2026-11-04', exercises: [
+  { name: 'Bench Press', sets: [{ reps: '10', weight: '70', rir: '0' }, { reps: '9', weight: '65', rir: '1' }] }
+] }];
+app.setState(planState);
+app.setUser({ uid: 'plan-owner' });
+const loadedPlan = app.savedWorkoutSessionExercises(savedPlanA);
+assert.equal(loadedPlan[0].sets.length, 2);
+assert.equal(loadedPlan[0].sets[0].weight, '70', 'starting a plan uses the most recent lift');
+assert.equal(loadedPlan[0].sets[0].reps, '10');
+assert.equal(loadedPlan[0].sets[0].rir, '0', 'RIR zero must remain zero');
+assert.equal(loadedPlan[1].sets[0].weight, '20', 'a new exercise uses its saved starting targets');
+assert.equal(savedPlanA.exercises[0].sets[0].weight, '60', 'starting a session leaves the saved template intact');
+app.setWorkoutPlanDraftForTest(app.cleanSavedWorkout(savedPlanA));
+app.setWorkoutPlanSetCount(0, 5);
+assert.equal(app.workoutPlanDraftForTest().exercises[0].sets.length, 5);
+app.setWorkoutPlanSetValue(0, 4, 'rir', '0');
+assert.equal(app.workoutPlanDraftForTest().exercises[0].sets[4].rir, '0');
+app.setWorkoutPlanSetCount(0, 0);
+assert.equal(app.workoutPlanDraftForTest().exercises[0].sets.length, 5, 'invalid set counts must not erase rows');
+app.setWorkoutPlanSetCount(0, 2);
+assert.equal(app.workoutPlanDraftForTest().exercises[0].sets.length, 2);
+app.setUser({ uid: 'other-plan-account' });
+app.setWorkoutPlanSetCount(0, 8);
+assert.equal(app.workoutPlanDraftForTest(), null, 'an editor cannot carry a draft across accounts');
+app.setUser({ uid: 'plan-owner' });
+document.getElementById('workout-active').classList.add('hidden');
+app.startSavedWorkout('plan-a');
+let activePlanSnapshot = app.snapshotActiveWorkout();
+assert.equal(activePlanSnapshot.exercises.length, 2, 'starting a plan must build the normal exercise cards');
+assert.equal(activePlanSnapshot.exercises[0].sets.length, 2, 'the plan set count must create exactly that many normal set rows');
+assert.equal(activePlanSnapshot.exercises[1].sets.length, 1);
+assert.equal(activePlanSnapshot.exercises[0].sets[0].weight, '70');
+assert.equal(activePlanSnapshot.exercises[0].sets[0].rir, '0');
+const activePlanCards = document.querySelectorAll('#exercise-list > div');
+activePlanCards[0].querySelector('.set-weight').value = '72.5';
+app.persistActiveWorkout();
+assert.equal(app.getState().activeWorkout.exercises[0].sets[0].weight, '72.5', 'normal session edits must be saved');
+app.restoreActiveWorkout();
+activePlanSnapshot = app.snapshotActiveWorkout();
+assert.equal(activePlanSnapshot.exercises[0].sets.length, 2, 'restoring a session must not add duplicate or default sets');
+assert.equal(activePlanSnapshot.exercises[0].sets[0].weight, '72.5');
+app.saveWorkout();
+app.finalizeWorkoutSave(true);
+assert.equal(planState.workoutHistory.length, 2, 'the normal Finish Workout flow must save a session started from a plan');
+assert.equal(planState.workoutHistory[0].exercises[0].sets[0].weight, '72.5');
+app.editSavedWorkout('plan-b');
+document.getElementById('workout-plan-name').value = 'Renamed workout';
+app.saveWorkoutPlan();
+assert.equal(planState.savedWorkouts.length, 2, 'editing must keep the existing plan identity');
+assert.equal(planState.savedWorkouts.find(plan => plan.id === 'plan-b').name, 'Renamed workout');
+app.deleteSavedWorkout('plan-a');
+assert.equal(planState.savedWorkouts.length, 1);
+assert.equal(planState.workoutHistory.length, 2, 'deleting a template must keep completed workouts');
+const homeSavedPlan = { ...savedPlanA, id: 'home-plan', env: 'home', name: 'Home workout', exercises: [
+  { name: 'Push Ups', type: 'compound', group: 'Push', sets: [{ reps: '12', weight: '', rir: '0' }] }
+] };
+planState.savedWorkouts.push(homeSavedPlan);
+app.startSavedWorkout('home-plan');
+assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].weight, '0', 'home bodyweight sessions must keep their zero external load');
+assert.equal(app.snapshotActiveWorkout().exercises[0].sets[0].rir, '0');
+app.saveWorkout();
+app.finalizeWorkoutSave(true);
+assert.equal(planState.workoutHistory[0].exercises[0].sets[0].weight, '0');
+
+assert.equal(app.exerciseNamesForCategory('gym', 'core', 'Core', false).length, 0);
+assert.ok(app.exerciseNamesForCategory('gym', 'core', 'Core', true).includes('Cable Crunch'));
+assert.ok(app.exerciseNamesForCategory('home', 'core', 'Core', true).includes('Dead Bug'));
+assert.ok(!app.exerciseNamesForCategory('home', 'core', 'Core', true).includes('Cable Crunch'), 'home core must not contain gym machines');
+assert.ok(app.exerciseNamesForCategory('gym', 'compound', 'Push', false).includes('Bench Press'));
+assert.ok(!app.exerciseNamesForCategory('gym', 'isolation', 'Biceps', false).includes('Bench Press'));
+app.setNewExType('compound');
+assert.equal(document.getElementById('new-ex-focus-wrap').classList.contains('hidden'), false);
+app.setNewExType('isolation');
+assert.equal(document.getElementById('new-ex-focus-wrap').classList.contains('hidden'), true);
+assert.equal(document.getElementById('new-ex-muscles-wrap').style.display, 'block');
+app.setNewExType('core');
+document.getElementById('new-ex-name').value = 'My core exercise';
+document.getElementById('workout-active').classList.add('hidden');
+app.saveCustomExercise();
+assert.ok(app.getEnvDB('gym').Core.isolation.includes('My core exercise'));
+
+assert.equal(app.validProgressDate('2024-02-29'), true);
+assert.equal(app.validProgressDate('2026-02-29'), false);
+assert.deepEqual(JSON.parse(JSON.stringify(app.progressCalendarWindow('week', '2026-11-01'))), { start: '2026-10-26', end: '2026-11-01' });
+const leapMonth = app.metricProgressSeries([], 'month', '2024-02-20');
+assert.equal(leapMonth.points.length, 29);
+assert.equal(leapMonth.end, '2024-02-29');
+const metricSamples = [
+  { date: '2025-12-31', value: 105 }, { date: '2026-01-01', value: 100 },
+  { date: '2026-01-20', value: 102 }, { date: '2026-03-01', value: 98 },
+  { date: '2026-11-02', value: 90 }, { date: '2026-11-05', value: 89 },
+  { date: '2026-11-08', value: 88 }, { date: '2027-01-01', value: 85 }
+];
+const weeklyMetric = app.metricProgressSeries(metricSamples, 'week', '2026-11-05');
+assert.equal(weeklyMetric.entries.length, 3);
+assert.equal(weeklyMetric.points.length, 7);
+assert.equal(weeklyMetric.points[1].value, null, 'missing logs must remain gaps, not fabricated zeroes');
+const yearlyMetric = app.metricProgressSeries(metricSamples, 'year', '2026-11-05');
+assert.equal(app.exerciseProgressPointsForRange(metricSamples, 'week', '2026-11-05').length, 3, 'lifting graphs use the same calendar week boundaries');
+assert.equal(app.exerciseProgressPointsForRange(metricSamples, 'lifetime', '2026-11-05').length, metricSamples.length);
+assert.equal(yearlyMetric.points.length, 12);
+assert.equal(yearlyMetric.points[0].value, 101);
+assert.equal(yearlyMetric.points[0].count, 2);
+assert.equal(yearlyMetric.points[1].value, null);
+const lifetimeMetric = app.metricProgressSeries(metricSamples, 'lifetime', '2026-11-05');
+assert.equal(lifetimeMetric.start, '2025-12-31');
+assert.equal(lifetimeMetric.end, '2027-01-01');
+assert.equal(lifetimeMetric.entries.length, metricSamples.length, 'lifetime includes the entire saved history');
+assert.equal(lifetimeMetric.bucket, 'month');
+assert.ok(app.metricProgressSVG(weeklyMetric, 'Weight', 'kg').includes('<svg'));
+assert.ok(!app.metricProgressSVG(weeklyMetric, '<script>bad</script>', 'kg').includes('<script>'));
+const metricState = app.defaultState();
+metricState.metricsDate = '2026-03-31';
+metricState.weightUnit = 'lb';
+metricState.metricsHistory = [{ date: '2026-11-05', weight: 100, neck: 42, waist: 90 }];
+metricState.stepsLogs = { '2026-11-04': 0, '2026-11-05': 10000 };
+metricState.waterLogs = { '2026-11-05': 2000 };
+assert.ok(Math.abs(app.metricProgressEntries('weight', metricState)[0].value - 220.46226218) < 0.001);
+assert.equal(app.metricProgressEntries('neck', metricState)[0].value, 42);
+assert.equal(app.metricProgressEntries('steps', metricState)[0].value, 0, 'a logged zero steps is real data');
+assert.equal(app.metricProgressEntries('hydration', metricState)[0].value, 2000);
+app.setState(metricState);
+app.setMetricProgressRange('month');
+app.shiftMetricProgressPeriod(-1);
+assert.equal(app.metricProgressViewForTest().anchor, '2026-02-01', 'previous month must not overflow back into March');
+app.setMetricProgressRange('lifetime');
+const lifetimeAnchor = app.metricProgressViewForTest().anchor;
+app.shiftMetricProgressPeriod(1);
+assert.equal(app.metricProgressViewForTest().anchor, lifetimeAnchor);
+app.setMetricProgressMetric('neck');
+assert.equal(app.metricProgressViewForTest().metric, 'neck');
+
+console.log('VFIT state smoke tests passed, including saved plans, sync deletions, core selection and calendar progress ranges');

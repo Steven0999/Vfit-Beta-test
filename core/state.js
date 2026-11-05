@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.50';
+    const VFIT_APP_VERSION = '2.1.0-beta.51';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -925,7 +925,7 @@
         const arrayFields = new Set([
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns', 'coachConversations'
+            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'checkIns', 'coachConversations'
         ]);
         const recordFields = new Set([
             'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
@@ -977,6 +977,12 @@
         merged.cardioLogs = mergeUniqueItems(local.cardioLogs, remote.cardioLogs, itemKey, preferRemote);
         merged.mealWakeTimes = Object.assign({}, local.mealWakeTimes || {}, remote.mealWakeTimes || {});
         merged.customExercises = mergeUniqueItems(local.customExercises, remote.customExercises, namedKey, preferRemote);
+        // A deleted plan stays deleted when an older offline device syncs.
+        merged.deletedSavedWorkoutIds = Array.from(new Set([...local.deletedSavedWorkoutIds, ...remote.deletedSavedWorkoutIds]));
+        const deletedPlans = new Set(merged.deletedSavedWorkoutIds);
+        merged.savedWorkouts = mergeUniqueItems(local.savedWorkouts, remote.savedWorkouts, item => item.id, preferRemote,
+            (older, newer) => valueTime(older.updatedAt) > valueTime(newer.updatedAt) ? older : newer)
+            .filter(plan => !deletedPlans.has(plan.id));
         merged.checkIns = mergeUniqueItems(local.checkIns, remote.checkIns, itemKey, preferRemote);
         merged.coachConversations = mergeUniqueItems(local.coachConversations, remote.coachConversations, itemKey, preferRemote);
         merged.metricsHistory = mergeUniqueItems(
@@ -5314,6 +5320,8 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         exerciseRatings: {}, // { 'Bench Press': { total: 14, count: 4 }, ... }  — average = total/count
         // User-created exercises: { name, env, focus, muscles:[], type:'compound'|'isolation' }
         customExercises: [],
+        savedWorkouts: [],
+        deletedSavedWorkoutIds: [],
         // Exercises the user has turned OFF (not available at their gym).
         // Stored as { gym: ['Machine Bicep Curl', ...], home: [...] }
         disabledExercises: { gym: [], home: [] },
@@ -5460,11 +5468,14 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         const arrayFields = [
             'dailyMeals', 'workoutHistory', 'nutritionHistory', 'metricsHistory',
             'createdMeals', 'customFoods', 'barcodeFoods', 'shoppingItems', 'habits', 'userGoals', 'cardioLogs',
-            'customExercises', 'checkIns', 'coachConversations'
+            'customExercises', 'savedWorkouts', 'deletedSavedWorkoutIds', 'checkIns', 'coachConversations'
         ];
         arrayFields.forEach(key => {
             if (!Array.isArray(normalized[key])) normalized[key] = [];
         });
+        normalized.deletedSavedWorkoutIds = Array.from(new Set(normalized.deletedSavedWorkoutIds.filter(id => typeof id === 'string')));
+        normalized.savedWorkouts = normalized.savedWorkouts.filter(plan => isPlainRecord(plan) && typeof plan.id === 'string'
+            && typeof plan.name === 'string' && Array.isArray(plan.exercises) && !normalized.deletedSavedWorkoutIds.includes(plan.id));
         const recordFields = [
             'waterLogs', 'stepsLogs', 'stepGoalHistory', 'stepSources', 'habitCompletions', 'hydrationGoalCompletions',
             'stepsGoalCompletions', 'hydrationLogs', 'exerciseRatings', 'readinessLogs', 'dailyReadiness',
