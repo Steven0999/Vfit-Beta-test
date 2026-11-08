@@ -282,10 +282,7 @@
     function plannerMealCalorieLimit(dateKey, mealType) {
         const validType = WEEKLY_MEAL_TYPES.includes(mealType) ? mealType : 'snack';
         const rule = WEEKLY_MEAL_CALORIE_RULES[validType];
-        const currentTarget = typeof getDailyCalorieTarget === 'function'
-            ? Number(getDailyCalorieTarget(dateKey))
-            : Number(state.goals && state.goals.calories);
-        const dailyTarget = Number.isFinite(currentTarget) && currentTarget > 0 ? currentTarget : 2500;
+        const dailyTarget = getDailyCalorieTarget();
         return Math.round(Math.min(rule.max, Math.max(rule.min, dailyTarget * rule.share)));
     }
 
@@ -299,9 +296,10 @@
         const createdIdeas = createdMealPlannerIdeas(mealType);
         const diaryIdeas = diaryPlannerMealIdeas(mealType);
         const shoppingIdeas = shoppingListPlannerMealIdeas(dateKey, mealType);
+        const savedRecipeId = state.weeklyMealPlan?.[dateKey]?.meals?.[mealType]?.recipeId;
         const seen = new Set();
         return createdIdeas.concat(diaryIdeas, shoppingIdeas)
-            .filter(idea => plannerMealIsAppropriate(dateKey, mealType, idea))
+            .filter(idea => idea.id === savedRecipeId || plannerMealIsAppropriate(dateKey, mealType, idea))
             .filter(idea => {
             const key = String(idea.name || '').trim().toLowerCase();
             if (!key || seen.has(key)) return false;
@@ -625,7 +623,7 @@
                     <div class="min-w-0"><div class="flex flex-wrap items-center gap-1.5"><p class="text-[9px] font-black uppercase text-orange-600">${escapeHtml(mealType)} · ${escapeHtml(timing)}</p>${sourceBadge}</div><p class="font-black text-sm mt-1">${escapeHtml(idea.name)}</p><p class="text-[10px] text-slate-500 mt-1">${Math.round(Number(idea.calories) || 0)} kcal · ${Number(idea.protein || 0).toFixed(1)}g protein${safety.allergens.length ? ` · Check: ${escapeHtml(safety.allergens.join(', '))}` : ''}</p></div>
                     <button onclick="toggleWeeklyMealComplete('${escapeJsString(dateKey)}','${escapeJsString(mealType)}')" class="w-9 h-9 rounded-full flex-shrink-0 ${selection.completed ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}" aria-label="${selection.completed ? 'Mark meal not completed' : 'Mark meal completed'}">${selection.completed ? '✓' : '○'}</button>
                 </div>
-                <label class="block mt-3 text-[9px] font-black uppercase text-slate-400">Choose a suitable meal · up to ${calorieLimit} kcal
+                <label class="block mt-3 text-[9px] font-black uppercase text-slate-400">Choose a suitable meal · new suggestions up to ${calorieLimit} kcal
                     <select onchange="selectWeeklyMeal('${escapeJsString(dateKey)}','${escapeJsString(mealType)}',this.value)" class="w-full mt-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400">${optionHTML}</select>
                 </label>
                 <div class="grid grid-cols-4 gap-1.5 mt-3">

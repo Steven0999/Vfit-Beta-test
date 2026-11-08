@@ -1085,7 +1085,8 @@ function openAICoachCheckIn() {
         const workouts = (source.workoutHistory || []).filter(workout => dateSet.has(workout.date));
         const targetWorkouts = Math.max(1, Number(source.coachingTargets.workoutsPerWeek) || 3);
         const dailyNutrition = dates.map(date => nutritionForDate(source, date));
-        const calorieGoal = Number(source.goals.calories || 2500);
+        const calorieGoal = !sourceState || sourceState === state
+            ? getDailyCalorieTarget() : Number(source.goals.calories || 2500);
         const proteinGoal = Number(source.proteinGoal || source.goals.protein || 150);
         const calorieTolerance = clampNumber(source.coachingTargets.calorieTolerancePercent, 5, 30, 10) / 100;
         const loggedNutrition = dailyNutrition.filter(day => day.calories > 0);

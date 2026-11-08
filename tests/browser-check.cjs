@@ -97,6 +97,56 @@ const checks={
     expect(document.getElementById('popup-meal-time').value==='19:00','wake-relative time wrong');
     expect(state.dailyMeals.length===2,'unconfirmed template food was logged');
     cancelCopyFoodSteps();
+  `,
+  calories:`
+    state.userProfile = { ...state.userProfile, gender:'male', age:30, heightCm:180, activityLevel:'very_active' };
+    const mealsBefore = JSON.stringify(state.dailyMeals);
+    const originalTdee = calculateMaintenanceCalories();
+    state.nutritionHistory = [{ date:offsetLocalDateKey(localDateKey(),-1), calories:1900, meals:[] }];
+    switchTab('settings', { settingsPage:'goals' });
+    document.getElementById('goal-btn-lose').click();
+    const rate = document.getElementById('goal-rate-input');
+    rate.value = '1.5';
+    rate.dispatchEvent(new Event('change', { bubbles:true }));
+    const lossTarget = originalTdee - 750;
+    const expectShared = (target) => {
+      expect(state.goals.calories === target, 'wrong saved calorie goal');
+      const values = [...document.querySelectorAll('[data-calorie-target]')];
+      expect(values.length >= 6 && values.every(node=>node.textContent === target.toLocaleString()), 'calorie displays disagree');
+    };
+    renderDiary();
+    renderMetricProgressGraphs();
+    expect(document.getElementById('metric-target-overview').closest('div').querySelector('[data-calorie-target]'), 'weight target is missing the calorie goal');
+    expectShared(lossTarget);
+    setMetricTarget('weight','78');
+    expectShared(lossTarget);
+    let chartConfig;
+    window.Chart = class { constructor(canvas, config) { chartConfig = config; } destroy() {} };
+    openCalorieChartModal();
+    expect(chartConfig.data.datasets[1].data[0] === lossTarget, 'daily chart uses a different target');
+    setCalorieChartView('weekly');
+    expect(chartConfig.data.datasets[1].data[0] === lossTarget * 7, 'weekly chart target does not match the daily goal');
+    closeCalorieChartModal();
+    document.getElementById('goal-btn-gain').click();
+    expectShared(originalTdee + 250);
+    document.getElementById('weight-input-value').value = '88';
+    saveRecordedWeight();
+    const updatedTdee = calculateMaintenanceCalories();
+    expect(updatedTdee !== originalTdee, 'new weight did not change TDEE');
+    expectShared(updatedTdee + 250);
+    openGoalSetting();
+    setGoalFocus('weight_loss');
+    document.getElementById('wl-kg').value = '2';
+    document.getElementById('wl-weeks').value = '4';
+    document.getElementById('goal-description').value = 'Weight target';
+    previewGoalRecommendation();
+    const journalTarget = updatedTdee - 551;
+    expect(document.getElementById('goal-rec-content').textContent.includes(journalTarget.toLocaleString()), 'weight goal preview uses a different rule');
+    saveGoal();
+    closeGoalProgress();
+    expectShared(journalTarget);
+    expect(JSON.stringify(state.dailyMeals) === mealsBefore, 'editing goals changed logged food');
+    openSettingsPage('goals');
   `
 };
 for(const [name,check] of Object.entries(checks)){

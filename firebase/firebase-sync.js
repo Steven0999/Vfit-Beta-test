@@ -994,7 +994,7 @@
 
         if (recent.length === 0) return null;
 
-        const target = state.goals.calories || 2500;
+        const target = getDailyCalorieTarget();
         const avgCals = recent.reduce((sum, h) => sum + (h.calories || 0), 0) / recent.length;
         const diff = avgCals - target;
 
@@ -1178,7 +1178,7 @@
         renderExperienceLevel();
         renderMaintenanceDisplay();
         applyTrainingExperienceMode();
-        renderVolumeTracker();
+        refreshCalorieGoalDisplays();
     }
 
     /**
@@ -1422,6 +1422,41 @@
     const AGGRESSIVE_DEFICIT_KCAL = 1000;
     const AGGRESSIVE_DEFICIT_DAYS = 56;
     const MAINTENANCE_BREAK_DAYS = 7;
+    const CALORIES_PER_POUND_LOST_WEEKLY = 500;
+    const MUSCLE_GAIN_SURPLUS = 250;
+
+    function calculateGoalCaloriePlan(goal, estimate) {
+        if (!goal || !estimate) return null;
+        let adjustment = 0;
+        if (goal.mode === 'lose') {
+            const rate = Number(goal.rate);
+            if (!Number.isFinite(rate) || rate < 0) return null;
+            const pounds = goal.rateUnit === 'kg' ? rate / 0.45359237 : rate;
+            adjustment = -Math.round(pounds * CALORIES_PER_POUND_LOST_WEEKLY);
+            if (!Number.isFinite(adjustment)) return null;
+        } else if (goal.mode === 'gain') {
+            adjustment = MUSCLE_GAIN_SURPLUS;
+        } else if (goal.mode !== 'maintain') {
+            return null;
+        }
+        const requested = estimate.maintenance + adjustment;
+        return {
+            target: Math.max(estimate.bmr, requested),
+            maintenance: estimate.maintenance,
+            bmr: estimate.bmr,
+            adjustment,
+            belowFloor: requested < estimate.bmr
+        };
+    }
+
+    function calorieFocusForGoal(goal) {
+        if (goal?.focus === 'muscle_gain') return { mode: 'gain' };
+        if (goal?.focus !== 'weight_loss') return null;
+        const kg = Number(goal.details?.kg);
+        const weeks = Number(goal.details?.weeks);
+        if (!Number.isFinite(kg) || !Number.isFinite(weeks) || kg <= 0 || weeks <= 0) return null;
+        return { mode: 'lose', rate: kg / weeks, rateUnit: 'kg' };
+    }
 
     function dietSafetyState() {
         if (!state.dietSafety || typeof state.dietSafety !== 'object') state.dietSafety = {};
@@ -1445,8 +1480,9 @@
     function reconcileDietSafety(todayKey) {
         const today = /^\d{4}-\d{2}-\d{2}$/.test(String(todayKey || '')) ? todayKey : localDateKey();
         const safety = dietSafetyState();
-        const maintenance = calculateMaintenanceCalories() || Number(safety.lastMaintenance) || null;
-        const bmr = getBMR();
+        const estimate = calculateEnergyExpenditure();
+        const maintenance = estimate?.maintenance || Number(safety.lastMaintenance) || null;
+        const bmr = estimate?.bmr || getBMR();
         if (!maintenance) return { phase: 'unknown' };
         let changed = false, notice = '';
         safety.lastMaintenance = maintenance;
@@ -1470,6 +1506,23 @@
             if (changed) saveState();
             if (notice) showToast(notice, 9000);
             return { phase: 'unknown' };
+        }
+        const goal = dietGoalState();
+        if (!goal.mode && estimate) {
+            const savedGoal = (state.userGoals || []).find(item => item && !item.completed && calorieFocusForGoal(item));
+            if (savedGoal) {
+                Object.assign(goal, calorieFocusForGoal(savedGoal));
+                changed = true;
+            }
+        }
+        const plan = calculateGoalCaloriePlan(goal, estimate);
+        if (plan && state.goals.calories !== plan.target) {
+            state.goals.calories = plan.target;
+            changed = true;
+        }
+        if (plan && !safety.targetChosen) {
+            safety.targetChosen = true;
+            changed = true;
         }
         if (!safety.legacyGoalChecked) {
             safety.targetChosen = safety.targetChosen || Number(state.goals.calories) !== DEFAULT_STATE.goals.calories ||
@@ -1502,34 +1555,8 @@
         if (changed) saveState();
         if (notice) showToast(notice, 9000);
         if (safety.maintenanceUntil) return { phase: 'maintenance', maintenance, until: safety.maintenanceUntil, daysLeft: 7 };
-        return aggressive ? { phase: 'aggressive', maintenance, since: safety.aggressiveSince,
-            days: dietDaysBetween(safety.aggressiveSince, today) } : { phase: 'regular', maintenance };
-    }
-
-    function setTrackedCalorieGoal(value, source) {
-        const desired = Math.round(Number(value));
-        const estimate = calculateEnergyExpenditure();
-        if (!Number.isFinite(desired) || desired <= 0 || !estimate) {
-            showToast('Complete About You and log a weight before changing your calorie target.');
-            return false;
-        }
-        const safety = reconcileDietSafety();
-        if (safety.phase === 'maintenance') {
-            showToast(`Maintenance week: calorie goal stays at ${safety.maintenance.toLocaleString()} kcal until ${safety.until}.`, 7000);
-            return false;
-        }
-        const target = Math.max(desired, estimate.bmr);
-        if (target !== desired) showToast(`Goal raised to your estimated BMR floor of ${estimate.bmr.toLocaleString()} kcal.`, 7000);
-        state.goals.calories = target;
-        if (source === 'manual') dietGoalState().mode = '';
-        const safetyState = dietSafetyState();
-        safetyState.targetChosen = true;
-        safetyState.legacyGoalChecked = true;
-        if (estimate.maintenance - target >= AGGRESSIVE_DEFICIT_KCAL) {
-            if (!safetyState.aggressiveSince) safetyState.aggressiveSince = localDateKey();
-        } else safetyState.aggressiveSince = null;
-        saveState();
-        return true;
+        return aggressive ? { phase: 'aggressive', maintenance, plan, since: safety.aggressiveSince,
+            days: dietDaysBetween(safety.aggressiveSince, today) } : { phase: 'regular', maintenance, plan };
     }
 
     function renderDietSafetyStatus() {
@@ -1627,8 +1654,8 @@
     }
 
     function renderDietGoal() {
+        const safety = renderDietSafetyStatus();
         const g = dietGoalState();
-        renderDietSafetyStatus();
         // Highlight the selected mode button
         ['lose', 'maintain', 'gain'].forEach(m => {
             const btn = document.getElementById('goal-btn-' + m);
@@ -1643,112 +1670,69 @@
 
         // Restore inputs
         const rateInput = document.getElementById('goal-rate-input');
-        if (rateInput) rateInput.value = g.rate || '';
+        if (rateInput) rateInput.value = g.rate ?? '';
         ['lbs', 'kg'].forEach(u => {
             const b = document.getElementById('rate-unit-' + u);
             if (b) b.className = 'px-3 rounded-lg text-xs font-black ' + (g.rateUnit === u ? 'bg-white shadow text-emerald-600' : 'text-slate-400');
         });
-        const gainSel = document.getElementById('goal-gain-rate');
-        if (gainSel) gainSel.value = String(g.gainRate || 250);
-
-        recalcGoalCalories();
+        const plan = safety.plan;
+        const maintenanceWeek = safety.phase === 'maintenance';
+        renderCalorieTarget(getDailyCalorieTarget());
+        document.getElementById('goal-result')?.classList.toggle('hidden', !plan && !maintenanceWeek);
+        const note = document.getElementById('goal-target-note');
+        if (note) note.textContent = maintenanceWeek
+            ? `Maintenance week until ${safety.until}.`
+            : plan ? caloriePlanNote(plan) : '';
+        const warning = document.getElementById('goal-bmr-warning');
+        if (warning) warning.classList.toggle('hidden', !plan?.belowFloor);
+        if (plan?.belowFloor) {
+            document.getElementById('goal-bmr-text').textContent =
+                `VFIT raised your target to your estimated BMR of ${plan.bmr.toLocaleString()} kcal/day.`;
+        }
     }
 
     function setDietGoal(mode) {
-        if (mode === 'lose' && reconcileDietSafety().phase === 'maintenance') {
-            showToast('The maintenance week must finish before a deficit can be selected.', 7000);
+        if (!['lose', 'maintain', 'gain'].includes(mode)) return;
+        if (mode !== 'maintain' && reconcileDietSafety().phase === 'maintenance') {
+            showToast('You can change your calorie focus after the maintenance week.', 7000);
             renderDietGoal();
             return;
         }
         dietGoalState().mode = mode;
         saveState();
-        renderDietGoal();
+        refreshCalorieGoalDisplays();
     }
+
     function setRateUnit(unit) {
+        if (!['lbs', 'kg'].includes(unit)) return;
         dietGoalState().rateUnit = unit;
         saveState();
-        renderDietGoal();
+        refreshCalorieGoalDisplays();
     }
 
-    // The core calculation, with the deficit maths and BMR safety stop.
-    function recalcGoalCalories() {
-        const g = dietGoalState();
-        // Pull the latest typed values into state first
-        const rateInput = document.getElementById('goal-rate-input');
-        if (rateInput && g.mode === 'lose') g.rate = parseFloat(rateInput.value) || 0;
-        const gainSel = document.getElementById('goal-gain-rate');
-        if (gainSel && g.mode === 'gain') g.gainRate = parseInt(gainSel.value) || 250;
-
-        const result = document.getElementById('goal-result');
-        const warning = document.getElementById('goal-bmr-warning');
-        const applyBtn = document.getElementById('goal-apply-btn');
-        if (!result) return;
-
-        const safety = renderDietSafetyStatus();
-        const maintenance = calculateMaintenanceCalories();
-        const bmr = getBMR();
-
-        // Can't calculate without the profile + weight
-        if (!maintenance || !bmr || !g.mode) {
-            result.classList.add('hidden');
-            if (warning) warning.classList.add('hidden');
-            if (applyBtn) applyBtn.classList.add('hidden');
+    function setDietLossRate(value) {
+        const entered = String(value ?? '').trim();
+        const rate = Number(entered);
+        if (!entered || !Number.isFinite(rate) || rate < 0) {
+            renderDietGoal();
             return;
         }
-
-        let target, note = '', belowFloor = false;
-
-        if (g.mode === 'maintain') {
-            target = maintenance;
-            note = 'Eating at maintenance to hold your current weight.';
-        } else if (g.mode === 'gain') {
-            const surplus = parseInt(g.gainRate) || 250;
-            target = maintenance + surplus;
-            note = `Maintenance (${maintenance.toLocaleString()}) + ${surplus} surplus for muscle gain.`;
-        } else if (g.mode === 'lose') {
-            const rate = parseFloat(g.rate) || 0;
-            // 500 kcal/day deficit per lb/week; 1000 kcal/day per kg/week
-            const perUnit = g.rateUnit === 'kg' ? 1000 : 500;
-            const dailyDeficit = Math.round(rate * perUnit);
-            const requestedTarget = maintenance - dailyDeficit;
-            target = Math.max(requestedTarget, bmr);
-            belowFloor = requestedTarget < bmr;
-            const unitLabel = g.rateUnit === 'kg' ? 'kg' : 'lbs';
-            note = `Estimated TDEE (${maintenance.toLocaleString()}) − ${dailyDeficit.toLocaleString()} requested deficit to lose ~${rate}${unitLabel}/week.${belowFloor ? ' Capped at estimated BMR.' : ''}`;
-        }
-
-        if (safety.phase === 'maintenance') {
-            target = maintenance;
-            note = `Maintenance week until ${safety.until}. A deficit can be chosen again afterwards.`;
-        }
-
-        // Show the result
-        result.classList.remove('hidden');
-        document.getElementById('goal-target-cals').textContent = target.toLocaleString();
-        document.getElementById('goal-target-note').textContent = note;
-
-        if (belowFloor && safety.phase !== 'maintenance') {
-            warning.classList.remove('hidden');
-            document.getElementById('goal-bmr-text').textContent =
-                `Requested target is below your estimated BMR (${bmr.toLocaleString()} kcal). VFIT raised it to ${target.toLocaleString()} kcal. BMR is an estimate, not a guarantee of adequate fuelling.`;
-        } else {
-            if (warning) warning.classList.add('hidden');
-        }
-        if (applyBtn) applyBtn.classList.toggle('hidden', safety.phase === 'maintenance');
-        window._pendingGoalTarget = target;
+        dietGoalState().rate = rate;
+        saveState();
+        refreshCalorieGoalDisplays();
     }
 
-    function applyGoalCalories() {
-        const target = window._pendingGoalTarget;
-        if (!target) return;
-        if (!setTrackedCalorieGoal(target, 'goal')) return;
-        // Reflect in the calorie goal input + maintenance note
-        const input = document.getElementById('calorie-goal-input');
-        if (input) input.value = state.goals.calories;
-        renderMaintenanceDisplay();
-        renderDietSafetyStatus();
+    function refreshCalorieGoalDisplays() {
+        renderDietGoal();
         renderDashboard();
-        showToast(`Calorie goal set to ${state.goals.calories.toLocaleString()} kcal 🎯`);
+        renderDailyReadinessCards();
+        if (document.getElementById('calorie-chart-modal')?.style.display === 'flex') renderCalorieTrackingChart();
+    }
+
+    function caloriePlanNote(plan) {
+        const adjustment = plan.adjustment
+            ? ` ${plan.adjustment < 0 ? '−' : '+'} ${Math.abs(plan.adjustment).toLocaleString()}` : '';
+        return `Estimated TDEE ${plan.maintenance.toLocaleString()}${adjustment} kcal/day${plan.belowFloor ? ', with the estimated BMR floor applied' : ''}.`;
     }
 
     function getLatestWeightKg() {
@@ -1823,94 +1807,6 @@
         } else {
             bmiSection.classList.add('hidden');
         }
-    }
-
-    /**
-     * Apply maintenance calories as the daily calorie goal, possibly adjusted for an active goal.
-     */
-    function applyMaintenanceAsCalorieGoal() {
-        const maintenance = calculateMaintenanceCalories();
-        if (!maintenance) {
-            showToast('Complete your profile first');
-            return;
-        }
-
-        // If there's an active weight-loss or muscle-gain goal, adjust automatically.
-        const activeGoal = (state.userGoals || []).find(g => !g.completed && (g.focus === 'weight_loss' || g.focus === 'muscle_gain'));
-        let target = maintenance;
-        let note = `Calorie goal set to maintenance: ${maintenance} kcal/day`;
-
-        if (activeGoal) {
-            const adj = calculateGoalCalorieAdjustment(activeGoal, maintenance);
-            target = adj.target;
-            note = adj.note;
-        }
-
-        if (!setTrackedCalorieGoal(target, 'goal')) return;
-        document.getElementById('calorie-goal-input').value = state.goals.calories;
-
-        const noteEl = document.getElementById('goal-adjusted-note');
-        if (noteEl) {
-            noteEl.textContent = '✓ ' + note;
-            noteEl.classList.remove('hidden');
-            setTimeout(() => noteEl.classList.add('hidden'), 6000);
-        }
-        renderDashboard();
-        showToast(note);
-    }
-
-    /**
-     * Given a goal and maintenance calories, return { target, note }.
-     * Caps deficits at 750 kcal/day and surpluses at 500 kcal/day for safety.
-     */
-    function calculateGoalCalorieAdjustment(goal, maintenance) {
-        if (goal.focus === 'weight_loss' && goal.details) {
-            const kg = parseFloat(goal.details.kg);
-            const weeks = parseFloat(goal.details.weeks);
-            if (kg > 0 && weeks > 0) {
-                // ~7700 kcal per kg of fat. Daily deficit:
-                let deficit = Math.round((kg * 7700) / (weeks * 7));
-                // Cap based on style — "toned" = more conservative deficit to preserve muscle
-                const maxDeficit = goal.details.style === 'toned' ? 500 : 750;
-                if (deficit > maxDeficit) {
-                    deficit = maxDeficit;
-                    const target = Math.max(getBMR() || 0, maintenance - deficit);
-                    return {
-                        target,
-                        note: `Requested deficit capped at ${maxDeficit} kcal/day${target > maintenance - deficit ? ' and target raised to estimated BMR' : ''}; your timeframe may need to be longer.`
-                    };
-                }
-                const target = Math.max(getBMR() || 0, maintenance - deficit);
-                return {
-                    target,
-                    note: `Requested deficit: ${deficit} kcal/day for ${kg}kg in ${weeks}w → ${target} kcal target${target > maintenance - deficit ? ' (BMR floor)' : ''}.`
-                };
-            }
-        }
-
-        if (goal.focus === 'muscle_gain' && goal.details) {
-            const physique = goal.details.physique;
-            const exp = getExperienceLevel();
-            // Skinny + beginner = bigger surplus; advanced bodybuilder = smaller surplus
-            let surplus = 300;
-            if (physique === 'skinny') surplus = 400;
-            else if (physique === 'overweight') surplus = 150;
-            else if (physique === 'bodybuilder' || physique === 'athletic') surplus = 200;
-
-            if (exp === 'Advanced') surplus = Math.min(surplus, 250);
-            else if (exp === 'Beginner') surplus = Math.min(surplus + 100, 500);
-
-            return {
-                target: maintenance + surplus,
-                note: `Surplus: +${surplus} kcal/day → ${maintenance + surplus} kcal target.`
-            };
-        }
-
-        // Health goal or unknown — stay at maintenance
-        return {
-            target: maintenance,
-            note: `Maintenance: ${maintenance} kcal/day.`
-        };
     }
 
     // ==========================================================================
@@ -2083,23 +1979,26 @@
         const recContent = document.getElementById('goal-rec-content');
         if (!recBox || !recContent || !currentGoalFocus) return;
 
-        const maintenance = calculateMaintenanceCalories();
         const details = collectGoalDetails();
-        const draftGoal = { focus: currentGoalFocus, details };
-
+        const focus = calorieFocusForGoal({ focus: currentGoalFocus, details });
         const lines = [];
+        if (focus) {
+            const safety = reconcileDietSafety();
+            const plan = calculateGoalCaloriePlan(focus, calculateEnergyExpenditure());
+            if (safety.phase === 'maintenance') {
+                lines.push(`Daily calorie goal during the maintenance week: <b>${safety.maintenance.toLocaleString()} kcal/day</b>.`);
+            } else if (plan) {
+                lines.push(`Calorie goal after saving: <b>${plan.target.toLocaleString()} kcal/day</b>.`);
+                lines.push(`<span class="text-slate-500">${caloriePlanNote(plan)}</span>`);
+            } else {
+                lines.push('Complete About You and log a weight to calculate your calorie goal.');
+            }
+        }
 
         if (currentGoalFocus === 'weight_loss') {
-            if (details.kg && details.weeks) {
-                if (maintenance) {
-                    const adj = calculateGoalCalorieAdjustment(draftGoal, maintenance);
-                    lines.push(`📉 <b>${adj.target} kcal/day</b> (${maintenance} maintenance − deficit)`);
-                    lines.push(`<span class="text-slate-500">${adj.note}</span>`);
-                    if ((details.kg / details.weeks) > 1) {
-                        lines.push('⚠️ <span class="text-amber-700">Losing more than 1kg/week is hard to sustain and may cost muscle.</span>');
-                    }
-                } else {
-                    lines.push(`Complete your profile (gender, age, height, activity) + log a weight to see a calorie target.`);
+            if (focus) {
+                if (focus.rate > 1) {
+                    lines.push('⚠️ <span class="text-amber-700">Losing more than 1kg/week is hard to sustain and may cost muscle.</span>');
                 }
                 if (details.style === 'toned') {
                     lines.push('💪 Keep resistance training 3-4×/week and protein at ~1.6-2.2 g/kg bodyweight.');
@@ -2110,11 +2009,6 @@
                 lines.push(`📸 Progress photos: ${label}.`);
             }
         } else if (currentGoalFocus === 'muscle_gain') {
-            if (details.physique && maintenance) {
-                const adj = calculateGoalCalorieAdjustment(draftGoal, maintenance);
-                lines.push(`📈 <b>${adj.target} kcal/day</b> (${maintenance} maintenance + surplus)`);
-                lines.push(`<span class="text-slate-500">${adj.note}</span>`);
-            }
             if (details.experience && details.experience !== 'Unknown') {
                 const tips = {
                     Beginner: 'Start with two simple full-body sessions each week. Practise the movements and log your reps and weight.',
@@ -2146,9 +2040,6 @@
             }
             if (details.area === 'mobility') {
                 lines.push('🤸 5-10 min of dynamic stretching daily; consider 1-2 dedicated mobility sessions/week.');
-            }
-            if (maintenance) {
-                lines.push(`🍽️ Aim for maintenance: <b>${maintenance} kcal/day</b>.`);
             }
         }
 
@@ -2201,22 +2092,17 @@
             progressEntries: [],
             deletedProgressEntryIds: []
         };
-        state.userGoals.unshift(newGoal);
-
-        // Auto-adjust calorie goal if we have enough info
-        const maintenance = calculateMaintenanceCalories();
-        if (maintenance && (currentGoalFocus === 'weight_loss' || currentGoalFocus === 'muscle_gain')) {
-            const adj = calculateGoalCalorieAdjustment(newGoal, maintenance);
-            if (setTrackedCalorieGoal(adj.target, 'goal')) showToast('Goal saved! Calorie target → ' + state.goals.calories);
-            else showToast('Goal saved. Calorie target remains at maintenance for this week.');
-        } else {
-            showToast('Goal added! 🎯');
+        const focus = calorieFocusForGoal(newGoal);
+        if (focus && reconcileDietSafety().phase !== 'maintenance') {
+            Object.assign(dietGoalState(), focus);
         }
-
+        state.userGoals.unshift(newGoal);
         saveState();
         closeGoalModal();
         renderSettings();
         renderGoalVolumeSummary();
         renderDashboard();
+        renderDailyReadinessCards();
+        showToast('Goal saved');
         openGoalProgress(newGoal.id);
     }

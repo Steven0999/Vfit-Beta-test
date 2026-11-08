@@ -694,6 +694,7 @@
         renderMetricsStatusLines();
         renderMetricsHistory();
         renderMaintenanceDisplay();
+        refreshCalorieGoalDisplays();
         showToast('Weight saved ✓');
     }
 
@@ -2237,8 +2238,6 @@
 
     function openCalorieChartModal() {
         document.getElementById('calorie-chart-modal').style.display = 'flex';
-        const goalInput = document.getElementById('maintenance-calories-input');
-        if (goalInput) goalInput.value = state.goals.calories || 2500;
         setCalorieChartView('daily');
     }
 
@@ -2268,16 +2267,6 @@
         renderCalorieTrackingChart();
     }
 
-    function updateMaintenanceCalories(value) {
-        setTrackedCalorieGoal(value, 'manual');
-        document.getElementById('maintenance-calories-input').value = state.goals.calories;
-        const goalInput = document.getElementById('calorie-goal-input');
-        if (goalInput) goalInput.value = state.goals.calories;
-        renderDietSafetyStatus();
-        renderCalorieTrackingChart();
-        renderDashboard();
-    }
-
     /**
      * Render the calorie tracking chart in either daily or weekly view.
      * FIXED: `weeks` is now declared at the top so it's in scope for the daily branch too.
@@ -2286,7 +2275,8 @@
         const canvas = document.getElementById('calorie-tracking-chart');
         if (!canvas) return;
 
-        const target = state.goals.calories || 2500;
+        const target = getDailyCalorieTarget();
+        renderCalorieTarget(target);
         const history = (state.nutritionHistory || []).slice();
 
         let labels = [];
@@ -2354,7 +2344,7 @@
             }
         }
 
-        // Calculate maintenance target for chart (multiply by 7 for weekly)
+        // Weekly totals use seven days of the shared daily goal.
         const targetLine = calorieChartView === 'daily' ? target : target * 7;
 
         if (calorieChart) calorieChart.destroy();
@@ -2559,13 +2549,6 @@
     // SETTINGS
     // ==========================================================================
 
-    function updateCalorieGoal(value) {
-        setTrackedCalorieGoal(value, 'manual');
-        document.getElementById('calorie-goal-input').value = state.goals.calories;
-        renderDietSafetyStatus();
-        renderDashboard();
-    }
-
     function saveSettings() {
         saveState();
         showToast('Settings saved! ✓');
@@ -2694,10 +2677,6 @@
     }
 
     function renderSettings() {
-        // Calorie goal
-        const calInput = document.getElementById('calorie-goal-input');
-        if (calInput) calInput.value = state.goals.calories || 2500;
-
         // About You button status (inputs live inside the modal, not here)
         renderAboutYouStatus();
         renderMaintenanceDisplay();

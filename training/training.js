@@ -973,9 +973,8 @@
         const dashFat = document.getElementById('dash-fat');
         if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
 
-        const calorieGoal = typeof getDailyCalorieTarget === 'function'
-            ? getDailyCalorieTarget(state.viewDate)
-            : ((state.goals && state.goals.calories) ? state.goals.calories : 2500);
+        const calorieGoal = getDailyCalorieTarget();
+        renderCalorieTarget(calorieGoal);
         const progress = Math.min((totalCals / calorieGoal) * 534, 534);
         const progressEl = document.getElementById('calorie-progress');
         if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;

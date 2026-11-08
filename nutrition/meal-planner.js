@@ -129,9 +129,6 @@
         const totalFatEl = document.getElementById('total-fat');
         if (totalCarbsEl) totalCarbsEl.textContent = totalCarbs.toFixed(1);
         if (totalFatEl) totalFatEl.textContent = totalFat.toFixed(1);
-        const target = typeof getDailyCalorieTarget === 'function' ? getDailyCalorieTarget(state.viewDate) : ((state.goals && state.goals.calories) || 2500);
-        const targetEl = document.getElementById('nutrition-calorie-target');
-        if (targetEl) targetEl.textContent = `Target ${Math.round(target)} kcal`;
 
         const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
         const mealIcons = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };

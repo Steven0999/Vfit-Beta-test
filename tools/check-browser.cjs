@@ -58,7 +58,7 @@ const pageStatus = `({url:location.href,status:document.body?.dataset.browserChe
 
 (async () => {
   try {
-    for (const name of ['active','plans','metrics','nutrition','updates']) {
+    for (const name of ['active','plans','metrics','nutrition','calories','updates']) {
       const {browserContextId} = await command('Target.createBrowserContext');
       try {
         const {targetId} = await command('Target.createTarget',{url:'about:blank',browserContextId});

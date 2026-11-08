@@ -409,12 +409,12 @@ const expose = `
   calculateEnergyExpenditure,
   calculateMaintenanceCalories,
   getBMR,
-  setTrackedCalorieGoal,
   reconcileDietSafety,
   getDailyCalorieTarget,
-  updateCalorieGoal,
-  updateMaintenanceCalories,
+  buildDailyReadinessPlan,
   setDietGoal,
+  setDietLossRate,
+  setRateUnit,
   getExperienceLevel,
   setGoalFocus,
   openGoalSetting,
@@ -436,7 +436,8 @@ const expose = `
   setUser: value => { currentUser = value; },
   setBarcodeScannerEmbedded: value => { barcodeScannerEmbedded = !!value; },
   setBarcodeScanMode: value => { barcodeScanMode = value; },
-  defaultState: () => deepClone(DEFAULT_STATE)
+  defaultState: () => deepClone(DEFAULT_STATE),
+  appVersion: VFIT_APP_VERSION
 };`;
 
 vm.createContext(sandbox);
@@ -711,19 +712,22 @@ assert.equal(app.reconcileDietSafety(energyToday).phase, 'regular',
 assert.equal(defaultHighActivity.dietSafety.targetChosen, false);
 defaultHighActivity.userProfile = { ...defaultHighActivity.userProfile, age: 16 };
 assert.equal(app.calculateEnergyExpenditure(energyToday), null, 'adult energy targets are not calculated for minors');
-assert.equal(app.setTrackedCalorieGoal(1000, 'manual'), false);
+app.setDietGoal('lose');
+app.setDietLossRate('2');
+assert.equal(app.getDailyCalorieTarget(), 2500, 'a profile without an adult TDEE keeps its saved target');
 assert.equal(defaultHighActivity.goals.calories, 2500);
 app.setState(energyState);
 
-// Manual and planned goals share one BMR floor. A continuous 56-day planned
+// Goal Focus applies the BMR floor to the shared target. A continuous 56-day planned
 // deficit of at least 1,000 kcal triggers seven local dates at maintenance.
 const bmrFloor = app.getBMR();
-assert.equal(app.setTrackedCalorieGoal(200, 'manual'), true);
+app.setDietGoal('lose');
+app.setDietLossRate('99');
 assert.equal(energyState.goals.calories, bmrFloor);
 assert.ok(energyState.goals.calories >= bmrFloor);
 const aggressiveTarget = activeTdee.maintenance - 1000;
 assert.ok(aggressiveTarget >= bmrFloor, 'the fixture supports a 1000 kcal deficit above BMR');
-app.updateCalorieGoal(String(aggressiveTarget));
+app.setDietLossRate('2');
 assert.equal(energyState.goals.calories, aggressiveTarget);
 assert.equal(app.reconcileDietSafety(energyToday).phase, 'aggressive');
 energyState.dietSafety.aggressiveSince = app.offsetLocalDateKey(energyToday, -55);
@@ -742,9 +746,7 @@ energyState.userProfile = {};
 assert.equal(app.getDailyCalorieTarget(energyToday), activeTdee.maintenance,
   'the break remains enforced if profile information is temporarily unavailable');
 energyState.userProfile = savedProfile;
-app.updateCalorieGoal(String(aggressiveTarget));
-assert.equal(energyState.goals.calories, activeTdee.maintenance);
-app.updateMaintenanceCalories(String(aggressiveTarget));
+app.setDietGoal('gain');
 assert.equal(energyState.goals.calories, activeTdee.maintenance);
 app.setDietGoal('lose');
 assert.equal(energyState.dietGoal.mode, 'maintain');
@@ -755,12 +757,25 @@ assert.equal(app.reconcileDietSafety(energyToday).phase, 'maintenance', 'mainten
 assert.equal(app.reconcileDietSafety(app.offsetLocalDateKey(energyToday, 6)).phase, 'maintenance');
 assert.equal(app.reconcileDietSafety(app.offsetLocalDateKey(energyToday, 7)).phase, 'regular');
 assert.equal(app.getState().goals.calories, activeTdee.maintenance, 'maintenance stays selected after the lock');
-assert.equal(app.setTrackedCalorieGoal(aggressiveTarget, 'manual'), true, 'a new aggressive goal is permitted after the week');
+app.setDietGoal('lose');
+assert.equal(app.getDailyCalorieTarget(), aggressiveTarget, 'a new deficit can be selected after the break');
 assert.equal(app.getState().dietSafety.aggressiveSince, energyToday);
 app.getState().dailyReadiness[energyToday] = { status: 'completed', recommendedCalories: 200 };
-assert.equal(app.getDailyCalorieTarget(energyToday), bmrFloor, 'readiness never sets an intake target below BMR');
-assert.equal(app.setTrackedCalorieGoal(activeTdee.maintenance - 500, 'manual'), true);
+assert.equal(app.getDailyCalorieTarget(), aggressiveTarget, 'an old readiness plan cannot replace the current target');
+app.setDietLossRate('1');
+assert.equal(app.getDailyCalorieTarget(), activeTdee.maintenance - 500);
 assert.equal(app.getState().dietSafety.aggressiveSince, null, 'a smaller planned deficit resets the eight-week counter');
+const recoveryPlan = app.buildDailyReadinessPlan({ energy: 1, hunger: 4, fatigue: 5, mood: 3, feeling: 3 });
+assert.equal(recoveryPlan.recommendedCalories, activeTdee.maintenance - 500);
+assert.equal(recoveryPlan.volumeMultiplier, 0.6, 'recovery still adjusts training');
+app.setRateUnit('kg');
+app.setDietLossRate('0.45359237');
+assert.equal(app.getDailyCalorieTarget(), activeTdee.maintenance - 500, 'one pound in kg uses the same deficit');
+app.getState().dietGoal.gainRate = 500;
+app.setDietGoal('gain');
+assert.equal(app.getDailyCalorieTarget(), activeTdee.maintenance + 250, 'an older gain setting uses the fixed surplus');
+app.setDietGoal('maintain');
+assert.equal(app.getDailyCalorieTarget(), activeTdee.maintenance);
 app.setUser(null);
 app.setState(app.defaultState());
 
@@ -1600,6 +1615,13 @@ const selectedDayIdeas = ['breakfast', 'lunch', 'dinner', 'snack']
   .filter(Boolean);
 assert.equal(plannedDayTotals.calories, selectedDayIdeas.reduce((sum, idea) => sum + (Number(idea.calories) || 0), 0));
 assert.equal(plannedDayTotals.protein, selectedDayIdeas.reduce((sum, idea) => sum + (Number(idea.protein) || 0), 0));
+const savedBreakfast = allowedBreakfasts.find(idea => idea.createdMealSource);
+plannerState.weeklyMealPlan['2026-09-03'].meals.breakfast = { recipeId: savedBreakfast.id, servings: 2, completed: true };
+plannerState.goals.calories = 1200;
+const retainedBreakfast = app.plannerMealSelection('2026-09-03', 'breakfast');
+assert.equal(retainedBreakfast.idea.id, savedBreakfast.id, 'a lower goal does not replace an existing planned meal');
+assert.equal(retainedBreakfast.selection.servings, 2);
+assert.equal(retainedBreakfast.selection.completed, true);
 
 const emptyPlannerState = app.defaultState();
 emptyPlannerState.dietaryProfile = plannerState.dietaryProfile;
@@ -2299,7 +2321,7 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
   for(const field of ['userProfile','workoutHistory','dailyMeals','savedWorkouts','createdMeals','userGoals','metricsHistory','exercisePreferences','nutritionDayTemplates'])
     assert.equal(JSON.stringify(app.getState()[field]),JSON.stringify(original[field]),field+' survives the upgrade');
   app.saveState({skipCloud:true,preserveUpdatedAt:true});
-  assert.equal(JSON.parse(localStorage.getItem(key)).meta.appVersion,'2.1.0-beta.54');
+  assert.equal(JSON.parse(localStorage.getItem(key)).meta.appVersion,app.appVersion);
   assert.equal(await app.prepareAccountDataForUpdate(owner),true);assert.equal((await app.originalAccountCopies(owner)).length,1,'normal reopen does not replace or duplicate an original copy');
   await app.migrateProgressPhotosToIndexedDb();
   assert.equal(await app.getProgressPhoto(galleryReference),newImage,'stale inline photos cannot replace existing gallery bytes');
@@ -2344,7 +2366,7 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
   assert.equal((await app.originalAccountCopies(damagedOwner))[0].originals.primaryRaw,'{not-readable','unreadable bytes remain available for recovery');
   // Even an already-open older tab cannot overwrite a newer on-disk save.
   const staleOwner='upgrade-stale-tab';app.setUser({uid:staleOwner});app.setState(app.defaultState());
-  const sameSchemaFuture=JSON.stringify({...original,meta:{schemaVersion:9,appVersion:'2.1.0-beta.55'}});
+  const sameSchemaFuture=JSON.stringify({...original,meta:{schemaVersion:9,appVersion:'2.1.0-beta.98'}});
   localStorage.setItem(app.stateStorageKey(staleOwner),sameSchemaFuture);
   assert.equal(app.saveState({skipCloud:true}),false);assert.equal(localStorage.getItem(app.stateStorageKey(staleOwner)),sameSchemaFuture);
   assert.equal(app.snapshotNeedsNewerApp({meta:{appVersion:'2.1.0-beta.9',schemaVersion:9}}),false);

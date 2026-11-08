@@ -1,7 +1,7 @@
     // ==========================================================================
     // APP FOUNDATION — versioning, safe rendering and resilient UI helpers
     // ==========================================================================
-    const VFIT_APP_VERSION = '2.1.0-beta.54';
+    const VFIT_APP_VERSION = '2.1.0-beta.55';
     const VFIT_STATE_SCHEMA_VERSION = 9;
     const VALID_TAB_IDS = new Set(['dashboard', 'coaching', 'profile', 'training', 'nutrition', 'logs', 'metrics', 'settings']);
     const RUNTIME_CONFIG = Object.freeze(Object.assign({
@@ -1119,12 +1119,13 @@
             if (!currentUser || currentUser.uid !== uid || accountDataWriteBlocked(uid)) return false;
             if (cloudReconciledUid !== uid) { cloudDirty = true; return false; }
             if (state.privacySettings?.cloudHealthData === false) { cloudDirty = false; return false; }
+            const calorieGoal = getDailyCalorieTarget();
             const snapshot = buildCloudSnapshot();
             await db.collection('users').doc(uid).set({
                 name: currentUser.displayName || (firebaseUserData && firebaseUserData.name) || 'User',
                 email: currentUser.email || '',
                 emailLower: (currentUser.email || '').toLowerCase(),
-                calorieGoal: state.goals.calories,
+                calorieGoal,
                 customExercises: state.customExercises || [],
                 barcodeFoods: state.barcodeFoods || [],
                 disabledExercises: state.disabledExercises || { gym: [], home: [] },
@@ -1246,7 +1247,7 @@
                 email: currentUser.email || '',
                 emailLower: (currentUser.email || '').toLowerCase(),
                 role: currentUserRole,
-                calorieGoal: state.goals.calories || 2500
+                calorieGoal: getDailyCalorieTarget()
             };
             if (!exists) {
                 Object.assign(baseProfile, {
@@ -3467,18 +3468,16 @@
         }
     }
 
-    /** The normal goal remains untouched; only a completed daily plan can override it. */
-    function getDailyCalorieTarget(dateKey) {
-        const today = localDateKey();
-        const safety = typeof renderDietSafetyStatus === 'function' ? renderDietSafetyStatus() : null;
-        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
-        if (dateKey === today && safety?.phase === 'maintenance') return baseline;
-        const record = readinessRecordForDate(dateKey);
-        if (record && record.status === 'completed' && parseInt(record.recommendedCalories, 10) > 0) {
-            const bmr = typeof getBMR === 'function' ? getBMR() : null;
-            return Math.max(parseInt(record.recommendedCalories, 10), bmr || 0);
-        }
-        return baseline;
+    function getDailyCalorieTarget() {
+        reconcileDietSafety();
+        const target = Math.round(Number(state.goals.calories));
+        return Number.isFinite(target) && target > 0 ? target : DEFAULT_STATE.goals.calories;
+    }
+
+    function renderCalorieTarget(target) {
+        document.querySelectorAll('[data-calorie-target]').forEach(element => {
+            element.textContent = target.toLocaleString();
+        });
     }
 
     function getRecoveryPlanForDate(dateKey) {
@@ -3530,43 +3529,34 @@
             .every(key => Number.isInteger(answers[key]) && answers[key] >= 1 && answers[key] <= 5);
     }
 
-    function buildDailyReadinessPlan(answers) {
-        const baseline = Math.max(1, parseInt(state.goals && state.goals.calories, 10) || 2500);
-        const maintenance = calculateMaintenanceCalories();
-        const recovery = answers.energy <= 2 && answers.hunger >= 4 && answers.fatigue >= 4;
-        // Halfway between the normal target and maintenance gives meaningful extra
-        // recovery fuel without replacing the user's long-term goal.
-        const recommendedCalories = recovery && maintenance
-            ? Math.round((baseline + maintenance) / 2)
-            : baseline;
+    function readinessNutritionMessage(answers, target, recovery) {
+        const introduction = `Your daily goal is ${target.toLocaleString()} kcal.`;
+        if (recovery) return introduction + ' Prioritise protein, fluids, carbohydrates and regular meals.';
+        const parts = [introduction];
+        if (answers.hunger >= 4) parts.push('Build meals around protein, fibre and high-volume foods to manage hunger.');
+        if (answers.energy <= 2) parts.push('Place more of today’s carbohydrates around training and keep fluids up.');
+        if (answers.mood <= 2 || answers.feeling <= 2) parts.push('Keep meals simple and regular.');
+        if (parts.length === 1) parts.push('Keep protein consistent and fuel training as planned.');
+        return parts.join(' ');
+    }
 
-        let nutritionMessage;
-        let trainingMessage;
-        if (recovery) {
-            nutritionMessage = maintenance
-                ? `Today's target moves from ${baseline.toLocaleString()} to ${recommendedCalories.toLocaleString()} kcal — halfway toward your estimated ${maintenance.toLocaleString()} kcal maintenance. Prioritise protein, fluids, carbohydrates and regular meals.`
-                : `Recovery is active. Your target stays at ${baseline.toLocaleString()} kcal until maintenance can be calculated; complete About You and log a bodyweight to unlock the tailored recovery target.`;
-            trainingMessage = 'Use about 60% of normal training volume and 85% of normal load. Keep repetitions controlled and stop well before failure.';
-        } else {
-            const nutritionParts = [`Keep today's normal ${baseline.toLocaleString()} kcal target.`];
-            if (answers.hunger >= 4) nutritionParts.push('Build meals around protein, fibre and high-volume foods to manage hunger.');
-            if (answers.energy <= 2) nutritionParts.push('Place more of today’s carbohydrates around training and keep fluids up.');
-            if (answers.mood <= 2 || answers.feeling <= 2) nutritionParts.push('Keep meals simple and regular rather than relying on restriction.');
-            if (nutritionParts.length === 1) nutritionParts.push('Keep protein consistent and fuel training as planned.');
-            nutritionMessage = nutritionParts.join(' ');
-            trainingMessage = answers.fatigue >= 4
+    function buildDailyReadinessPlan(answers) {
+        const target = getDailyCalorieTarget();
+        const recovery = answers.energy <= 2 && answers.hunger >= 4 && answers.fatigue >= 4;
+        const trainingMessage = recovery
+            ? 'Use about 60% of normal training volume and 85% of normal load. Keep repetitions controlled and stop well before failure.'
+            : answers.fatigue >= 4
                 ? 'Recovery mode was not triggered, but fatigue is high. Train conservatively and stop if performance or technique drops.'
                 : 'Normal training is available today; adjust effort if your warm-up feels unusually difficult.';
-        }
 
         return {
             recovery,
-            baselineCalories: baseline,
-            maintenanceCalories: maintenance || null,
-            recommendedCalories,
+            baselineCalories: target,
+            maintenanceCalories: calculateMaintenanceCalories(),
+            recommendedCalories: target,
             volumeMultiplier: recovery ? RECOVERY_VOLUME_MULTIPLIER : 1,
             loadMultiplier: recovery ? RECOVERY_LOAD_MULTIPLIER : 1,
-            nutritionMessage,
+            nutritionMessage: readinessNutritionMessage(answers, target, recovery),
             trainingMessage
         };
     }
@@ -3766,6 +3756,9 @@
 
     function renderDailyReadinessCards() {
         const todayKey = localDateKey();
+        const target = getDailyCalorieTarget();
+        renderCalorieTarget(target);
+        renderDietSafetyStatus();
         const todayRecord = readinessRecordForDate(todayKey);
         const dashCard = document.getElementById('daily-readiness-card');
 
@@ -3787,7 +3780,7 @@
                             <div>
                                 <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery day active' : 'Ready for the normal plan'}</p>
                                 <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">Energy ${todayRecord.energy}/5 · Mood ${todayRecord.mood}/5 · Hunger ${todayRecord.hunger}/5 · Fatigue ${todayRecord.fatigue}/5</p>
-                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-2"><b>${getDailyCalorieTarget(todayKey).toLocaleString()} kcal</b> today${recovery ? ' · 60% volume · 85% load' : ''}</p>
+                                <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-2"><b>${target.toLocaleString()} kcal</b> today${recovery ? ' · 60% volume · 85% load' : ''}</p>
                             </div>
                         </div>
                         <button onclick="openDailyReadinessCheck()" class="text-xs font-black underline ${recovery ? 'text-amber-700' : 'text-emerald-700'} flex-shrink-0">Update</button>
@@ -3809,11 +3802,6 @@
             }
         }
 
-        const dashTarget = document.getElementById('dash-calorie-target');
-        if (dashTarget) dashTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()}`;
-
-        const nutritionTarget = document.getElementById('nutrition-calorie-target');
-        if (nutritionTarget) nutritionTarget.textContent = `Target ${getDailyCalorieTarget(state.viewDate).toLocaleString()} kcal`;
         const nutritionTdee = document.getElementById('nutrition-tdee');
         if (nutritionTdee) {
             const estimate = typeof calculateEnergyExpenditure === 'function' ? calculateEnergyExpenditure() : null;
@@ -3833,7 +3821,7 @@
                         <i data-lucide="${recovery ? 'utensils' : 'salad'}" class="w-5 h-5 ${recovery ? 'text-amber-600' : 'text-emerald-600'} flex-shrink-0 mt-0.5"></i>
                         <div>
                             <p class="font-black ${recovery ? 'text-amber-900' : 'text-emerald-900'}">${recovery ? 'Recovery nutrition' : 'Today’s nutrition plan'}</p>
-                            <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">${record.nutritionMessage}</p>
+                            <p class="text-xs ${recovery ? 'text-amber-800' : 'text-emerald-800'} mt-1">${readinessNutritionMessage(record, target, recovery)}</p>
                         </div>
                     </div>`;
             } else {
@@ -3888,7 +3876,7 @@
         const dashFat = document.getElementById('dash-fat');
         if (dashFat) dashFat.innerText = Math.round(totalFat) + 'g';
 
-        const calorieGoal = getDailyCalorieTarget(state.viewDate);
+        const calorieGoal = getDailyCalorieTarget();
         const progress = Math.min((totalCals / calorieGoal) * 534, 534);
         const progressEl = document.getElementById('calorie-progress');
         if (progressEl) progressEl.style.strokeDashoffset = 534 - progress;
@@ -5264,7 +5252,7 @@ function shiftFoodIdeasHTML(emphasiseNight, dateKey) {
         trackSteps: true,
         userGoals: [],
         // Diet goal for calorie targeting: 'lose' | 'maintain' | 'gain'
-        dietGoal: { mode: '', rate: 1, rateUnit: 'lbs', gainRate: 250 },
+        dietGoal: { mode: '', rate: 1, rateUnit: 'lbs' },
         // Date-based guard for planned deficits of 1,000 kcal/day or more.
         dietSafety: { targetChosen: false, legacyGoalChecked: false, aggressiveSince: null, maintenanceStart: null, maintenanceUntil: null, lastMaintenance: null },
         // Saved coaching answers used to personalise shift nutrition and meal ideas.
