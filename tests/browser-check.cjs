@@ -13,7 +13,7 @@ for (const name of ['Styles.css','core','training','nutrition','ui','metrics','c
 let html = fs.readFileSync(path.join(root,'index.html'),'utf8');
 html = html.replace(/<script[^>]+src="([^"]+)"[^>]*>\s*<\/script>/g,(tag,src)=>{
   if (src.includes('tailwindcss.com') || src.includes('lucide')) return tag;
-  if (!src.startsWith('./') || src==='./App.js' || src==='./vfit-config.js') return '';
+  if (!src.startsWith('./') || src.split('?')[0]==='./App.js' || src==='./vfit-config.js') return '';
   return tag;
 });
 const mocks = `<script>

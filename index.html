@@ -532,7 +532,7 @@
                         <i data-lucide="user" class="w-12 h-12 text-indigo-600"></i>
                     </div>
                     <h2 id="profile-name" class="text-2xl font-black mb-2">User Name</h2>
-                    <p id="profile-email" class="text-sm text-slate-500 mb-6">email@example.com</p>
+                    <p id="profile-email" class="text-sm text-slate-500 mb-6">—</p>
 
                     <button type="button" onclick="openMembershipBilling()" class="w-full mb-4 p-4 bg-orange-50 border border-orange-300 text-orange-800 rounded-2xl font-bold flex items-center justify-between">
                         <span>Payments &amp; Billing</span><i data-lucide="badge-pound-sterling" class="w-5 h-5"></i>
@@ -1519,6 +1519,17 @@
                         <input id="backup-check-input" type="file" accept="application/json,.json" class="hidden" onchange="checkVfitBackup(event)">
                         <p id="backup-verification-status" class="text-xs text-slate-500 mt-3" role="status" aria-live="polite"></p>
                         <input id="backup-import-input" type="file" accept="application/json,.json" class="hidden" onchange="importVfitBackup(event)">
+                        <div id="automatic-backup-panel" class="hidden mt-4 rounded-2xl border-2 border-orange-200 p-4">
+                            <h4 class="font-black text-sm">Automatic backups</h4>
+                            <p class="text-xs text-slate-500 mt-2">Choose a private folder outside VFIT. Copies include your history, settings and progress photos. While VFIT is open, it backs up changes and keeps the latest two verified automatic copies.</p>
+                            <p class="text-xs text-slate-500 mt-2">For a copy away from this phone, choose a synced folder if your file picker offers one.</p>
+                            <p id="automatic-backup-status" class="text-xs font-bold mt-3" role="status" aria-live="polite"></p>
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                <button id="automatic-backup-choose" onclick="changeAutomaticBackupFolder('chooseFolder')" class="p-3 rounded-xl bg-orange-600 text-white text-xs font-bold">Choose backup folder</button>
+                                <button id="automatic-backup-now" onclick="runAutomaticBackup()" class="hidden p-3 rounded-xl border text-xs font-bold">Back up now</button>
+                                <button id="automatic-backup-disable" onclick="changeAutomaticBackupFolder('disableFolder')" class="hidden p-3 rounded-xl border text-xs font-bold">Turn off</button>
+                            </div>
+                        </div>
                         <p class="text-[10px] text-slate-400 mt-3">Updates keep an original recovery copy on this device. Photos stay in the existing gallery. Account deletion also removes recovery copies.</p>
                         <p class="text-[10px] text-slate-400 mt-3">Cloud sync excludes progress photos for privacy. Exported backups include them, so keep backup files private.</p>
                         <p id="vfit-version" class="text-[10px] text-slate-400 mt-1"></p>
@@ -4001,7 +4012,7 @@
             </div>
             <div class="space-y-3 text-sm text-slate-600 mb-5">
                 <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
-                <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos remain device-only.</p>
+                <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos stay on your device and in any backup files you choose to create.</p>
                 <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total and keep your daily totals in Exercise Logs. It does not write to or alter your phone's health records.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
@@ -4017,7 +4028,7 @@
             </div>
             <div class="border-t border-rose-200 pt-4">
                 <h4 class="font-black text-rose-600 mb-1">Permanently delete account</h4>
-                <p class="text-xs text-slate-400 mb-3">Deletes your authentication account, cloud profile, device registrations, coach plans/conversations, beta reports and this account’s device-only progress photos. Export first if you want a copy.</p>
+                <p class="text-xs text-slate-400 mb-3">Deletes your authentication account, cloud profile, device registrations, coach plans/conversations, beta reports and this account’s device-only progress photos. You manage any saved backup files in the folder you chose.</p>
                 <button onclick="deleteVfitAccount()" class="w-full bg-rose-600 text-white p-4 rounded-2xl font-bold">Delete My Account</button>
             </div>
         </div>
@@ -4032,19 +4043,19 @@
     <script src="./nutrition/scanner.js"></script>
     <script src="./nutrition/day-templates.js"></script>
     <script src="./ui/navigation.js"></script>
-    <script src="./coaching/coaching.js"></script>
-    <script src="./firebase/firebase-sync.js"></script>
+    <script src="./coaching/coaching.js?rev=backup1"></script>
+    <script src="./firebase/firebase-sync.js?rev=backup1"></script>
     <script src="./nutrition/meal-safety.js"></script>
     <script src="./nutrition/weekly-planner.js"></script>
     <script src="./metrics/step-tracking.js"></script>
     <script src="./metrics/run-tracking.js"></script>
-    <script src="./metrics/photo-storage.js"></script>
-    <script src="./core/backup-tools.js"></script>
+    <script src="./metrics/photo-storage.js?rev=backup1"></script>
+    <script src="./core/backup-tools.js?rev=backup1"></script>
     <script src="./core/update-safety.js"></script>
     <script src="./metrics/progress-charts.js"></script>
     <script src="./metrics/graph-context.js"></script>
     <script src="./feedback/beta-feedback.js"></script>
     <script src="./coaching/plan-builder.js"></script>
-    <script src="./App.js"></script>
+    <script src="./App.js?rev=backup1"></script>
 </body>
 </html>

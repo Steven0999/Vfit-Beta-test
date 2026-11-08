@@ -35,7 +35,8 @@ const appSource = moduleFiles
   .join('\n');
 const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
 assert.equal(inlineScripts.length, 0, 'application logic must live in external JavaScript modules');
-moduleFiles.forEach(file => assert.ok(html.includes(`<script src="./${file}"></script>`), `index.html must load ${file}`));
+const localScripts = [...html.matchAll(/<script[^>]+src="\.\/([^"?]+\.js)(?:\?rev=[^"\s]+)?"[^>]*><\/script>/gi)].map(match => match[1]);
+assert.deepEqual(localScripts.slice(-moduleFiles.length), moduleFiles, 'index.html must load the application modules in order');
 assert.equal(moduleFiles[moduleFiles.length - 1], 'App.js', 'the App.js startup entry point must load last');
 
 const values = new Map();
@@ -213,6 +214,7 @@ const expose = `
 ;globalThis.__vfitTest = {
   prepareAccountDataForUpdate, accountDataWriteBlocked, originalAccountCopies, deleteUpdateSafetyCopies,
   showAccountDataProtection, loadProtectedAccountState, assertAccountRestoreCompatible, snapshotNeedsNewerApp, writeCloudSnapshot, loadFirebaseUserData, inspectVfitBackup, saveDailyNutrition,
+  sealVfitBackup, importVfitBackup,
   putProgressPhoto, getProgressPhoto, listProgressPhotos, migrateProgressPhotosToIndexedDb,
   setCloudReconciledForTest:value=>{cloudReconciledUid=value;},
   resetWorkoutSessionUI, isWorkingSet, cleanSessionSettings, sessionProgressionSuggestion, timeLimitedWorkoutExercises,
@@ -2422,6 +2424,48 @@ assert.equal(document.querySelectorAll('#exercise-list > div').length,0,'account
   app.setUser({uid:'cloud-after-switch'});app.setState(switchedState);
   finishCloudRead({exists:true,data:()=>({dataSnapshot:original})});
   assert.equal(await pendingCloud,false);assert.equal(app.getState(),switchedState,'a late cloud response cannot replace another account');
+
+  const longHistory = app.defaultState();
+  longHistory.nutritionHistory = Array.from({ length: 520 }, (_, index) => ({
+    date: app.offsetLocalDateKey(app.localDateKey(), -index), notes: 'x'.repeat(1700), calories: 2200
+  }));
+  app.setUser({ uid: 'cloud-long-history' });
+  app.setState(longHistory);
+  app.setCloudReconciledForTest('cloud-long-history');
+  cloudFixture.writes = [];
+  assert.equal(await app.writeCloudSnapshot(), true);
+  const cloudHistory = cloudFixture.writes.find(write => write.value.dataSnapshot).value.dataSnapshot;
+  assert.equal(cloudHistory.nutritionHistory.length, 520, 'a large cloud copy keeps its complete history');
+  longHistory.nutritionHistory[0].notes += 'x'.repeat(100000);
+  cloudFixture.writes = [];
+  assert.equal(await app.writeCloudSnapshot(), false);
+  assert.equal(cloudFixture.writes.length, 0, 'a save above the cloud limit leaves the earlier cloud copy in place');
+  assert.equal(app.getState().nutritionHistory.length, 520);
+
+  const restoreOwner = 'restore-with-newer-data';
+  app.setUser({ uid: restoreOwner });
+  const current = app.defaultState();
+  current.meta.updatedAt = '2026-11-05T12:00:00Z';
+  current.privacySettings.cloudHealthData = false;
+  current.goals.calories = 2320;
+  current.mealWakeTimes = { '2026-10-01': '17:00' };
+  current.metricsHistory = [{ date: '2026-10-01', weight: 81, photos: { front: newImage } }];
+  app.setState(current);
+  const earlier = app.defaultState();
+  earlier.meta.updatedAt = '2026-10-02T12:00:00Z';
+  earlier.goals.calories = 1900;
+  earlier.mealWakeTimes = { '2026-10-01': '06:00' };
+  earlier.metricsHistory = [{ date: '2026-10-01', weight: 83, photos: { front: oldImage, side: oldImage } }];
+  earlier.workoutHistory = [{ id: 'older-workout', date: '2026-09-30' }];
+  const olderBackup = await app.sealVfitBackup({ app: 'VFIT', state: earlier });
+  await app.importVfitBackup({ target: { files: [{ size: 1000, text: async () => JSON.stringify(olderBackup) }] } });
+  const recovered = app.getState();
+  assert.equal(recovered.goals.calories, 2320, 'older backups do not replace newer settings');
+  assert.equal(recovered.mealWakeTimes['2026-10-01'], '17:00');
+  assert.equal(recovered.metricsHistory[0].weight, 81);
+  assert.equal(await app.getProgressPhoto(recovered.metricsHistory[0].photos.front), newImage);
+  assert.equal(await app.getProgressPhoto(recovered.metricsHistory[0].photos.side), oldImage, 'a missing angle is restored from the older backup');
+  assert.ok(recovered.workoutHistory.some(entry => entry.id === 'older-workout'));
 
   // Explicit deletion remains possible, and never affects a different owner.
   app.setUser({uid:owner});await app.deleteUpdateSafetyCopies(owner);

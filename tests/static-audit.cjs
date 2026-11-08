@@ -39,8 +39,7 @@ const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<
 assert.equal(inlineScripts.length, 0, 'application logic must live in external JavaScript modules');
 assert.ok(!/<style\b/i.test(html), 'application styles must live in Styles.css');
 assert.ok(html.includes('<link rel="stylesheet" href="./Styles.css">'), 'index.html must load Styles.css');
-moduleFiles.forEach(file => assert.ok(html.includes(`<script src="./${file}"></script>`), `index.html must load ${file}`));
-const localScripts = [...html.matchAll(/<script[^>]+src="\.\/([^"]+\.js)"[^>]*><\/script>/gi)].map(match => match[1]);
+const localScripts = [...html.matchAll(/<script[^>]+src="\.\/([^"?]+\.js)(?:\?rev=[^"\s]+)?"[^>]*><\/script>/gi)].map(match => match[1]);
 assert.deepEqual(localScripts.slice(-moduleFiles.length), moduleFiles, 'application modules must load in dependency order');
 assert.ok(fs.existsSync(path.join(root, 'App.js')), 'App.js must remain the easy-to-find startup entry point');
 assert.equal((moduleSources.get('App.js').match(/AUTH STATE OBSERVER/g) || []).length, 1, 'auth startup must run only after all feature modules load');

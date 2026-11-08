@@ -5,12 +5,13 @@
     auth.onAuthStateChanged(async (user) => {
         const sessionGeneration = ++authSessionGeneration;
         cloudReconciledUid = null;
+        if (typeof resetAutomaticBackups === 'function') resetAutomaticBackups();
+        else if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
         hideAccountDataProtection();
         const authScreen = document.getElementById('auth-screen');
         const appScreen = document.getElementById('app-screen');
 
         if (!user) {
-            if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
             if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
             if (typeof resetWorkoutSessionUI === 'function') resetWorkoutSessionUI();
             if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
@@ -53,7 +54,6 @@
         stopMembershipSync();
         closeManualDiaryFood();
         closeFoodPhotoEstimate();
-        if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
         if (typeof resetWorkoutPlanUI === 'function') resetWorkoutPlanUI();
         if (typeof resetWorkoutSessionUI === 'function') resetWorkoutSessionUI();
         if (typeof resetMetricProgressView === 'function') resetMetricProgressView();
@@ -144,6 +144,7 @@
         }
 
         showAccountRecoveryNotice(user.uid);
+        if (typeof initialiseAutomaticBackups === 'function') initialiseAutomaticBackups();
         refreshNotifBadge();
         restorePushRegistration();
         clearInterval(window._notifPoll);
@@ -251,6 +252,7 @@
             }
             else if (document.visibilityState === 'visible') {
                 if (currentUser) rollVfitToCurrentDayIfNeeded();
+                if (typeof scheduleAutomaticBackup === 'function') scheduleAutomaticBackup();
                 if (typeof syncStepTrackingOnVisible === 'function') syncStepTrackingOnVisible();
                 if (barcodeImagePickerOpen) {
                     // Older WebViews do not always emit the file-input `cancel`

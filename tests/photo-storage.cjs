@@ -69,6 +69,7 @@ function importVfitBackup() {}
 function renderMetricsStatusLines() {}
 function normalizeState(value) { return value; }
 function mergeStateSnapshots(local, imported) { return Object.assign({}, local, imported); }
+function accountDataWriteBlocked() { return false; }
 async function flushCloudSync() {}
 let comparePhotoType = 'front';
 let __saveCount = 0;
@@ -78,6 +79,8 @@ const source = fs.readFileSync(new URL('../metrics/photo-storage.js', `file://${
 const expose = `
 globalThis.__photoTest = {
   sealVfitBackup, inspectVfitBackup, checkVfitBackup, importVfitBackup, exportVfitBackup, saveNativeBackupFile, cancelNativeBackupExport,
+  initialiseAutomaticBackups, changeAutomaticBackupFolder, runAutomaticBackup, resetAutomaticBackups,
+  backupReceipt: () => automaticBackupSession,
   lastToast:()=>__lastToast,
   saveRecordedPhotos,
   putProgressPhoto,
@@ -182,6 +185,12 @@ const photos = sandbox.__photoTest;
   assert.equal(restoredState.nutritionDayTemplates[0].entries[0].offsetMinutes,60);assert.equal(restoredState.dailyMeals[0].calories,228);
   const restoredReference=restoredState.metricsHistory[0].photos.front;
   assert.ok(restoredReference.includes('restore-user'),'photos are rekeyed for the restoring account');assert.equal(await photos.getProgressPhoto(restoredReference),tinyImage);
+  photos.setUser({ uid: 'orphaned-photo' });
+  photos.setState({ meta: {}, dailyMeals: [], workoutHistory: [], metricsHistory: [], currentPhotos: {} });
+  const savedImage = 'data:image/jpeg;base64,QkJC';
+  const orphaned = await photos.putProgressPhoto('2026-11-01', 'front', savedImage);
+  await photos.importVfitBackup({ target: { files: [{ size: 1000, text: async () => JSON.stringify(sealed) }] } });
+  assert.equal(await photos.getProgressPhoto(orphaned), savedImage, 'restore preserves a gallery photo without an existing state reference');
   // An account change during file reading must never restore into the new account.
   const beforeSwitch=photos.getSaveCount();
   await photos.importVfitBackup({target:{files:[{size:1000,text:async()=>{photos.setUser({uid:'changed-account'});return JSON.stringify(sealed);}}],value:'test'}});
@@ -205,6 +214,61 @@ const photos = sandbox.__photoTest;
   const goodPost=sandbox.vfitBackupExport.postMessage;
   sandbox.vfitBackupExport.postMessage=function(raw){const message=JSON.parse(raw);if(message.command==='finish'){queueMicrotask(()=>this.onmessage({data:JSON.stringify({requestId:message.requestId,ownerUid:message.ownerUid,status:'complete',sha256:'wrong',size:1})}));}else goodPost.call(this,raw);};
   await assert.rejects(photos.saveNativeBackupFile('test','vfit-backup-test.json','restore-user'),/could not be verified/);
+
+  // Automatic export needs a chosen folder and uses the full verified backup format.
+  photos.setState(restoredState);
+  restoredState.nutritionHistory = Array.from({ length: 501 }, (_, index) => ({
+    date: new Date(Date.UTC(2026, 10, 1 - index)).toISOString().slice(0, 10), calories: 2200
+  }));
+  let automaticStarts = 0;
+  let corruptReadback = false;
+  let pendingPicker;
+  let pausePicker = false;
+  sandbox.vfitBackupExport.postMessage = function (raw) {
+    const message = JSON.parse(raw);
+    const reply = result => queueMicrotask(() => this.onmessage({ data: JSON.stringify({
+      requestId: message.requestId, ownerUid: message.ownerUid, ...result
+    }) }));
+    if (message.command === 'folderStatus') {
+      reply({ status: 'folder', enabled: false, available: false });
+    } else if (message.command === 'chooseFolder') {
+      const picked = () => reply({ status: 'folder', enabled: true, available: true });
+      if (pausePicker) pendingPicker = picked;
+      else picked();
+    } else if (message.command === 'start' && message.automatic) {
+      assert.equal(message.ownerUid, 'restore-user');
+      assert.match(message.fileName, /^vfit-backup-auto-/);
+      automaticStarts++;
+      goodPost.call(this, raw);
+    } else if (message.command === 'finish' && corruptReadback) {
+      reply({ status: 'complete', size: 1, sha256: 'wrong' });
+    } else {
+      goodPost.call(this, raw);
+    }
+  };
+  await photos.initialiseAutomaticBackups();
+  await photos.runAutomaticBackup();
+  assert.equal(automaticStarts, 0, 'automatic copies require an explicit folder selection');
+  await photos.changeAutomaticBackupFolder('chooseFolder');
+  assert.equal(automaticStarts, 1);
+  const automaticCopy = await photos.inspectVfitBackup(JSON.parse(Buffer.from(nativePayload, 'binary').toString()));
+  assert.equal(automaticCopy.counts.diaryDays, 501);
+  assert.equal(automaticCopy.counts.photos, 1);
+  assert.equal(automaticCopy.imported.savedWorkouts[0].name, 'Shift plan');
+  const previousVerification = photos.backupReceipt().verifiedAt;
+  assert.ok(previousVerification > 0);
+  corruptReadback = true;
+  await photos.runAutomaticBackup();
+  assert.equal(photos.backupReceipt().verifiedAt, previousVerification, 'failed verification cannot advance the last good receipt');
+  assert.match(photos.backupReceipt().error, /could not be verified/);
+  pausePicker = true;
+  const picking = photos.changeAutomaticBackupFolder('chooseFolder');
+  photos.resetAutomaticBackups();
+  photos.setUser({ uid: 'different-backup-account' });
+  pendingPicker();
+  await picking;
+  assert.equal(automaticStarts, 2, 'a late folder result cannot start a backup after switching accounts');
+
   // Interrupted migrations keep their inline original and can retry in the same session.
   photos.setUser({uid:'photo-retry'});photos.setState({metricsDate:'2026-11-05',currentPhotos:{},metricsHistory:[{date:'2026-11-05',photos:{front:tinyImage}}],meta:{}});
   indexedDB.failNextWrite=true;

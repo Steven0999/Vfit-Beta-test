@@ -498,6 +498,12 @@
             showToast('Deleting account and cloud data…', 8000);
             const result = await callable({ confirmation: 'DELETE' });
             if (!result || !result.data || result.data.deleted !== true) throw new Error('Deletion was not confirmed');
+            if (typeof automaticBackupSession !== 'undefined' && automaticBackupSession?.uid === uid &&
+                automaticBackupSession.ready && currentUser?.uid === uid) {
+                resetAutomaticBackups();
+                await withNativeBackupChannel(uid, send => send('disableFolder', {}, 5000))
+                    .catch(error => console.warn('Backup folder access could not be released:', error));
+            }
             if (typeof deleteProgressPhotosForOwner === 'function') {
                 await deleteProgressPhotosForOwner(uid).catch(error => {
                     console.warn('The deleted account had local progress photos that could not be removed:', error);

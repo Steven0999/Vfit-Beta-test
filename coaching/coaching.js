@@ -580,10 +580,9 @@ function openAICoachCheckIn() {
             answers: deepClone(session.answers),
             note: session.note,
             result: deepClone(session.result),
-            messages: deepClone(session.messages).slice(-24)
+            messages: deepClone(session.messages)
         };
         state.coachConversations.unshift(record);
-        state.coachConversations = state.coachConversations.slice(0, 90);
         saveState();
         renderAICoachCheckInSummary();
         renderReadinessSummary();
@@ -813,7 +812,6 @@ function openAICoachCheckIn() {
         checkIn.flags = checkInFlags(checkIn);
         checkIn.status = checkIn.flags.length ? 'review' : 'on-track';
         state.checkIns.unshift(checkIn);
-        state.checkIns = state.checkIns.slice(0, 104);
         if (checkIn.weight > 0) {
             const metric = (state.metricsHistory || []).find(item => item.date === checkIn.date);
             if (metric) metric.weight = checkIn.weight;

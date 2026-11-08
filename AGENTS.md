@@ -21,6 +21,9 @@ permission to reset or replace a person's saved data.
   preferences after reconciliation.
 - Do not cap or truncate complete device histories. Cloud size limits must not
   alter the complete device save or a complete user-requested backup.
+- Keep the existing cloud copy when a full snapshot is too large to sync.
+- Automatic backups need a folder chosen by the account owner. Verify each
+  new copy before rotating app-created copies. Keep manual exports separate.
 - Data deletion and picture replacement require the existing explicit user
   action. Account deletion must also remove that account's recovery copies.
 - Validate storage changes with the update-safety and photo-storage cases in
