@@ -45,7 +45,10 @@ with zipfile.ZipFile(args.apk) as archive:
     if args.mode == 'unsigned-update':
         assert apk_bytes[archive.start_dir - 16:archive.start_dir] != b'APK Sig Block 42', 'Unsigned APK contains a signing block'
         assert not any(re.fullmatch(r'META-INF/[^/]+\.(SF|RSA|DSA|EC)', name, re.I) for name in archive.namelist()), 'Unsigned APK contains signing files'
-    assets = [name for name in archive.namelist() if name.startswith('assets/') and not name.endswith('/')]
+    # Android Gradle generates these profiles while packaging a release APK.
+    generated_profiles = {'assets/dexopt/baseline.prof', 'assets/dexopt/baseline.profm'}
+    assets = [name for name in archive.namelist()
+              if name.startswith('assets/') and not name.endswith('/') and name not in generated_profiles]
     for name in assets:
         source = root / name.removeprefix('assets/')
         assert source.is_file() and archive.read(name) == source.read_bytes(), 'Untested packaged asset: ' + name
