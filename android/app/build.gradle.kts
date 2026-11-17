@@ -54,11 +54,10 @@ android {
             if (vfitKeystorePath != null) {
                 signingConfig = signingConfigs.getByName("vfitBeta")
             } else {
-                // A development identity installs alongside VFIT.
-                // It cannot replace the real app or its private data directory.
-                applicationIdSuffix = ".test"
+                // Install the backup preview alongside earlier VFIT releases and test builds.
+                applicationIdSuffix = ".backuppreview"
                 versionNameSuffix = "-test"
-                manifestPlaceholders["vfitAppLabel"] = "VFIT Test"
+                manifestPlaceholders["vfitAppLabel"] = "VFIT Backup Preview"
             }
         }
         release {

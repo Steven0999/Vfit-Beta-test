@@ -9,7 +9,7 @@ permission to reset or replace a person's saved data.
 - Android update APKs must use the certificate in
   `android/vfit-update-certificate.sha256`. Do not replace that pin or generate
   another signing key to bypass a missing-key failure. Unconfigured debug
-  builds deliberately install as VFIT Test alongside the production app.
+  builds install as VFIT Backup Preview alongside production and earlier test builds.
 - Keep pre-update account copies intact before normalising older saves. Stop
   writes when a save cannot be protected or requires a newer app version.
 - Never clear personal localStorage, IndexedDB or photos during startup,

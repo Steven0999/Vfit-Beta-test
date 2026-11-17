@@ -78,7 +78,7 @@ jobs:
             exit 1
           else
             echo 'VFIT_DISTRIBUTION_KIND=test-only' >> "$GITHUB_ENV"
-            echo 'Signing secrets are absent: building VFIT Test alongside the real app. This is not an update APK.'
+            echo 'Signing secrets are absent: building the standalone VFIT Backup Preview.'
           fi
 
       - name: Build debug APK
