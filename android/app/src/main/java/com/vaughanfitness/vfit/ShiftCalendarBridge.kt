@@ -3,10 +3,8 @@ package com.vaughanfitness.vfit
 import android.Manifest
 import android.content.pm.PackageManager
 import android.provider.BaseColumns
-import android.provider.CalendarContract.AttendeesColumns
-import android.provider.CalendarContract.CalendarColumns
+import android.provider.CalendarContract.Attendees
 import android.provider.CalendarContract.Calendars
-import android.provider.CalendarContract.EventsColumns
 import android.provider.CalendarContract.Instances
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -98,9 +96,9 @@ class ShiftCalendarBridge(private val activity: AppCompatActivity) {
 
     private fun readCalendars(): JSONObject {
         val calendars = JSONArray()
-        val columns = arrayOf(BaseColumns._ID, CalendarColumns.CALENDAR_DISPLAY_NAME)
-        activity.contentResolver.query(Calendars.CONTENT_URI, columns, "${CalendarColumns.VISIBLE} = 1", null,
-            "${CalendarColumns.CALENDAR_DISPLAY_NAME} ASC")?.use { cursor ->
+        val columns = arrayOf(BaseColumns._ID, Calendars.CALENDAR_DISPLAY_NAME)
+        activity.contentResolver.query(Calendars.CONTENT_URI, columns, "${Calendars.VISIBLE} = 1", null,
+            "${Calendars.CALENDAR_DISPLAY_NAME} ASC")?.use { cursor ->
             while (cursor.moveToNext()) {
                 calendars.put(JSONObject().put("id", cursor.getLong(0).toString())
                     .put("name", cursor.getString(1)?.take(100)?.ifBlank { "Calendar" } ?: "Calendar"))
@@ -113,7 +111,7 @@ class ShiftCalendarBridge(private val activity: AppCompatActivity) {
         val resolver = activity.contentResolver
         val id = calendarId.toString()
         val available = resolver.query(Calendars.CONTENT_URI, arrayOf(BaseColumns._ID),
-            "${BaseColumns._ID} = ? AND ${CalendarColumns.VISIBLE} = 1", arrayOf(id), null)?.use { it.moveToFirst() }
+            "${BaseColumns._ID} = ? AND ${Calendars.VISIBLE} = 1", arrayOf(id), null)?.use { it.moveToFirst() }
         if (available != true) return JSONObject().put("status", "calendar-missing")
 
         val zone = ZoneId.systemDefault()
@@ -124,12 +122,12 @@ class ShiftCalendarBridge(private val activity: AppCompatActivity) {
         val uri = Instances.CONTENT_URI.buildUpon().appendPath(begin.toEpochMilli().toString())
             .appendPath(end.toEpochMilli().toString()).build()
         val shifts = JSONArray()
-        val columns = arrayOf(Instances.BEGIN, Instances.END, EventsColumns.ALL_DAY, EventsColumns.TITLE,
-            EventsColumns.STATUS, EventsColumns.SELF_ATTENDEE_STATUS)
-        resolver.query(uri, columns, "${EventsColumns.CALENDAR_ID} = ?", arrayOf(id), "${Instances.BEGIN} ASC")?.use { cursor ->
+        val columns = arrayOf(Instances.BEGIN, Instances.END, Instances.ALL_DAY, Instances.TITLE,
+            Instances.STATUS, Instances.SELF_ATTENDEE_STATUS)
+        resolver.query(uri, columns, "${Instances.CALENDAR_ID} = ?", arrayOf(id), "${Instances.BEGIN} ASC")?.use { cursor ->
             while (cursor.moveToNext()) {
-                if (cursor.getInt(4) == EventsColumns.STATUS_CANCELED ||
-                    cursor.getInt(5) == AttendeesColumns.ATTENDEE_STATUS_DECLINED) continue
+                if (cursor.getInt(4) == Instances.STATUS_CANCELED ||
+                    cursor.getInt(5) == Attendees.ATTENDEE_STATUS_DECLINED) continue
                 val title = cursor.getString(3).orEmpty()
                 if (!title.contains(titleFilter, ignoreCase = true)) continue
                 val start = cursor.getLong(0)
