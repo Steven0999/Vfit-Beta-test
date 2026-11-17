@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.vaughanfitness.vfit.calendarverification">
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <application android:label="VFIT Calendar Test" android:allowBackup="false" />
+    <instrumentation android:name=".CalendarSeed" android:targetPackage="com.vaughanfitness.vfit.calendarverification" />
+</manifest>
