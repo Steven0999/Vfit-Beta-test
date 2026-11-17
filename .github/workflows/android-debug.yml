@@ -95,6 +95,25 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Prepare the original VFIT package for local signing
+        if: env.VFIT_DISTRIBUTION_KIND == 'test-only'
+        run: |
+          gradle -p android :app:assembleRelease -PvfitPrepareUnsignedUpdate=true --stacktrace
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          apk="$RUNNER_TEMP/vfit-update-unsigned.apk"
+          "$tools/zipalign" -P 16 -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk "$apk"
+          "$tools/zipalign" -c -P 16 4 "$apk"
+          python3 tools/verify-android-apk.py --apk "$apk" --sdk "$ANDROID_HOME" --mode unsigned-update
+
+      - name: Upload unsigned APK for local signing
+        if: env.VFIT_DISTRIBUTION_KIND == 'test-only'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vfit-unsigned-update-for-local-signing
+          path: ${{ runner.temp }}/vfit-update-unsigned.apk
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Upload APK signing tool for private local signing
         uses: actions/upload-artifact@v4
         with:

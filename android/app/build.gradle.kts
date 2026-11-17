@@ -7,10 +7,13 @@ plugins {
 
 val vfitKeystorePath = providers.environmentVariable("VFIT_KEYSTORE_PATH").orNull
 val vfitKeystorePassword = providers.environmentVariable("VFIT_KEYSTORE_PASSWORD").orNull
+val prepareUnsignedUpdate = providers.gradleProperty("vfitPrepareUnsignedUpdate").orNull == "true"
 require((vfitKeystorePath == null) == (vfitKeystorePassword == null)) {
     "Configure both VFIT_KEYSTORE_PATH and VFIT_KEYSTORE_PASSWORD for persistent signing"
 }
-
+require(!prepareUnsignedUpdate || vfitKeystorePath == null) {
+    "Preparing an unsigned APK requires a build without signing credentials"
+}
 
 // The package ID and certificate are the installed app's data identity.
 // Never silently rotate this key or tell users to uninstall to accept an update.
@@ -123,5 +126,9 @@ dependencies {
 val verifyVfitUpdateSigning by tasks.registering {
     doLast { require(vfitKeystorePath != null) { "The original VFIT signing key is required for a release update." } }
 }
-tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" || it.name == "packageRelease" }
+// Allow an unsigned APK for signing on a separate machine. Release bundles and
+// ordinary release builds still require the original key at build time.
+tasks.matching {
+    it.name == "bundleRelease" || (!prepareUnsignedUpdate && it.name in setOf("assembleRelease", "packageRelease"))
+}
     .configureEach { dependsOn(verifyVfitUpdateSigning) }
