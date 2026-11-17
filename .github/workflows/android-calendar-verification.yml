@@ -50,7 +50,7 @@ jobs:
           previous="$RUNNER_TEMP/vfit-previous/android/app/build/outputs/apk/debug/app-debug.apk"
           current="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
           for source in "$previous" "$current"; do
-            "$tools/aapt" dump badging "$source" | rg "^package: name='com.vaughanfitness.vfit.backuppreview'"
+            "$tools/aapt" dump badging "$source" | grep -F "package: name='com.vaughanfitness.vfit.backuppreview'"
           done
           keytool -genkeypair -storetype PKCS12 -keystore "$fixture/test.p12" -storepass android -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=VFIT emulator fixture'
           for build in previous current; do
@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo chmod a+rw /dev/kvm
           echo no | avdmanager create avd --force --name vfit-calendar --package 'system-images;android-35;default;x86_64'
-          emulator -avd vfit-calendar -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader > "$RUNNER_TEMP/vfit-emulator.log" 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" -avd vfit-calendar -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader > "$RUNNER_TEMP/vfit-emulator.log" 2>&1 &
           emulator_pid=$!
           trap 'status=$?; kill "$emulator_pid" || true; if [ "$status" -ne 0 ]; then tail -50 "$RUNNER_TEMP/vfit-emulator.log"; fi; exit "$status"' EXIT
           timeout 180 adb wait-for-device
@@ -76,5 +76,5 @@ jobs:
           adb shell input keyevent 82
           adb install -g "$RUNNER_TEMP/calendar-fixture/fixture.apk"
           adb shell am instrument -w com.vaughanfitness.vfit.calendarverification/.CalendarSeed | tee "$RUNNER_TEMP/calendar-seed.log"
-          rg 'INSTRUMENTATION_CODE: -1' "$RUNNER_TEMP/calendar-seed.log"
+          grep -F 'INSTRUMENTATION_CODE: -1' "$RUNNER_TEMP/calendar-seed.log"
           node tests/android-calendar/verify.cjs run "$RUNNER_TEMP/calendar-fixture/previous.apk" "$RUNNER_TEMP/calendar-fixture/current.apk"
