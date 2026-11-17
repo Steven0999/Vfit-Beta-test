@@ -61,6 +61,9 @@
         const profile = state.shiftProfile || DEFAULT_STATE.shiftProfile;
         const rota = isPlainRecord(profile.rota) ? profile.rota : {};
         if (isPlainRecord(rota[dateKey])) return Object.assign({}, rota[dateKey], { source: 'rota' });
+        if (dateKey >= profile.calendarWindow?.from && dateKey <= profile.calendarWindow?.through) {
+            return { type: 'off', source: 'rota', calendarImported: true };
+        }
         if (!profile.enabled) return { type: 'off', source: 'default' };
         const date = new Date(dateKey + 'T12:00:00');
         if (!Array.isArray(profile.workDays) || !profile.workDays.includes(date.getDay())) return { type: 'off', source: 'pattern' };
@@ -71,6 +74,280 @@
             end: profile.shiftEnd || '19:00',
             source: 'pattern'
         };
+    }
+
+    // The calendar selection stays on this device. The rota stores the shift
+    // type and hours, like a manually entered date.
+    const ROTA_SHIFT_TIMES = {
+        night: { start: '19:00', end: '07:00' },
+        early: { start: '06:00', end: '14:00' },
+        day: { start: '07:00', end: '19:00' }
+    };
+    let shiftCalendarUi = { message: '', editing: false, lastAttempt: 0 };
+
+    function shiftCalendarLinkKey(uid) {
+        return 'vfit-shift-calendar:' + uid;
+    }
+
+    function readShiftCalendarLink(uid) {
+        const link = uid && readStoredJson(shiftCalendarLinkKey(uid));
+        return /^\d{1,19}$/.test(String(link?.calendarId || '')) && typeof link.titleFilter === 'string'
+            ? link : null;
+    }
+
+    function renderShiftCalendar() {
+        const status = document.getElementById('shift-calendar-status');
+        if (!status) return;
+        const supported = !!window.vfitShiftCalendar?.postMessage;
+        const link = supported && readShiftCalendarLink(currentUser?.uid);
+        const busy = !!shiftCalendarUi.pending;
+        document.getElementById('shift-calendar-controls').classList.toggle('hidden', !supported);
+        document.getElementById('shift-calendar-form').classList.toggle('hidden', !supported || !shiftCalendarUi.editing);
+        document.getElementById('shift-calendar-filter').disabled = document.getElementById('shift-calendar-all').checked;
+        const choose = document.getElementById('shift-calendar-choose');
+        choose.disabled = busy;
+        choose.textContent = link ? 'Change calendar' : 'Link calendar';
+        choose.setAttribute('aria-expanded', String(shiftCalendarUi.editing));
+        ['shift-calendar-sync', 'shift-calendar-disconnect'].forEach(id => {
+            const button = document.getElementById(id);
+            button.disabled = busy;
+            button.classList.toggle('hidden', !link);
+        });
+        document.getElementById('shift-calendar-save').disabled = busy;
+        status.textContent = !supported ? 'Open VFIT on Android to link a phone calendar.'
+            : shiftCalendarUi.message || (link ? 'Calendar linked. Your rota refreshes when you open VFIT.'
+                : 'Choose a calendar to fill the next 90 days of your rota. Manual shifts take priority.');
+    }
+
+    function resetShiftCalendar() {
+        const pending = shiftCalendarUi.pending;
+        shiftCalendarUi = { message: '', editing: false, lastAttempt: 0 };
+        if (pending) pending.reject(new Error('The VFIT account changed.'));
+        const select = document.getElementById('shift-calendar-select');
+        if (select) select.textContent = '';
+    }
+
+    function requestShiftCalendar(command, configuration = {}) {
+        const bridge = window.vfitShiftCalendar;
+        const uid = currentUser?.uid;
+        const session = shiftCalendarUi;
+        if (!uid || !bridge?.postMessage || session.pending) return Promise.reject(new Error('Calendar access is unavailable.'));
+        return new Promise((resolve, reject) => {
+            const requestId = 'shift-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+            const finish = callback => value => {
+                clearTimeout(timeout);
+                session.pending = null;
+                callback(value);
+            };
+            const timeout = setTimeout(() => session.pending?.reject(new Error('The phone calendar took too long to respond.')),
+                command === 'list' ? 120000 : 30000);
+            const request = { reject: finish(reject) };
+            session.pending = request;
+            bridge.onmessage = event => {
+                if (session !== shiftCalendarUi || session.pending !== request || currentUser?.uid !== uid) return;
+                let result;
+                try { result = JSON.parse(event.data); } catch (_) { return; }
+                if (result?.requestId !== requestId || result.ownerUid !== uid) return;
+                if (result.status === 'permission') request.reject(new Error('Allow Calendar access in Android settings, then try again.'));
+                else if (result.status === 'calendar-missing') request.reject(new Error('That calendar is unavailable on this phone. Choose it again once it is synced.'));
+                else if (!['calendars', 'shifts'].includes(result.status)) request.reject(new Error('Could not read the phone calendar. Try again.'));
+                else finish(resolve)(result);
+            };
+            try { bridge.postMessage(JSON.stringify({ command, requestId, ownerUid: uid, ...configuration })); }
+            catch (_) { request.reject(new Error('Could not connect to the phone calendar.')); }
+        });
+    }
+
+    async function chooseShiftCalendar() {
+        const session = shiftCalendarUi;
+        if (session.pending || !currentUser) return;
+        session.message = 'Opening your phone calendars…';
+        try {
+            const waiting = requestShiftCalendar('list');
+            renderShiftCalendar();
+            const result = await waiting;
+            if (session !== shiftCalendarUi) return;
+            const select = document.getElementById('shift-calendar-select');
+            select.replaceChildren();
+            const calendars = Array.isArray(result.calendars)
+                ? result.calendars.filter(calendar => /^\d{1,19}$/.test(String(calendar?.id || ''))) : [];
+            session.editing = calendars.length > 0;
+            if (session.editing) {
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Choose a calendar';
+                select.appendChild(placeholder);
+            }
+            for (const calendar of calendars) {
+                const option = document.createElement('option');
+                option.value = String(calendar.id);
+                option.textContent = String(calendar.name || 'Calendar');
+                select.appendChild(option);
+            }
+            if (session.editing) {
+                const link = readShiftCalendarLink(currentUser.uid);
+                if (link && Array.from(select.options).some(option => option.value === link.calendarId)) select.value = link.calendarId;
+                document.getElementById('shift-calendar-filter').value = link ? link.titleFilter : 'shift';
+                document.getElementById('shift-calendar-all').checked = !!link?.allTimedEvents;
+                session.message = 'Select your calendar and tell VFIT which events are work shifts.';
+            } else session.message = 'No calendars are visible on this phone. Check that your work calendar is synced.';
+        } catch (error) {
+            if (session === shiftCalendarUi) session.message = error.message;
+        }
+        if (session === shiftCalendarUi) renderShiftCalendar();
+    }
+
+    function cancelShiftCalendarSetup() {
+        if (shiftCalendarUi.pending) return;
+        shiftCalendarUi.editing = false;
+        shiftCalendarUi.message = '';
+        renderShiftCalendar();
+    }
+
+    function calendarShiftsForRota(result) {
+        const { from, through, events } = result;
+        const isDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+            localDateKey(new Date(value + 'T12:00:00')) === value;
+        if (result.status !== 'shifts' || !isDate(from) || !isDate(through) || through < from ||
+            Date.parse(through) - Date.parse(from) > 89 * 86400000 || !Array.isArray(events)) {
+            throw new Error('The calendar returned an invalid date range. Your rota was kept.');
+        }
+        const clock = time => `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`;
+        const dates = new Map();
+        const overlapping = new Set();
+        for (const event of events) {
+            if (!event || typeof event !== 'object') continue;
+            let { date, type } = event;
+            let times = Object.hasOwn(ROTA_SHIFT_TIMES, type) ? ROTA_SHIFT_TIMES[type] : null;
+            let duration = 0;
+            if (Number.isFinite(event.begin) && Number.isFinite(event.end)) {
+                duration = event.end - event.begin;
+                if (duration <= 0 || duration > 86400000) continue;
+                const start = new Date(event.begin);
+                const end = new Date(event.end);
+                date = localDateKey(start);
+                const hour = start.getHours();
+                type = localDateKey(end) !== date || hour >= 18 || hour < 4 ? 'night' : hour < 7 ? 'early' : 'day';
+                times = { start: clock(start), end: clock(end) };
+            }
+            if (!times || !isDate(date) || date < from || date > through) continue;
+            const previous = dates.get(date);
+            if (previous && (previous.type !== type || previous.start !== times.start || previous.end !== times.end)) overlapping.add(date);
+            if (!previous || duration > previous.duration) dates.set(date, { type, ...times, duration });
+        }
+        const shifts = Object.fromEntries(Array.from(dates, ([date, { type, start, end }]) => [date, { type, start, end }]));
+        return { from, through, shifts, overlapping: overlapping.size };
+    }
+
+    function saveCalendarRota(result) {
+        const { from, through, shifts, overlapping } = calendarShiftsForRota(result);
+        const previous = state.shiftProfile || DEFAULT_STATE.shiftProfile;
+        const rota = { ...previous.rota };
+        let changed = previous.calendarWindow?.from !== from || previous.calendarWindow?.through !== through;
+        let manualDates = 0;
+        for (const [date, saved] of Object.entries(rota)) {
+            if (date >= from && date <= through && saved?.calendarImported === true && !Object.hasOwn(shifts, date)) {
+                delete rota[date];
+                changed = true;
+            }
+        }
+        const updatedAt = new Date().toISOString();
+        for (const [date, shift] of Object.entries(shifts)) {
+            const old = rota[date];
+            if (old && old.calendarImported !== true) { manualDates++; continue; }
+            if (old?.type === shift.type && old.start === shift.start && old.end === shift.end) continue;
+            rota[date] = { ...shift, calendarImported: true, updatedAt };
+            changed = true;
+        }
+        if (changed) {
+            state.shiftProfile = { ...previous, rota, calendarWindow: { from, through } };
+            if (!saveState()) {
+                state.shiftProfile = previous;
+                throw new Error('VFIT could not save the imported shifts. Your rota was kept.');
+            }
+        }
+        return { shifts: Object.keys(shifts).length - manualDates, manualDates, overlapping, changed };
+    }
+
+    function refreshCalendarRotaViews() {
+        renderRotaSummary();
+        renderShiftWorker();
+        if (document.getElementById('weekly-meal-planner-modal')?.style.display === 'flex') renderWeeklyMealPlanner();
+    }
+
+    async function syncShiftCalendar(link, remember = false) {
+        const session = shiftCalendarUi;
+        const uid = currentUser?.uid;
+        if (!uid || !link || session.pending || accountDataWriteBlocked(uid)) return;
+        session.lastAttempt = Date.now();
+        session.message = 'Reading work shifts…';
+        try {
+            const waiting = requestShiftCalendar('shifts', link);
+            renderShiftCalendar();
+            const result = await waiting;
+            if (session !== shiftCalendarUi || currentUser?.uid !== uid || accountDataWriteBlocked(uid)) return;
+            const previousLink = remember ? readShiftCalendarLink(uid) : null;
+            if (remember) localStorage.setItem(shiftCalendarLinkKey(uid), JSON.stringify(link));
+            let counts;
+            try { counts = saveCalendarRota(result); }
+            catch (error) {
+                if (remember) {
+                    if (previousLink) localStorage.setItem(shiftCalendarLinkKey(uid), JSON.stringify(previousLink));
+                    else localStorage.removeItem(shiftCalendarLinkKey(uid));
+                }
+                throw error;
+            }
+            if (remember) session.editing = false;
+            session.message = counts.shifts ? `${counts.shifts} work shifts synced for the next 90 days.`
+                : 'No matching work shifts to add in the next 90 days.';
+            if (counts.manualDates) session.message += ` Kept ${counts.manualDates} manual rota dates.`;
+            if (counts.overlapping) session.message += ` ${counts.overlapping} dates have multiple matches. VFIT uses the longest shift where there is no manual entry.`;
+            if (counts.changed) safeInvoke('Calendar rota view', refreshCalendarRotaViews);
+        } catch (error) {
+            if (session === shiftCalendarUi) session.message = error.message || 'Could not sync the work calendar.';
+        }
+        if (session === shiftCalendarUi) renderShiftCalendar();
+    }
+
+    function linkShiftCalendar() {
+        const calendarId = document.getElementById('shift-calendar-select').value;
+        const allTimedEvents = document.getElementById('shift-calendar-all').checked;
+        const titleFilter = allTimedEvents ? '' : document.getElementById('shift-calendar-filter').value.trim();
+        if (!calendarId || (!allTimedEvents && !titleFilter)) {
+            shiftCalendarUi.message = 'Choose a calendar and enter text from the titles of your work shifts.';
+            renderShiftCalendar();
+            return;
+        }
+        return syncShiftCalendar({ calendarId, titleFilter, allTimedEvents }, true);
+    }
+
+    function refreshShiftCalendar(force = false) {
+        if (!window.vfitShiftCalendar?.postMessage || shiftCalendarUi.editing || document.visibilityState === 'hidden' ||
+            (!force && Date.now() - shiftCalendarUi.lastAttempt < 60000)) return;
+        return syncShiftCalendar(readShiftCalendarLink(currentUser?.uid));
+    }
+
+    function disconnectShiftCalendar() {
+        const uid = currentUser?.uid;
+        if (!uid || shiftCalendarUi.pending || accountDataWriteBlocked(uid)) return;
+        const previous = state.shiftProfile;
+        const link = readShiftCalendarLink(uid);
+        try {
+            localStorage.removeItem(shiftCalendarLinkKey(uid));
+            state.shiftProfile = { ...previous };
+            delete state.shiftProfile.calendarWindow;
+            if (!saveState()) {
+                state.shiftProfile = previous;
+                if (link) localStorage.setItem(shiftCalendarLinkKey(uid), JSON.stringify(link));
+                throw new Error('VFIT could not save the calendar change.');
+            }
+            shiftCalendarUi.editing = false;
+            shiftCalendarUi.message = 'Calendar disconnected. Your imported shifts are still in your rota.';
+            safeInvoke('Calendar rota view', refreshCalendarRotaViews);
+        } catch (error) {
+            shiftCalendarUi.message = error.message || 'Could not disconnect the work calendar.';
+        }
+        renderShiftCalendar();
     }
 
     let aiCoachCheckInSession = null;
@@ -864,9 +1141,10 @@ function openAICoachCheckIn() {
     function updateRotaTimeVisibility() {
         const type = document.getElementById('rota-type').value;
         document.getElementById('rota-time-fields').classList.toggle('hidden', type === 'off');
-        if (type === 'night') { document.getElementById('rota-start').value = '19:00'; document.getElementById('rota-end').value = '07:00'; }
-        else if (type === 'early') { document.getElementById('rota-start').value = '06:00'; document.getElementById('rota-end').value = '14:00'; }
-        else if (type === 'day') { document.getElementById('rota-start').value = '07:00'; document.getElementById('rota-end').value = '19:00'; }
+        if (Object.hasOwn(ROTA_SHIFT_TIMES, type)) {
+            document.getElementById('rota-start').value = ROTA_SHIFT_TIMES[type].start;
+            document.getElementById('rota-end').value = ROTA_SHIFT_TIMES[type].end;
+        }
     }
 
     function saveRotaDay() {
@@ -893,6 +1171,7 @@ function openAICoachCheckIn() {
         saveState();
         renderCoachingHub();
         renderShiftWorker();
+        refreshShiftCalendar(true);
     }
 
     function renderRotaSummary() {
@@ -908,7 +1187,7 @@ function openAICoachCheckIn() {
             const shift = getShiftForDate(key);
             rows.push(`<div class="flex items-center justify-between gap-2 bg-slate-50 p-3 rounded-xl">
                 <div><p class="font-bold text-sm">${escapeHtml(date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))}</p><p class="text-xs text-slate-400">${escapeHtml(labels[shift.type] || shift.type)}${shift.start ? ' · ' + escapeHtml(shift.start) + '–' + escapeHtml(shift.end || '') : ''}</p></div>
-                ${shift.source === 'rota' ? `<button onclick="removeRotaDay('${escapeJsString(key)}')" class="text-xs font-bold text-rose-500" aria-label="Remove rota override for ${escapeHtml(key)}">Remove</button>` : '<span class="text-[9px] text-slate-400 uppercase">pattern</span>'}
+                ${shift.source === 'rota' && !shift.calendarImported ? `<button onclick="removeRotaDay('${escapeJsString(key)}')" class="text-xs font-bold text-rose-500" aria-label="Remove rota override for ${escapeHtml(key)}">Remove</button>` : `<span class="text-[9px] text-slate-400 uppercase">${shift.calendarImported ? 'Calendar' : 'Pattern'}</span>`}
             </div>`);
         }
         box.innerHTML = rows.join('');

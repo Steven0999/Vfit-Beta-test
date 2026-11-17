@@ -706,7 +706,7 @@
                 <div class="flex bg-slate-100 p-2 rounded-2xl gap-2">
                     <button onclick="setNutritionTab('diary')" id="nut-tab-diary" class="flex-1 py-4 text-xs font-black uppercase rounded-xl bg-white text-indigo-600 shadow-sm">Diary</button>
                     <button onclick="setNutritionTab('search')" id="nut-tab-search" class="flex-1 py-4 text-xs font-black uppercase rounded-xl text-slate-400">Search</button>
-                    <button onclick="setNutritionTab('shift')" id="nut-tab-shift" class="flex-1 py-4 text-xs font-black uppercase rounded-xl text-slate-400">Shift</button>
+                    <button onclick="setNutritionTab('shift'); refreshShiftCalendar()" id="nut-tab-shift" class="flex-1 py-4 text-xs font-black uppercase rounded-xl text-slate-400">Shift</button>
                 </div>
 
                 <!-- SHIFT WORKER VIEW -->
@@ -721,6 +721,27 @@
                         <p id="shift-meal-schedule" class="text-xs text-slate-500"></p>
                         <p class="text-xs text-slate-400 mt-1">For shifts crossing midnight, keep food on the shift-start diary day and choose “Next day” when entering its time.</p>
                     </div>
+                    <section class="glass-card p-4 rounded-2xl border border-orange-100" aria-labelledby="shift-calendar-heading">
+                        <h3 id="shift-calendar-heading" class="font-black text-sm">Work calendar</h3>
+                        <p id="shift-calendar-status" class="text-xs text-slate-500 mt-1" role="status" aria-live="polite">Open VFIT on Android to link a phone calendar.</p>
+                        <div id="shift-calendar-controls" class="hidden flex flex-wrap gap-2 mt-3">
+                            <button type="button" id="shift-calendar-choose" onclick="chooseShiftCalendar()" class="px-3 py-2 min-h-[44px] rounded-xl bg-indigo-600 text-white text-xs font-bold" aria-controls="shift-calendar-form">Link calendar</button>
+                            <button type="button" id="shift-calendar-sync" onclick="refreshShiftCalendar(true)" class="hidden px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 text-xs font-bold">Sync now</button>
+                            <button type="button" id="shift-calendar-disconnect" onclick="disconnectShiftCalendar()" class="hidden px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 text-xs font-bold">Disconnect</button>
+                        </div>
+                        <form id="shift-calendar-form" class="hidden mt-4 grid gap-3" onsubmit="event.preventDefault(); linkShiftCalendar()">
+                            <label for="shift-calendar-select" class="text-xs font-bold">Calendar</label>
+                            <select id="shift-calendar-select" class="w-full rounded-xl bg-slate-100 p-2 text-sm font-bold" required></select>
+                            <label for="shift-calendar-filter" class="text-xs font-bold">Text in work shift titles</label>
+                            <input id="shift-calendar-filter" type="text" maxlength="80" placeholder="For example, Shift or Work" class="w-full rounded-xl bg-slate-100 p-2 text-sm font-bold">
+                            <label class="flex items-center gap-2 text-xs font-bold"><input id="shift-calendar-all" type="checkbox" class="w-5 h-5 accent-indigo-600" onchange="renderShiftCalendar()"> Use all shifts from a calendar just for work</label>
+                            <p class="text-xs text-slate-500">VFIT saves shift dates and hours to your rota. All-day events titled Day shift, Early shift or Night shift use VFIT’s default hours.</p>
+                            <div class="flex gap-2">
+                                <button type="submit" id="shift-calendar-save" class="flex-1 px-3 py-2 min-h-[44px] rounded-xl bg-indigo-600 text-white text-xs font-bold">Link and sync</button>
+                                <button type="button" onclick="cancelShiftCalendarSetup()" class="px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 text-xs font-bold">Cancel</button>
+                            </div>
+                        </form>
+                    </section>
                     <div id="shift-worker-content"></div>
                 </div>
 
@@ -4012,7 +4033,7 @@
             </div>
             <div class="space-y-3 text-sm text-slate-600 mb-5">
                 <p><b>Device:</b> VFIT saves a working copy on this phone so it can operate offline.</p>
-                <p><b>Cloud:</b> Fitness, nutrition, readiness and AI Coach check-in data can sync to your Firebase account. Progress photos stay on your device and in any backup files you choose to create.</p>
+                <p><b>Cloud:</b> Fitness, nutrition, readiness, AI Coach check-ins and saved rota dates can sync to your Firebase account. Progress photos stay on your device and in any backup files you choose to create.</p>
                 <p><b>Health Connect:</b> In the Android build, VFIT requests read-only step access to calculate today's total and keep your daily totals in Exercise Logs. It does not write to or alter your phone's health records.</p>
                 <p><b>Coach:</b> A coach sees your synced data only after you approve their connection request.</p>
                 <p><b>Payments:</b> When enabled, Stripe processes payment details; VFIT stores only membership status and Stripe identifiers.</p>
@@ -4043,8 +4064,8 @@
     <script src="./nutrition/scanner.js"></script>
     <script src="./nutrition/day-templates.js"></script>
     <script src="./ui/navigation.js"></script>
-    <script src="./coaching/coaching.js?rev=backup1"></script>
-    <script src="./firebase/firebase-sync.js?rev=backup1"></script>
+    <script src="./coaching/coaching.js?rev=calendar1"></script>
+    <script src="./firebase/firebase-sync.js?rev=calendar1"></script>
     <script src="./nutrition/meal-safety.js"></script>
     <script src="./nutrition/weekly-planner.js"></script>
     <script src="./metrics/step-tracking.js"></script>
@@ -4056,6 +4077,6 @@
     <script src="./metrics/graph-context.js"></script>
     <script src="./feedback/beta-feedback.js"></script>
     <script src="./coaching/plan-builder.js"></script>
-    <script src="./App.js?rev=backup1"></script>
+    <script src="./App.js?rev=calendar1"></script>
 </body>
 </html>

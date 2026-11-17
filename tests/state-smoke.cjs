@@ -335,6 +335,7 @@ const expose = `
   skipAICoachCheckInInput,
   sendAICoachCheckInMessage,
   getShiftForDate,
+  calendarShiftsForRota, saveCalendarRota,
   smartProgressionForExercise,
   weeklyReportFor,
   buildPushReminderSchedule,
@@ -1887,6 +1888,44 @@ const reminderSchedule = app.buildPushReminderSchedule(new Date('2026-09-03T12:0
 assert.equal(reminderSchedule.length, 4);
 assert.equal(reminderSchedule[0].shiftType, 'night');
 assert.equal(new Date(reminderSchedule[0].at).getHours(), 18);
+
+const calendarRotaState = app.defaultState();
+calendarRotaState.shiftProfile.enabled = true;
+const calendarManualShift = { type: 'off', updatedAt: '2026-03-20T12:00:00Z' };
+calendarRotaState.shiftProfile.rota = {
+  '2026-03-27': { type: 'day', start: '09:00', end: '17:00', calendarImported: true },
+  '2026-03-29': calendarManualShift,
+  '2026-03-30': { type: 'day', start: '09:00', end: '17:00', calendarImported: true }
+};
+calendarRotaState.dailyMeals = [{ id: 'existing-calendar-food', date: '2026-03-28', name: 'Packed lunch' }];
+app.setState(calendarRotaState);
+const calendarReply = {
+  status: 'shifts', from: '2026-03-28', through: '2026-04-03', events: [
+    { begin: new Date('2026-03-28T20:00:00').getTime(), end: new Date('2026-03-29T08:00:00').getTime() },
+    { begin: new Date('2026-03-28T17:00:00').getTime(), end: new Date('2026-03-28T18:00:00').getTime() },
+    { date: '2026-03-29', type: 'day' },
+    { date: '2026-03-31', type: 'early' },
+    { date: '2026-02-30', type: 'night' },
+    { date: '2026-04-04', type: 'day' }
+  ]
+};
+const importedRota = app.saveCalendarRota(calendarReply);
+assert.equal(importedRota.shifts, 2);
+assert.equal(importedRota.manualDates, 1);
+assert.equal(importedRota.overlapping, 1);
+assert.equal(app.getShiftForDate('2026-03-28').type, 'night');
+assert.equal(app.getShiftForDate('2026-03-28').start, '20:00');
+assert.equal(app.getShiftForDate('2026-03-28').end, '08:00');
+assert.equal(app.getShiftForDate('2026-03-31').start, '06:00');
+assert.equal(app.getShiftForDate('2026-03-31').type, 'early');
+assert.equal(app.getShiftForDate('2026-04-01').type, 'off', 'no calendar shift means rest in the covered period');
+assert.equal(app.getShiftForDate('2026-04-06').source, 'pattern', 'the normal pattern is used outside the covered period');
+assert.equal(calendarRotaState.shiftProfile.rota['2026-03-29'], calendarManualShift, 'a manual rest day overrides the calendar');
+assert.equal(calendarRotaState.shiftProfile.rota['2026-03-27'].start, '09:00', 'previously imported history is retained');
+assert.equal(calendarRotaState.shiftProfile.rota['2026-03-30'], undefined, 'removed calendar entries disappear from upcoming dates');
+assert.equal(calendarRotaState.dailyMeals[0].name, 'Packed lunch');
+assert.equal(app.saveCalendarRota(calendarReply).changed, false, 'refreshing the same shifts does not rewrite the rota');
+assert.throws(() => app.calendarShiftsForRota({ ...calendarReply, through: '2026-02-30' }), /invalid date range/);
 
 // Smart progression uses reps/RIR, and weekly reports honour the configured target.
 const today = new Date();

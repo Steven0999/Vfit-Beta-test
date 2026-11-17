@@ -514,6 +514,7 @@
             }
             localStorage.removeItem(stateStorageKey(uid));
             localStorage.removeItem(recoveryStorageKey(uid));
+            if (typeof shiftCalendarLinkKey === 'function') localStorage.removeItem(shiftCalendarLinkKey(uid));
             localStorage.removeItem(notificationStorageKey('vfit_seen_notifs'));
             localStorage.removeItem(notificationStorageKey('vfit_dismissed_notifs'));
             if (localStorage.getItem(LEGACY_MIGRATION_KEY) === uid) {

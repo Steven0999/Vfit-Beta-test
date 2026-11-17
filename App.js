@@ -5,6 +5,7 @@
     auth.onAuthStateChanged(async (user) => {
         const sessionGeneration = ++authSessionGeneration;
         cloudReconciledUid = null;
+        if (typeof resetShiftCalendar === 'function') resetShiftCalendar();
         if (typeof resetAutomaticBackups === 'function') resetAutomaticBackups();
         else if (typeof cancelNativeBackupExport === 'function') cancelNativeBackupExport();
         hideAccountDataProtection();
@@ -145,6 +146,8 @@
 
         showAccountRecoveryNotice(user.uid);
         if (typeof initialiseAutomaticBackups === 'function') initialiseAutomaticBackups();
+        if (typeof renderShiftCalendar === 'function') renderShiftCalendar();
+        if (typeof refreshShiftCalendar === 'function') refreshShiftCalendar();
         refreshNotifBadge();
         restorePushRegistration();
         clearInterval(window._notifPoll);
@@ -253,6 +256,7 @@
             else if (document.visibilityState === 'visible') {
                 if (currentUser) rollVfitToCurrentDayIfNeeded();
                 if (typeof scheduleAutomaticBackup === 'function') scheduleAutomaticBackup();
+                if (document.getElementById('app-screen')?.style.display === 'block' && typeof refreshShiftCalendar === 'function') refreshShiftCalendar();
                 if (typeof syncStepTrackingOnVisible === 'function') syncStepTrackingOnVisible();
                 if (barcodeImagePickerOpen) {
                     // Older WebViews do not always emit the file-input `cancel`

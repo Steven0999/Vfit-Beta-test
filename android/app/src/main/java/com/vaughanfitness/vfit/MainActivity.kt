@@ -122,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val backupExporter = BackupExporter(this)
+    private val shiftCalendar = ShiftCalendarBridge(this)
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -145,6 +146,7 @@ class MainActivity : AppCompatActivity() {
         installHealthConnectBridge()
         installRunTrackingBridge()
         installBackupExportBridge()
+        installShiftCalendarBridge()
 
         onBackPressedDispatcher.addCallback(this) {
             if (webView.canGoBack()) webView.goBack() else finish()
@@ -189,6 +191,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
                 backupExporter.close()
+                shiftCalendar.resetPage()
                 stepReplyProxy = null
                 runReplyProxy = null
             }
@@ -294,6 +297,20 @@ class MainActivity : AppCompatActivity() {
             if (data.length > 67000) return@addWebMessageListener
             val payload = try { JSONObject(data) } catch (error: Exception) { return@addWebMessageListener }
             backupExporter.receive(payload) { result ->
+                if (isTrustedOrigin(Uri.parse(webView.url ?: ""))) replyProxy.postMessage(result.toString())
+            }
+        }
+    }
+
+    private fun installShiftCalendarBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+        WebViewCompat.addWebMessageListener(webView, "vfitShiftCalendar", setOf(APP_ORIGIN)) {
+            _, message, sourceOrigin, isMainFrame, replyProxy ->
+            if (!isMainFrame || !isTrustedOrigin(sourceOrigin)) return@addWebMessageListener
+            val data = message.data ?: return@addWebMessageListener
+            if (data.length > 1024) return@addWebMessageListener
+            val payload = try { JSONObject(data) } catch (_: Exception) { return@addWebMessageListener }
+            shiftCalendar.receive(payload) { result ->
                 if (isTrustedOrigin(Uri.parse(webView.url ?: ""))) replyProxy.postMessage(result.toString())
             }
         }

@@ -47,6 +47,71 @@ document.getElementById('auth-screen').style.display='none';document.getElementB
 applyTrainingExperienceMode();
 `;
 const checks={
+  calendar:`
+    state.shiftProfile.acknowledgedDisclaimer = true;
+    const first = localDateKey();
+    const second = offsetLocalDateKey(first, 1);
+    state.viewDate = first;
+    delete state.mealWakeTimes[first];
+    state.shiftProfile.rota[second] = { type:'off' };
+    let shiftStart = '20:00';
+    let permission = true;
+    let heldReply;
+    let holdNext = false;
+    const find = id => document.getElementById(id);
+    switchTab('nutrition');
+    find('nut-tab-shift').click();
+    expect(find('shift-calendar-controls').classList.contains('hidden'), 'calendar linking requires Android');
+    window.vfitShiftCalendar = { postMessage(raw) {
+      const { command, requestId, ownerUid, calendarId, titleFilter } = JSON.parse(raw);
+      if (command === 'shifts') expect(calendarId==='42' && titleFilter==='Shift', 'wrong calendar/filter requested');
+      const response = command === 'list' ? { status:'calendars',calendars:[{id:'42',name:'Work roster'}] }
+        : !permission ? { status:'permission' }
+        : { status:'shifts',from:first,through:offsetLocalDateKey(first,89),events:[
+          {begin:new Date(first+'T'+shiftStart+':00').getTime(),end:new Date(second+'T08:00:00').getTime()},
+          {date:second,type:'day'}
+        ] };
+      const reply = () => this.onmessage({data:JSON.stringify({ requestId,ownerUid,...response })});
+      if (holdNext) heldReply = reply;
+      else queueMicrotask(reply);
+    } };
+    renderShiftCalendar();
+    expect(!find('shift-calendar-controls').classList.contains('hidden'), 'Link calendar is visible');
+    find('shift-calendar-choose').click();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(!find('shift-calendar-form').classList.contains('hidden'), 'calendar picker is shown');
+    expect(find('shift-calendar-select').options[1].textContent==='Work roster', 'calendar name is shown');
+    find('shift-calendar-select').value = '42';
+    find('shift-calendar-filter').value = 'Shift';
+    find('shift-calendar-form').requestSubmit(find('shift-calendar-save'));
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(getShiftForDate(first).type==='night' && getShiftForDate(first).start==='20:00', 'overnight shift imported on start date');
+    expect(getShiftForDate(second).type==='off' && !getShiftForDate(second).calendarImported, 'manual day retained');
+    expect(find('shift-worker-content').querySelector('[data-shift-nutrition-type="night"]'), 'nutrition uses imported shift');
+    expect(find('shift-meal-schedule').textContent.startsWith('Breakfast 6:00pm'), 'meal timing follows imported shift');
+    expect(plannerShiftType(first)==='night', 'weekly meals use imported shift');
+    expect(!JSON.stringify(state.shiftProfile).includes('Work roster'), 'calendar names stay out of the rota');
+    shiftStart = '21:00';
+    await refreshShiftCalendar(true);
+    expect(getShiftForDate(first).start==='21:00', 'changed work shift refreshes');
+    permission = false;
+    await refreshShiftCalendar(true);
+    expect(getShiftForDate(first).start==='21:00', 'revoked permission preserves rota');
+    permission = true;
+    holdNext = true;
+    const before = JSON.stringify(state.shiftProfile);
+    const pending = refreshShiftCalendar(true);
+    resetShiftCalendar();
+    currentUser = { uid:'other-fixture', email:'other@example.test' };
+    heldReply();
+    await pending;
+    expect(JSON.stringify(state.shiftProfile)===before, 'in-flight data never crosses accounts');
+    currentUser = { uid:'browser-fixture', email:'fixture@example.test' };
+    disconnectShiftCalendar();
+    expect(!readShiftCalendarLink(currentUser.uid), 'future calendar reads disabled');
+    expect(getShiftForDate(first).start==='21:00', 'disconnect retains saved shifts');
+    expect(find('shift-calendar-status').textContent.includes('disconnected'), 'disconnect status shown');
+  `,
   updates:`
     const before=JSON.stringify({...state,meta:{schemaVersion:999,appVersion:'2.1.0-beta.999'},futureSavedField:{note:'Keep the original'}});
     localStorage.setItem(stateStorageKey(currentUser.uid),before);
