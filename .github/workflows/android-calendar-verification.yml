@@ -41,19 +41,28 @@ jobs:
           gradle -p "$previous/android" :app:assembleDebug --console=plain
           gradle -p android :app:assembleDebug --console=plain
 
-      - name: Build local calendar fixture installer
+      - name: Sign the emulator-only installers with one test key
         run: |
           fixture="$RUNNER_TEMP/calendar-fixture"
           mkdir -p "$fixture/classes"
           sdk="$ANDROID_HOME/platforms/android-36/android.jar"
           tools="$ANDROID_HOME/build-tools/36.0.0"
+          previous="$RUNNER_TEMP/vfit-previous/android/app/build/outputs/apk/debug/app-debug.apk"
+          current="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+          for source in "$previous" "$current"; do
+            "$tools/aapt" dump badging "$source" | rg "^package: name='com.vaughanfitness.vfit.backuppreview'"
+          done
+          keytool -genkeypair -storetype PKCS12 -keystore "$fixture/test.p12" -storepass android -alias fixture -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=VFIT emulator fixture'
+          for build in previous current; do
+            "$tools/apksigner" sign --ks "$fixture/test.p12" --ks-pass pass:android --out "$fixture/$build.apk" "${!build}"
+          done
           javac --release 8 -cp "$sdk" -d "$fixture/classes" tests/android-calendar/CalendarSeed.java
           "$tools/d8" --lib "$sdk" --min-api 28 --output "$fixture" "$fixture/classes/com/vaughanfitness/vfit/calendarverification/CalendarSeed.class"
           "$tools/aapt" package -f -M tests/android-calendar/AndroidManifest.xml -I "$sdk" -F "$fixture/unsigned.apk"
           cd "$fixture"
           "$tools/aapt" add unsigned.apk classes.dex
           "$tools/zipalign" -f 4 unsigned.apk aligned.apk
-          "$tools/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --out fixture.apk aligned.apk
+          "$tools/apksigner" sign --ks "$fixture/test.p12" --ks-pass pass:android --out fixture.apk aligned.apk
 
       - name: Run in-place upgrade and calendar import on Android
         run: |
@@ -61,11 +70,11 @@ jobs:
           echo no | avdmanager create avd --force --name vfit-calendar --package 'system-images;android-35;default;x86_64'
           emulator -avd vfit-calendar -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader > "$RUNNER_TEMP/vfit-emulator.log" 2>&1 &
           emulator_pid=$!
-          trap 'kill "$emulator_pid" || true' EXIT
+          trap 'status=$?; kill "$emulator_pid" || true; if [ "$status" -ne 0 ]; then tail -50 "$RUNNER_TEMP/vfit-emulator.log"; fi; exit "$status"' EXIT
           timeout 180 adb wait-for-device
           timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb shell input keyevent 82
           adb install -g "$RUNNER_TEMP/calendar-fixture/fixture.apk"
           adb shell am instrument -w com.vaughanfitness.vfit.calendarverification/.CalendarSeed | tee "$RUNNER_TEMP/calendar-seed.log"
           rg 'INSTRUMENTATION_CODE: -1' "$RUNNER_TEMP/calendar-seed.log"
-          node tests/android-calendar/verify.cjs run "$RUNNER_TEMP/vfit-previous/android/app/build/outputs/apk/debug/app-debug.apk" android/app/build/outputs/apk/debug/app-debug.apk
+          node tests/android-calendar/verify.cjs run "$RUNNER_TEMP/calendar-fixture/previous.apk" "$RUNNER_TEMP/calendar-fixture/current.apk"

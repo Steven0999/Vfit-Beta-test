@@ -41,6 +41,7 @@ public final class CalendarSeed extends Instrumentation {
 
             ContentValues allDay = event(calendarId, "Day shift", today.plusDays(5).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(), ZoneOffset.UTC);
             allDay.put(Events.ALL_DAY, 1);
+            allDay.put(Events.EVENT_TIMEZONE, "UTC");
             allDay.put(Events.DTEND, allDay.getAsLong(Events.DTSTART) + 86_400_000L);
             insert(resolver, Events.CONTENT_URI, allDay);
             outcome.putString("stream", "Created recurring shifts and a non-work event.\n");
