@@ -336,6 +336,7 @@ const expose = `
   sendAICoachCheckInMessage,
   getShiftForDate,
   calendarShiftsForRota, saveCalendarRota,
+  shiftNutritionGuide,
   smartProgressionForExercise,
   weeklyReportFor,
   buildPushReminderSchedule,
@@ -1926,6 +1927,15 @@ assert.equal(calendarRotaState.shiftProfile.rota['2026-03-30'], undefined, 'remo
 assert.equal(calendarRotaState.dailyMeals[0].name, 'Packed lunch');
 assert.equal(app.saveCalendarRota(calendarReply).changed, false, 'refreshing the same shifts does not rewrite the rota');
 assert.throws(() => app.calendarShiftsForRota({ ...calendarReply, through: '2026-02-30' }), /invalid date range/);
+const ideaMinutes = date => Array.from(app.shiftNutritionGuide(date).steps, step => step.minute);
+assert.deepEqual(ideaMinutes('2026-03-28'), [1080, 1380, 1920], 'overnight meal ideas use actual hours on both dates');
+calendarRotaState.mealWakeTimes['2026-03-29'] = '14:15';
+assert.deepEqual(ideaMinutes('2026-03-29'), [480, 855, null], 'manual rest day accounts for the previous shift and saved wake time');
+assert.deepEqual(ideaMinutes('2026-03-31'), [300, 600, 840], 'early shift meals use the early start and finish');
+calendarRotaState.shiftProfile.rota['2026-04-01'] = { type: 'night', start: '00:30', end: '08:00' };
+assert.deepEqual(ideaMinutes('2026-04-01'), [-90, 210, 480], 'a just-after-midnight start can have a previous-day meal');
+calendarRotaState.shiftProfile.rota['2026-04-02'] = { type: 'day', start: '14:00', end: '22:30' };
+assert.equal(app.shiftNutritionGuide('2026-04-02').steps[2].mealType, 'snack', 'a late finish offers a lighter option');
 
 // Smart progression uses reps/RIR, and weekly reports honour the configured target.
 const today = new Date();

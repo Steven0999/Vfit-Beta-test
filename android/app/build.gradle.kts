@@ -35,7 +35,7 @@ android {
         applicationId = "com.vaughanfitness.vfit"
         minSdk = 28
         targetSdk = 36
-        versionCode = 57
+        versionCode = 58
         versionName = "2.1.0-beta.55"
         manifestPlaceholders["vfitAppLabel"] = "@string/app_name"
     }

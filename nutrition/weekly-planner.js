@@ -838,14 +838,129 @@
         return `<div class="glass-card p-5 rounded-[2.5rem] border-2 border-orange-200" data-weekly-meal-planner-entry><div class="flex items-start justify-between gap-3"><div><p class="text-[10px] font-black uppercase text-orange-600">Meal prep and shopping</p><h3 class="text-xl font-black mt-1">7-Day Shift Meal Planner</h3><p class="text-xs text-slate-500 mt-2">${planned} suitable meals using only your Shopping List ingredients, meals saved in Create Meal or foods previously logged in your Nutrition Diary. High-calorie takeaway-style choices are excluded, and each slot has a replacement dropdown. Each day includes total calories and protein.</p></div><i data-lucide="calendar-range" class="w-8 h-8 text-orange-500 flex-shrink-0"></i></div><button onclick="openWeeklyMealPlanner('${escapeJsString(start)}')" class="w-full mt-4 bg-slate-900 border border-orange-500 text-white p-4 rounded-2xl font-black">Open 7-Day Planner &amp; Shopping Scanner</button></div>`;
     }
 
-    const renderShiftWorkerWithoutWeeklyPlanner = renderShiftWorker;
-    renderShiftWorker = function renderShiftWorkerWithWeeklyPlanner() {
-        const result = renderShiftWorkerWithoutWeeklyPlanner.apply(this, arguments);
+    function shiftNutritionGuide(dateKey) {
+        const shift = getShiftForDate(dateKey);
+        const type = plannerShiftType(dateKey);
+        const wake = mealScheduleForDate(dateKey).wake;
+        const savedWake = mealClockMinutes(state.mealWakeTimes?.[dateKey]);
+        const sleepSnack = 'If you are hungry before sleep, have a small portion. Keep heavier meals and caffeine away from bedtime.';
+
+        if (type === 'off') {
+            const previous = getShiftForDate(plannerAddDays(dateKey, -1));
+            const previousStart = mealClockMinutes(previous.start);
+            const previousEnd = mealClockMinutes(previous.end);
+            if (previous.type === 'night' && previousStart !== null && previousEnd !== null && previousEnd <= previousStart) {
+                return { type, intro: 'Plan meals around your daytime sleep after the night shift.', steps: [
+                    { title: 'After the night shift, if hungry', minute: previousEnd, mealType: 'snack', advice: sleepSnack },
+                    { title: 'First meal after your main sleep', minute: savedWake > previousEnd ? savedWake : null, mealType: 'breakfast', advice: 'Have a balanced meal when you wake and are ready to eat.' },
+                    { title: 'Later in the day', minute: null, mealType: 'dinner', advice: 'Return to daytime meals as your schedule allows.' }
+                ] };
+            }
+            return { type, intro: 'Plan regular meals around when you wake on your day off.', steps: [
+                { title: 'First meal after waking', minute: wake, mealType: 'breakfast', advice: 'Start with a balanced meal when you are ready to eat.' },
+                { title: 'Daytime meal', minute: null, mealType: 'lunch', advice: 'Use your usual lunchtime or the next break in your day.' },
+                { title: 'Evening meal', minute: null, mealType: 'dinner', advice: 'Leave time between a larger meal and sleep.' }
+            ] };
+        }
+
+        const night = type === 'night';
+        const start = mealClockMinutes(shift.start);
+        const end = mealClockMinutes(shift.end);
+        const finish = start !== null && end !== null && end <= start ? end + 1440 : end;
+        // For a shift starting just after midnight, the evening wake time can
+        // belong to the previous day. A wake time after a daytime start leaves
+        // the first meal flexible rather than suggesting a time before waking.
+        const wakeBeforeWork = start !== null && start < 240 && wake >= 1080 ? wake - 1440 : wake;
+        const beforeWork = start !== null && wakeBeforeWork < start
+            ? Math.max(wakeBeforeWork, start - (night ? 120 : 60)) : null;
+        const workBreak = start !== null && finish !== null
+            ? start + Math.min(night ? 180 : 240, Math.floor((finish - start) / 2)) : null;
+        const lateFinish = end !== null && (finish >= 1440 || end >= 21 * 60 || end < 6 * 60);
+
+        return {
+            type,
+            intro: night
+                ? 'Your body clock can stay on daytime hours during night work. Try a main meal before work and keep food lighter overnight when that suits you.'
+                : type === 'early' ? 'Prep food ahead so an early start leaves room for sleep and regular meals.'
+                    : 'Use your work breaks for regular meals and leave time between a larger meal and sleep.',
+            steps: [
+                {
+                    title: night ? 'Main meal before work' : type === 'early' ? 'Quick breakfast before work' : 'First meal before work',
+                    minute: beforeWork,
+                    mealType: night ? 'lunch' : 'breakfast',
+                    advice: 'Eat after waking if you have time before work, or pack the meal for a break.'
+                },
+                {
+                    title: night ? 'Lighter food on your break' : 'Packed meal on your break',
+                    minute: workBreak,
+                    mealType: night ? 'snack' : 'lunch',
+                    advice: night ? 'Pack a smaller option for when you are hungry and keep water handy.'
+                        : 'Take a balanced meal for a break and drink water across the shift.'
+                },
+                {
+                    title: night ? 'After work, if hungry before sleep' : lateFinish ? 'Lighter option after work' : 'Meal after work',
+                    minute: finish,
+                    mealType: night || lateFinish ? 'snack' : 'dinner',
+                    advice: night || lateFinish ? sleepSnack : 'Eat when you are ready. Keep the portion lighter if bedtime is close.'
+                }
+            ]
+        };
+    }
+
+    function shiftNutritionStepHTML(dateKey, type, step, showAdvice) {
+        const ideas = shiftMealIdeasFor(type, step.mealType);
+        const index = ideas.length ? plannerHash(`${dateKey}:${step.title}`) % ideas.length : 0;
+        const idea = ideas[index];
+        let time = '';
+        if (step.minute !== null) {
+            const day = step.minute < 0 ? ' · previous day' : step.minute >= 1440 ? ' · next day' : '';
+            time = `<p class="text-xs text-slate-500 mt-0.5">Around ${minToHM(step.minute)}${day}</p>`;
+        }
+        return `<div class="min-w-0">
+            <p class="text-sm font-black">${escapeHtml(step.title)}</p>
+            ${time}
+            ${showAdvice ? `<p class="text-sm text-slate-600 mt-2">${escapeHtml(step.advice)}</p>` : ''}
+            ${idea ? `<button type="button" class="text-left text-sm text-orange-700 font-bold underline min-h-[44px]" onclick="openShiftMealDetail('${type}', '${step.mealType}', ${index}, '${escapeJsString(dateKey)}')">${escapeHtml(idea.name)}</button>`
+                : '<p class="text-xs text-slate-500 mt-2">No recipe matches your saved dietary requirements.</p>'}
+        </div>`;
+    }
+
+    const shiftSectionWithoutNutritionGuide = getShiftSectionPopupContent;
+    getShiftSectionPopupContent = function getShiftSectionWithNutritionGuide(section, dateKey) {
+        const page = shiftSectionWithoutNutritionGuide(section, dateKey);
+        if (section !== 'meals' || !page) return page;
+        const date = plannerDateKey(dateKey);
+        const plan = shiftNutritionGuide(date);
+        return { ...page, content: `
+            <p class="text-sm text-slate-600 mb-1">${escapeHtml(plan.intro)}</p>
+            <p class="text-xs text-slate-500 mb-4">Use these example times around your breaks, hunger and planned sleep.</p>
+            <ol class="space-y-3" data-shift-nutrition-guide="${date}">
+                ${plan.steps.map(step => `<li class="bg-slate-50 border border-slate-100 p-4 rounded-2xl">${shiftNutritionStepHTML(date, plan.type, step, true)}</li>`).join('')}
+            </ol>
+            <p class="mt-4 text-xs text-slate-500">Shift-work guidance from the <a class="underline" href="https://www.hse.gov.uk/humanfactors/topics/shift-workers.htm" target="_blank" rel="noopener noreferrer">HSE</a> and <a class="underline" href="https://www.cdc.gov/niosh/work-hour-training-for-nurses/longhours/mod9/08.html" target="_blank" rel="noopener noreferrer">NIOSH</a>.</p>` };
+    };
+
+    const renderShiftWorkerWithoutMealIdeas = renderShiftWorker;
+    renderShiftWorker = function renderShiftWorkerWithMealIdeas() {
+        const result = renderShiftWorkerWithoutMealIdeas.apply(this, arguments);
         const box = document.getElementById('shift-worker-content');
         if (box && shiftP().acknowledgedDisclaimer && !box.querySelector('[data-weekly-meal-planner-entry]')) {
+            const shiftCard = box.querySelector('[data-shift-nutrition-date]');
+            if (shiftCard) {
+                const dateKey = shiftCard.dataset.shiftNutritionDate;
+                const plan = shiftNutritionGuide(dateKey);
+                shiftCard.insertAdjacentHTML('beforeend', `<div class="border-t border-slate-200 mt-4 pt-4" data-shift-nutrition-preview="${dateKey}">${shiftNutritionStepHTML(dateKey, plan.type, plan.steps[0], false)}</div>`);
+            }
             box.insertAdjacentHTML('beforeend', weeklyMealPlannerEntryHTML());
             ensureAccessibleDom(box);
             refreshIcons();
+        }
+        if (activeShiftPopupSection === 'meals' && document.getElementById('shift-section-modal')?.style.display === 'flex') {
+            const page = getShiftSectionPopupContent('meals', activeShiftPopupDateKey);
+            document.getElementById('shift-section-modal-title').textContent = page.title;
+            const body = document.getElementById('shift-section-modal-body');
+            body.innerHTML = page.content;
+            ensureAccessibleDom(body);
         }
         return result;
     };
